@@ -383,8 +383,9 @@ const FlaggedScholars = ({ portalLabel = 'Portal' }) => {
     }, []);
 
     useEffect(() => {
-        const timer = setTimeout(fetchScholars, 0);
-        return () => clearTimeout(timer);
+        (async () => {
+            await fetchScholars();
+        })();
     }, [fetchScholars]);
 
     const highCount = scholars.filter(s => s.risk_level === 'high').length;
