@@ -1,5 +1,67 @@
 const db = require('../config/db');
 
+const normalizeAcademicGrade = (gradeScale, rawGrade) => {
+    const gradeValue = Number(rawGrade);
+    if (!Number.isFinite(gradeValue)) return null;
+
+    if (gradeScale === 'k12') {
+        return Math.max(0, Math.min(100, gradeValue));
+    }
+
+    if (gradeScale === 'college') {
+        // TODO: confirm exact values with foundation policy.
+        const collegeScaleMap = {
+            1.00: 100,
+            1.25: 96,
+            1.50: 92,
+            1.75: 88,
+            2.00: 84,
+            2.25: 80,
+            2.50: 76,
+            2.75: 72,
+            3.00: 68,
+            3.25: 64,
+            3.50: 60,
+            3.75: 56,
+            4.00: 52,
+            4.25: 48,
+            4.50: 44,
+            4.75: 40,
+            5.00: 36,
+        };
+
+        const exactMatch = collegeScaleMap[gradeValue];
+        if (exactMatch !== undefined) {
+            return exactMatch;
+        }
+
+        const clamped = Math.max(1, Math.min(5, gradeValue));
+        const floorKey = Math.floor(clamped * 4) / 4;
+        const ceilKey = Math.ceil(clamped * 4) / 4;
+
+        const floorValue = collegeScaleMap[floorKey];
+        const ceilValue = collegeScaleMap[ceilKey];
+
+        if (floorValue === undefined || ceilValue === undefined) {
+            return null;
+        }
+
+        const ratio = (clamped - floorKey) / (ceilKey - floorKey || 1);
+        return Math.round((floorValue + (ceilValue - floorValue) * ratio));
+    }
+
+    return null;
+};
+
+const getAcademicTier = (normalizedScore) => {
+    if (normalizedScore === null || normalizedScore === undefined) return 'No Academic Record';
+
+    // TODO: confirm exact values with foundation policy.
+    if (normalizedScore >= 90) return 'Good Standing';
+    if (normalizedScore >= 80) return 'Academic Watch';
+    return 'Academic Probation';
+};
+
 // ─── GET FLAGGED SCHOLARS (shared ng Officer at Admin portals) ─────────
 // Isang unified, proportional na compliance/risk formula.
 // Walang duplicate scoring, walang double-counting, at bawat flag ay
@@ -81,17 +143,37 @@ exports.getFlaggedScholars = (req, res) => {
                     attStats.forEach(a => { attMap[a.scholar_id] = a; });
 
                     const gradesSql = `
-                        SELECT scholar_id,
-                            CASE WHEN SUM(units) > 0 THEN ROUND(SUM(units * grade) / SUM(units), 2) ELSE NULL END AS gwa
-                        FROM grades
-                        WHERE scholar_id IN (${placeholders})
-                        GROUP BY scholar_id
+                        SELECT g.scholar_id, g.units, g.grade, g.grade_scale
+                        FROM grades g
+                        WHERE g.scholar_id IN (${placeholders})
                     `;
 
                     db.query(gradesSql, scholarIds, (err, gradeRows) => {
-                        const gpaMap = {};
+                        const academicMap = {};
                         if (!err && Array.isArray(gradeRows)) {
-                            gradeRows.forEach(g => { gpaMap[g.scholar_id] = g.gwa; });
+                            const normalizedScores = {};
+
+                            gradeRows.forEach(row => {
+                                const scholarId = row.scholar_id;
+                                const gradeScale = row.grade_scale || 'k12';
+                                const normalizedGrade = normalizeAcademicGrade(gradeScale, row.grade);
+                                const units = Number(row.units) || 0;
+
+                                if (normalizedGrade === null || units <= 0) return;
+
+                                if (!normalizedScores[scholarId]) {
+                                    normalizedScores[scholarId] = { weightedSum: 0, totalUnits: 0 };
+                                }
+
+                                normalizedScores[scholarId].weightedSum += units * normalizedGrade;
+                                normalizedScores[scholarId].totalUnits += units;
+                            });
+
+                            Object.entries(normalizedScores).forEach(([scholarId, summary]) => {
+                                if (summary.totalUnits > 0) {
+                                    academicMap[scholarId] = Number((summary.weightedSum / summary.totalUnits).toFixed(2));
+                                }
+                            });
                         }
 
                         const today = new Date();
@@ -125,15 +207,10 @@ exports.getFlaggedScholars = (req, res) => {
                             const sub = subMap[scholar.scholar_id] || null;
                             const att = attMap[scholar.scholar_id] || null;
 
-                            // FIX: mysql2 can return DECIMAL/ROUND(...) results as
-                            // STRINGS (e.g. "2.50") instead of numbers, depending on
-                            // driver config. Coerce to a real Number here, once, so
-                            // every downstream use (comparisons, .toFixed()) is safe.
-                            // If the value is somehow unparsable, treat it as "no GWA
-                            // on record" (null) instead of crashing the whole request.
-                            const gwaRaw = gpaMap[scholar.scholar_id] !== undefined ? gpaMap[scholar.scholar_id] : null;
-                            const gwaNum = gwaRaw !== null && gwaRaw !== undefined ? Number(gwaRaw) : null;
-                            const gwa = Number.isFinite(gwaNum) ? gwaNum : null;
+                            const normalizedAcademicScore = academicMap[scholar.scholar_id] !== undefined
+                                ? academicMap[scholar.scholar_id]
+                                : null;
+                            const academicStatus = getAcademicTier(normalizedAcademicScore);
 
                             const lastSub = sub?.last_submission ? new Date(sub.last_submission) : null;
                             const daysSinceSubmission = lastSub
@@ -224,8 +301,6 @@ exports.getFlaggedScholars = (req, res) => {
                                     avgQuality < 50 ? 'high' : 'medium');
                             }
 
-                            // 7. Academic status is recorded for context only
-                            const academicStatus = gwa !== null ? (gwa <= 2.5 ? 'good' : gwa <= 3.0 ? 'borderline' : 'at-risk') : 'no-record';
                             const averageQualityAndAttendance = (avgQuality !== null && attendanceRate !== null)
                                 ? Math.round((avgQuality + attendanceRate) / 2)
                                 : null;
@@ -270,7 +345,7 @@ exports.getFlaggedScholars = (req, res) => {
                                     present:              presentCount,
                                     absent:               att?.absent || 0,
                                     negative_letters:     negativeLetters,
-                                    gwa,
+                                    gwa: normalizedAcademicScore,
                                     min_compliance:        minComplianceNum,
                                     days_since_submission: daysSinceSubmission,
                                     last_submission:      sub?.last_submission || null,
