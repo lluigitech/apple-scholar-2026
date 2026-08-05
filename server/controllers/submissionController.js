@@ -7,6 +7,7 @@ const https = require('https');
 const { URL } = require('url');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { normalizeSubmissionValue } = require('../utils/submissionPayload');
+const { logComplianceIncident, clampCompliance, getComplianceSettings, calculateCurrentCompliance, resolveGradeScale } = require('../utils/complianceLogger');
 
 const normalizeQualityStatus = (value) => {
     const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
@@ -278,6 +279,19 @@ exports.submitCompliance = async (req, res) => {
                 console.error('DB error saving submission:', err);
                 return res.status(500).json({ error: 'Error saving submission' });
             }
+
+            calculateCurrentCompliance(scholar_id, (calcErr, currentCompliance) => {
+                if (!calcErr && typeof currentCompliance === 'number') {
+                    logComplianceIncident(
+                        scholar_id,
+                        'submission_created',
+                        0,
+                        currentCompliance,
+                        currentCompliance,
+                        `Compliance submission recorded for ${resolvedType}.`
+                    );
+                }
+            });
 
             const submissionId = result.insertId;
             const descriptions = JSON.parse(media_descriptions || '[]');
@@ -805,29 +819,39 @@ exports.submitGrades = (req, res) => {
         return res.status(400).json({ error: 'A photo of your Report Card / Grade Sheet is required as proof.' });
     }
 
-    for (const subj of subjects) {
-        if (!subj.subject_name || !subj.units || subj.grade === undefined) {
-            return res.status(400).json({ error: 'Each subject needs subject_name, units, and grade' });
-        }
-        const g = parseFloat(subj.grade);
-        if (isNaN(g) || g < 1.00 || g > 5.00) {
-            return res.status(400).json({ error: `Invalid grade for ${subj.subject_name}. Must be 1.00-5.00.` });
-        }
-    }
-
-    const proofPath = req.file.path; // Cloudinary URL
+    const proofPath = req.file.path;
 
     db.query(
-        'SELECT verification_status AS status FROM grades WHERE scholar_id = ? AND semester = ? AND academic_year = ? LIMIT 1',
-        [scholar_id, semester, academic_year],
-        (checkErr, checkData) => {
-            if (checkErr) {
-                return res.status(500).json({ error: 'Error checking existing submission' });
+        'SELECT year_level, verification_status AS status FROM users u LEFT JOIN grades g ON g.scholar_id = u.scholar_id AND g.semester = ? AND g.academic_year = ? WHERE u.scholar_id = ? LIMIT 1',
+        [semester, academic_year, scholar_id],
+        (userErr, userRows) => {
+            if (userErr) {
+                return res.status(500).json({ error: 'Error resolving scholar scale' });
             }
 
-            const existingStatus = checkData.length > 0 ? (checkData[0].status || 'pending') : null;
+            const yearLevel = userRows?.[0]?.year_level || '';
+            const gradeScale = resolveGradeScale(yearLevel);
 
-            // Only block resubmission if a submission exists AND it's NOT rejected.
+            for (const subj of subjects) {
+                if (!subj.subject_name || !subj.units || subj.grade === undefined) {
+                    return res.status(400).json({ error: 'Each subject needs subject_name, units, and grade' });
+                }
+                const g = parseFloat(subj.grade);
+                const validForScale = gradeScale === 'college'
+                    ? (!isNaN(g) && g >= 1.00 && g <= 5.00)
+                    : (!isNaN(g) && g >= 75 && g <= 100);
+
+                if (!validForScale) {
+                    return res.status(400).json({
+                        error: gradeScale === 'college'
+                            ? `Invalid grade for ${subj.subject_name}. Must be 1.00-5.00.`
+                            : `Invalid grade for ${subj.subject_name}. Must be 75-100 for K-12.`,
+                    });
+                }
+            }
+
+            const existingStatus = userRows?.[0]?.status || null;
+
             if (existingStatus && existingStatus !== 'rejected') {
                 return res.status(409).json({
                     error: `You have already submitted grades for ${semester} AY ${academic_year}. This semester is locked.`,
@@ -837,11 +861,11 @@ exports.submitGrades = (req, res) => {
             const insertRows = () => {
                 const values = subjects.map(s => [
                     scholar_id, semester, academic_year, s.subject_name,
-                    parseInt(s.units), parseFloat(s.grade), proofPath, 'pending',
+                    parseInt(s.units), parseFloat(s.grade), gradeScale, proofPath, 'pending',
                 ]);
 
                 const insertSql = `
-                    INSERT INTO grades (scholar_id, semester, academic_year, subject_name, units, grade, proof_path, verification_status)
+                    INSERT INTO grades (scholar_id, semester, academic_year, subject_name, units, grade, grade_scale, proof_path, verification_status)
                     VALUES ?
                 `;
 
@@ -850,6 +874,34 @@ exports.submitGrades = (req, res) => {
                         return res.status(500).json({ error: 'Error saving grades' });
                     }
 
+                    getComplianceSettings((settingsErr, settings) => {
+                        if (!settingsErr && settings) {
+                            const failingPredicate = (subjectGrade) => {
+                                const grade = parseFloat(subjectGrade);
+                                if (Number.isNaN(grade)) return false;
+                                if (gradeScale === 'college') return grade > 3.00;
+                                return grade < 75;
+                            };
+
+                            const failingSubjects = subjects.filter(s => failingPredicate(s.grade));
+                            if (failingSubjects.length > 0) {
+                                const points = failingSubjects.length * (settings.quality_drop_deduction ?? 4);
+                                calculateCurrentCompliance(scholar_id, (calcErr, currentCompliance) => {
+                                    if (!calcErr && typeof currentCompliance === 'number') {
+                                        logComplianceIncident(
+                                            scholar_id,
+                                            'failing_grade_submitted',
+                                            points,
+                                            currentCompliance,
+                                            clampCompliance(currentCompliance - points),
+                                            `Submitted ${failingSubjects.length} failing grade row(s) for ${semester} ${academic_year}.`
+                                        );
+                                    }
+                                });
+                            }
+                        }
+                    });
+
                     const totalUnits = subjects.reduce((sum, s) => sum + parseInt(s.units), 0);
                     const weightedSum = subjects.reduce((sum, s) => sum + parseInt(s.units) * parseFloat(s.grade), 0);
                     const gwa = totalUnits > 0 ? parseFloat((weightedSum / totalUnits).toFixed(2)) : null;
@@ -857,14 +909,14 @@ exports.submitGrades = (req, res) => {
                     res.status(201).json({
                         message: 'Grades submitted successfully and locked for this semester.',
                         semester, academic_year, gwa,
-                        status: gwa !== null ? (gwa <= 3.00 ? 'passed' : 'failed') : 'pending',
+                        status: gwa !== null
+                            ? (gradeScale === 'college' ? (gwa <= 3.00 ? 'passed' : 'failed') : (gwa >= 75 ? 'passed' : 'failed'))
+                            : 'pending',
                     });
                 });
             };
 
-            if (existingStatus === 'rejected') {
-                // Clear out the old rejected rows so the resubmission is a clean
-                // replacement rather than piling up duplicate semester rows.
+            if (userRows?.[0]?.status === 'rejected') {
                 db.query(
                     'DELETE FROM grades WHERE scholar_id = ? AND semester = ? AND academic_year = ?',
                     [scholar_id, semester, academic_year],

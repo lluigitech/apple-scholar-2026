@@ -4,6 +4,7 @@ const QRCode = require('qrcode');
 const fs     = require('fs');
 const path   = require('path');
 const { sendAnnouncementNotifyEmails, sendWelcomeEmail } = require('../utils/notifyHelpers');
+const { logComplianceIncident, clampCompliance, getComplianceSettings, calculateCurrentCompliance, resolveGradeScale } = require('../utils/complianceLogger');
 
 // ─── ID Generators ────────────────────────────────────────────
 const generateId = (prefix, padLength, cb) => {
@@ -334,17 +335,50 @@ exports.addScholarGrade = (req, res) => {
     if (!semester || !academic_year || !subject_name || !units || grade === undefined)
         return res.status(400).json({ error: 'Missing required fields' });
 
-    db.query('SELECT scholar_id FROM users WHERE id = ?', [req.params.id], (lookupErr, lookupData) => {
+    db.query('SELECT scholar_id, year_level FROM users WHERE id = ?', [req.params.id], (lookupErr, lookupData) => {
         if (lookupErr)          return res.status(500).json({ error: 'Error resolving scholar' });
         if (!lookupData.length) return res.status(404).json({ error: 'Scholar not found' });
 
         const scholarId = lookupData[0].scholar_id;
+        const gradeScale = resolveGradeScale(lookupData[0].year_level || '');
+        const parsedGrade = parseFloat(grade);
+        const validForScale = gradeScale === 'college'
+            ? (!isNaN(parsedGrade) && parsedGrade >= 1.00 && parsedGrade <= 5.00)
+            : (!isNaN(parsedGrade) && parsedGrade >= 75 && parsedGrade <= 100);
+
+        if (!validForScale) {
+            return res.status(400).json({
+                error: gradeScale === 'college'
+                    ? 'Invalid grade. Must be 1.00-5.00 for college.'
+                    : 'Invalid grade. Must be 75-100 for K-12.',
+            });
+        }
+
         const sql = `
-            INSERT INTO grades (scholar_id, semester, academic_year, subject_name, units, grade, verification_status)
-            VALUES (?, ?, ?, ?, ?, ?, 'approved')
+            INSERT INTO grades (scholar_id, semester, academic_year, subject_name, units, grade, grade_scale, verification_status)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'approved')
         `;
-        db.query(sql, [scholarId, semester, academic_year, subject_name, parseInt(units), parseFloat(grade)], (err, result) => {
+        db.query(sql, [scholarId, semester, academic_year, subject_name, parseInt(units), parsedGrade, gradeScale], (err, result) => {
             if (err) return res.status(500).json({ error: 'Error saving grade' });
+
+            getComplianceSettings((settingsErr, settings) => {
+                if (!settingsErr && settings) {
+                    const points = settings.quality_drop_deduction ?? 4;
+                    calculateCurrentCompliance(scholarId, (calcErr, currentCompliance) => {
+                        if (!calcErr && typeof currentCompliance === 'number' && parsedGrade > (gradeScale === 'college' ? 3.00 : 75)) {
+                            logComplianceIncident(
+                                scholarId,
+                                'failing_grade_submitted',
+                                points,
+                                currentCompliance,
+                                clampCompliance(currentCompliance - points),
+                                `Admin-added failing grade recorded for ${semester} ${academic_year}.`
+                            );
+                        }
+                    });
+                }
+            });
+
             res.status(201).json({ message: 'Grade added successfully', id: result.insertId });
         });
     });

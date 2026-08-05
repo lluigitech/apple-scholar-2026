@@ -54,11 +54,16 @@ CREATE TABLE IF NOT EXISTS grades (
   subject_name VARCHAR(255) NOT NULL,
   units DECIMAL(4,2) DEFAULT 0.00,
   grade DECIMAL(5,2) DEFAULT 0.00,
+  grade_scale ENUM('k12', 'college') NOT NULL DEFAULT 'k12',
   proof_path VARCHAR(500) DEFAULT NULL,
   verification_status VARCHAR(64) DEFAULT 'pending',
   officer_comment TEXT DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+ALTER TABLE grades
+  ADD COLUMN grade_scale ENUM('k12', 'college') NOT NULL DEFAULT 'k12'
+  AFTER grade;
 
 CREATE TABLE IF NOT EXISTS compliance_settings (
   id INT PRIMARY KEY,
@@ -75,6 +80,39 @@ CREATE TABLE IF NOT EXISTS compliance_settings (
   good_maintenance_bonus INT NOT NULL DEFAULT 5,
   updated_by INT DEFAULT NULL,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS compliance_incident_log (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  scholar_id VARCHAR(64) NOT NULL,
+  incident_type VARCHAR(64) NOT NULL,
+  deduction_points INT NOT NULL DEFAULT 0,
+  before_compliance DECIMAL(5,2) DEFAULT NULL,
+  after_compliance DECIMAL(5,2) DEFAULT NULL,
+  details TEXT DEFAULT NULL,
+  triggered_by INT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS compliance_bonus_log (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  scholar_id VARCHAR(64) NOT NULL,
+  bonus_type VARCHAR(64) NOT NULL,
+  bonus_points INT NOT NULL DEFAULT 0,
+  before_compliance DECIMAL(5,2) DEFAULT NULL,
+  after_compliance DECIMAL(5,2) DEFAULT NULL,
+  details TEXT DEFAULT NULL,
+  triggered_by INT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS scholar_interventions (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  scholar_id VARCHAR(64) NOT NULL,
+  type VARCHAR(64) NOT NULL,
+  note TEXT DEFAULT NULL,
+  performed_by INT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS notification_logs (

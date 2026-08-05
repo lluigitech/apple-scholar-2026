@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { calculateComplianceScore } = require('../utils/complianceLogger');
 
 const normalizeAcademicGrade = (gradeScale, rawGrade) => {
     const gradeValue = Number(rawGrade);
@@ -179,30 +180,6 @@ exports.getFlaggedScholars = (req, res) => {
                         const today = new Date();
                         const results = [];
 
-                        const minComplianceNum = settings && settings.min_compliance ? parseFloat(settings.min_compliance) : 70;
-                        const requiredHoursNum = settings && settings.required_hours ? parseInt(settings.required_hours, 10) : 0;
-                        const allowedMissedNum = settings && settings.allowed_missed ? parseInt(settings.allowed_missed, 10) : 0;
-
-                        const penalties = {
-                            missedSubmission:      settings.missed_submission_deduction ?? defaults.missed_submission_deduction,
-                            serviceHourShortfall:  settings.service_hour_shortfall_deduction ?? defaults.service_hour_shortfall_deduction,
-                            absentDuty:            settings.absent_duty_deduction ?? defaults.absent_duty_deduction,
-                            lateSubmission:        settings.late_submission_deduction ?? defaults.late_submission_deduction,
-                            negativeLetter:        settings.negative_letter_deduction ?? defaults.negative_letter_deduction,
-                            qualityDrop:           settings.quality_drop_deduction ?? defaults.quality_drop_deduction,
-                            extraServiceBonus:     settings.extra_service_bonus ?? defaults.extra_service_bonus,
-                            goodMaintenanceBonus:  settings.good_maintenance_bonus ?? defaults.good_maintenance_bonus,
-                        };
-
-                        const currentYear = today.getFullYear();
-                        const termStart = today.getMonth() < 6 ? new Date(currentYear, 0, 1) : new Date(currentYear, 6, 1);
-                        const termEnd = today.getMonth() < 6 ? new Date(currentYear, 5, 30) : new Date(currentYear, 11, 31);
-                        const termDays = Math.max(1, Math.ceil((termEnd - termStart + 1) / (1000 * 60 * 60 * 24)));
-                        const elapsedTermDays = Math.max(1, Math.min(termDays, Math.ceil((today - termStart + 1) / (1000 * 60 * 60 * 24))));
-                        const termProgress = Math.min(1, Math.max(0, elapsedTermDays / termDays));
-                        const expectedReports = Math.max(1, Math.round(6 * termProgress));
-                        const requiredHoursTarget = Math.max(0, Math.round(requiredHoursNum * termProgress));
-
                         scholars.forEach(scholar => {
                             const sub = subMap[scholar.scholar_id] || null;
                             const att = attMap[scholar.scholar_id] || null;
@@ -212,118 +189,86 @@ exports.getFlaggedScholars = (req, res) => {
                                 : null;
                             const academicStatus = getAcademicTier(normalizedAcademicScore);
 
-                            const lastSub = sub?.last_submission ? new Date(sub.last_submission) : null;
-                            const daysSinceSubmission = lastSub
-                                ? Math.floor((today - lastSub) / (1000 * 60 * 60 * 24))
-                                : null; // null = wala pang submission kahit isa
-
-                            const totalDuties    = att?.total_duties || 0;
-                            const presentCount   = att?.present || 0;
-                            const attendanceRate = totalDuties > 0
-                                ? Math.round((presentCount / totalDuties) * 100)
-                                : null; // null = walang naka-schedule na duty pa, hindi dapat parusahan
-
-                            const avgQuality        = sub?.avg_quality ? Math.round(sub.avg_quality) : null;
-                            const negativeLetters    = sub?.negative_letters || 0;
-                            const totalSubs          = sub?.total_submissions || 0;
-                            const totalServiceHours  = sub?.total_service_hours || 0;
-
+                            const score = calculateComplianceScore({ sub, att, settings, today });
+                            const overallCompliance = score.overallCompliance;
+                            const riskScore = score.riskScore;
                             const flags = [];
-                            let totalDeduction = 0;
 
-                            const addDeduction = (points, type, description, severity) => {
-                                totalDeduction += points;
-                                if (points <= 0) return;
+                            const addFlag = (type, description, severity) => {
                                 flags.push({ type, description, severity });
                             };
 
-                            // 1. Missed submissions (strong incident-based deduction)
-                            {
-                                const reportsTarget = Math.max(0, expectedReports - allowedMissedNum);
-                                const missingReports = Math.max(0, reportsTarget - totalSubs);
-                                const points = missingReports * penalties.missedSubmission;
-                                addDeduction(points, 'Missed Submission',
-                                    missingReports === 0
-                                        ? `Submitted ${totalSubs} reports, meeting expected target of ${reportsTarget}.`
-                                        : `${missingReports} missing report${missingReports === 1 ? '' : 's'} out of ${reportsTarget} expected (term progress ${Math.round(termProgress * 100)}%)`,
-                                    missingReports >= 2 ? 'high' : 'medium');
+                            if (score.deductions.missedSubmission.points > 0) {
+                                addFlag(
+                                    'Missed Submission',
+                                    score.deductions.missedSubmission.missingReports === 0
+                                        ? `Submitted ${sub?.total_submissions || 0} reports, meeting expected target of ${score.deductions.missedSubmission.reportsTarget}.`
+                                        : `${score.deductions.missedSubmission.missingReports} missing report${score.deductions.missedSubmission.missingReports === 1 ? '' : 's'} out of ${score.deductions.missedSubmission.reportsTarget} expected (term progress ${Math.round((Math.max(1, Math.min(365, Math.ceil((today - new Date(today.getFullYear(), today.getMonth() < 6 ? 0 : 6, 1) + 1) / (1000 * 60 * 60 * 24))) / Math.max(1, Math.ceil((new Date(today.getFullYear(), today.getMonth() < 6 ? 5 : 11, 31) - new Date(today.getFullYear(), today.getMonth() < 6 ? 0 : 6, 1) + 1) / (1000 * 60 * 60 * 24)))) * 100))}%)`,
+                                    score.deductions.missedSubmission.missingReports >= 2 ? 'high' : 'medium'
+                                );
                             }
 
-                            // 2. Service hours shortfall (per-hour deduction)
-                            {
-                                const missingHours = Math.max(0, requiredHoursTarget - totalServiceHours);
-                                const points = Math.round(missingHours * penalties.serviceHourShortfall);
-                                addDeduction(points, 'Insufficient Service Hours',
-                                    missingHours === 0
-                                        ? `Completed service hours for current term progress (${totalServiceHours}/${requiredHoursTarget}h).`
-                                        : `Short by ${missingHours} service hour${missingHours === 1 ? '' : 's'} for current term progress.`,
-                                    missingHours >= 5 ? 'high' : 'medium');
+                            if (score.deductions.serviceHourShortfall.points > 0) {
+                                addFlag(
+                                    'Insufficient Service Hours',
+                                    score.deductions.serviceHourShortfall.missingHours === 0
+                                        ? `Completed service hours for current term progress (${score.stats.total_service_hours}/${score.deductions.serviceHourShortfall.requiredHoursTarget}h).`
+                                        : `Short by ${score.deductions.serviceHourShortfall.missingHours} service hour${score.deductions.serviceHourShortfall.missingHours === 1 ? '' : 's'} for current term progress.`,
+                                    score.deductions.serviceHourShortfall.missingHours >= 5 ? 'high' : 'medium'
+                                );
                             }
 
-                            // 3. Duty absence incidents
-                            if (attendanceRate !== null) {
-                                const absentCount = att?.absent || 0;
-                                const points = absentCount * penalties.absentDuty;
-                                addDeduction(points, 'Absent Duty',
-                                    absentCount === 0
-                                        ? `No duty absences recorded (${presentCount}/${totalDuties} present).`
-                                        : `${absentCount} missed duty attendance${absentCount === 1 ? '' : 's'} out of ${totalDuties}`,
-                                    absentCount >= 2 ? 'high' : 'medium');
+                            if (score.deductions.absentDuty.points > 0) {
+                                addFlag(
+                                    'Absent Duty',
+                                    `${score.deductions.absentDuty.absentCount} missed duty attendance${score.deductions.absentDuty.absentCount === 1 ? '' : 's'} out of ${score.stats.total_duties}`,
+                                    score.deductions.absentDuty.absentCount >= 2 ? 'high' : 'medium'
+                                );
                             }
 
-                            // 4. Late submissions (stale reporting)
-                            {
-                                const daysLate = daysSinceSubmission === null ? 999 : Math.max(0, daysSinceSubmission - 30);
-                                const periodsLate = Math.ceil(daysLate / 30);
-                                const points = daysSinceSubmission === null ? penalties.lateSubmission * 2 : Math.min(penalties.lateSubmission * periodsLate, penalties.lateSubmission * 4);
-                                addDeduction(points, 'Late Submission',
-                                    daysSinceSubmission === null
+                            if (score.deductions.lateSubmission.points > 0) {
+                                addFlag(
+                                    'Late Submission',
+                                    score.deductions.lateSubmission.daysSinceSubmission === null
                                         ? 'No reports submitted yet.'
-                                        : `Last submission was ${daysSinceSubmission} days ago.`,
-                                    daysSinceSubmission === null || daysLate >= 60 ? 'high' : 'medium');
+                                        : `Last submission was ${score.deductions.lateSubmission.daysSinceSubmission} days ago.`,
+                                    score.deductions.lateSubmission.daysSinceSubmission === null ? 'high' : 'medium'
+                                );
                             }
 
-                            // 5. Negative sentiment incidents
-                            if (negativeLetters > 0) {
-                                const points = negativeLetters * penalties.negativeLetter;
-                                addDeduction(points, 'Negative Sentiment',
-                                    `${negativeLetters} letter${negativeLetters === 1 ? '' : 's'} flagged for negative sentiment`,
-                                    negativeLetters >= 2 ? 'high' : 'medium');
+                            if (score.deductions.negativeLetter.points > 0) {
+                                addFlag(
+                                    'Negative Sentiment',
+                                    `${score.deductions.negativeLetter.negativeLetters} letter${score.deductions.negativeLetter.negativeLetters === 1 ? '' : 's'} flagged for negative sentiment`,
+                                    score.deductions.negativeLetter.negativeLetters >= 2 ? 'high' : 'medium'
+                                );
                             }
 
-                            // 6. Quality drop incidents
-                            if (avgQuality !== null && avgQuality < 70) {
-                                const delta = Math.max(0, 70 - avgQuality);
-                                const buckets = Math.ceil(delta / 10);
-                                const points = Math.min(buckets * penalties.qualityDrop, penalties.qualityDrop * 3);
-                                addDeduction(points, 'Low Quality Score',
-                                    `Average submission quality is ${avgQuality}%`,
-                                    avgQuality < 50 ? 'high' : 'medium');
+                            if (score.deductions.qualityDrop.points > 0) {
+                                addFlag(
+                                    'Low Quality Score',
+                                    `Average submission quality is ${score.deductions.qualityDrop.avgQuality}%`,
+                                    score.deductions.qualityDrop.avgQuality < 50 ? 'high' : 'medium'
+                                );
                             }
 
-                            const averageQualityAndAttendance = (avgQuality !== null && attendanceRate !== null)
-                                ? Math.round((avgQuality + attendanceRate) / 2)
-                                : null;
-
-                            // 8. Bonus credits for over-compliance
-                            if (totalServiceHours > requiredHoursNum) {
-                                const bonus = Math.round((totalServiceHours - requiredHoursNum) * penalties.extraServiceBonus);
-                                totalDeduction = Math.max(0, totalDeduction - bonus);
-                                if (bonus > 0) {
-                                    flags.push({ type: 'Extra Service Hours', description: `Completed ${totalServiceHours} service hours, ${bonus} bonus deduction removed`, severity: 'low' });
-                                }
+                            if (score.deductions.extraServiceBonus.points > 0) {
+                                addFlag(
+                                    'Extra Service Hours',
+                                    `Completed ${score.deductions.extraServiceBonus.totalServiceHours} service hours, ${score.deductions.extraServiceBonus.points} bonus deduction removed`,
+                                    'low'
+                                );
                             }
 
-                            if (averageQualityAndAttendance !== null && averageQualityAndAttendance >= 85 && totalSubs >= allowedMissedNum + 1) {
-                                const bonus = penalties.goodMaintenanceBonus;
-                                totalDeduction = Math.max(0, totalDeduction - bonus);
-                                flags.push({ type: 'Good Compliance Maintenance', description: `Low-risk performance earned ${bonus} bonus deduction reduction`, severity: 'low' });
+                            if (score.deductions.goodMaintenanceBonus.points > 0) {
+                                addFlag(
+                                    'Good Compliance Maintenance',
+                                    `Low-risk performance earned ${score.deductions.goodMaintenanceBonus.points} bonus deduction reduction`,
+                                    'low'
+                                );
                             }
 
-                            const overallCompliance = Math.max(0, Math.min(100, 100 - totalDeduction));
-                            const riskScore = 100 - overallCompliance;
-
-                            if (overallCompliance >= minComplianceNum || flags.length === 0) return;
+                            if (overallCompliance >= score.minComplianceNum || flags.length === 0) return;
 
                             results.push({
                                 scholar_id:   scholar.scholar_id,
@@ -336,18 +281,18 @@ exports.getFlaggedScholars = (req, res) => {
                                 flags,
                                 academic_status: academicStatus,
                                 stats: {
-                                    total_submissions:    totalSubs,
+                                    total_submissions:    sub?.total_submissions || 0,
                                     approved:             sub?.approved || 0,
                                     rejected:             sub?.rejected || 0,
-                                    avg_quality:          avgQuality ?? 0,
-                                    attendance_rate:      attendanceRate ?? 0,
-                                    total_duties:         totalDuties,
-                                    present:              presentCount,
-                                    absent:               att?.absent || 0,
-                                    negative_letters:     negativeLetters,
+                                    avg_quality:          sub?.avg_quality ? Math.round(sub.avg_quality) : 0,
+                                    attendance_rate:      score.stats.attendance_rate ?? 0,
+                                    total_duties:         score.stats.total_duties,
+                                    present:              score.stats.present,
+                                    absent:               score.stats.absent,
+                                    negative_letters:     score.stats.negative_letters,
                                     gwa: normalizedAcademicScore,
-                                    min_compliance:        minComplianceNum,
-                                    days_since_submission: daysSinceSubmission,
+                                    min_compliance:        score.minComplianceNum,
+                                    days_since_submission: score.stats.days_since_submission,
                                     last_submission:      sub?.last_submission || null,
                                 },
                             });

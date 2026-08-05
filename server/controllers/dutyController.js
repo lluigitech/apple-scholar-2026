@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const crypto = require('crypto');
 const { sendDutyNotifyEmails } = require('../utils/notifyHelpers');
+const { logComplianceIncident, clampCompliance, getComplianceSettings, calculateCurrentCompliance } = require('../utils/complianceLogger');
 
 // ─── CREATE DUTY (now with QR token + group assignment) ──────
 // NOTE: na-merge na ito galing sa staffController.js version -- mas kumpleto
@@ -325,6 +326,27 @@ exports.markAttendance = (req, res) => {
                     [status, method || 'manual', id, scholar_id],
                     (err) => {
                         if (err) return res.status(500).json({ error: 'Error updating attendance' });
+
+                        if (status === 'absent') {
+                            getComplianceSettings((settingsErr, settings) => {
+                                if (!settingsErr && settings) {
+                                    const points = settings.absent_duty_deduction ?? 6;
+                                    calculateCurrentCompliance(scholar_id, (calcErr, currentCompliance) => {
+                                        if (!calcErr && typeof currentCompliance === 'number') {
+                                            logComplianceIncident(
+                                                scholar_id,
+                                                'duty_absence_recorded',
+                                                points,
+                                                currentCompliance,
+                                                clampCompliance(currentCompliance - points),
+                                                `Duty attendance marked absent for duty ${id}.`
+                                            );
+                                        }
+                                    });
+                                }
+                            });
+                        }
+
                         res.json({ message: 'Attendance updated' });
                     }
                 );
@@ -334,6 +356,27 @@ exports.markAttendance = (req, res) => {
                     [id, scholar_id, status, method || 'manual'],
                     (err) => {
                         if (err) return res.status(500).json({ error: 'Error marking attendance' });
+
+                        if (status === 'absent') {
+                            getComplianceSettings((settingsErr, settings) => {
+                                if (!settingsErr && settings) {
+                                    const points = settings.absent_duty_deduction ?? 6;
+                                    calculateCurrentCompliance(scholar_id, (calcErr, currentCompliance) => {
+                                        if (!calcErr && typeof currentCompliance === 'number') {
+                                            logComplianceIncident(
+                                                scholar_id,
+                                                'duty_absence_recorded',
+                                                points,
+                                                currentCompliance,
+                                                clampCompliance(currentCompliance - points),
+                                                `Duty attendance marked absent for duty ${id}.`
+                                            );
+                                        }
+                                    });
+                                }
+                            });
+                        }
+
                         res.json({ message: 'Attendance marked' });
                     }
                 );
