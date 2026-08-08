@@ -6,6 +6,7 @@ const { verifyToken, requireRole } = require('../../middleware/authMiddleware');
 router.get('/profile/:id',    scholar.getProfile);
 router.patch('/profile/:id',  verifyToken, requireRole(['scholar']), scholar.updateProfile);
 router.get('/announcements',  scholar.getAnnouncements);
+router.get('/compliance-status', verifyToken, requireRole(['scholar']), scholar.getComplianceStatus);
 
 // Duty by Group -- protected: scholar_id galing sa JWT (req.user.scholar_id),
 // hindi na sa URL, para hindi pwede palitan/i-spoof

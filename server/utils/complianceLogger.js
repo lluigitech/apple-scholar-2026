@@ -41,6 +41,66 @@ const resolveGradeScale = (yearLevel) => {
     return 'k12';
 };
 
+const normalizeAcademicGrade = (gradeScale, rawGrade) => {
+    const gradeValue = Number(rawGrade);
+    if (!Number.isFinite(gradeValue)) return null;
+
+    if (gradeScale === 'k12') {
+        return Math.max(0, Math.min(100, gradeValue));
+    }
+
+    if (gradeScale === 'college') {
+        const collegeScaleMap = {
+            1.00: 100,
+            1.25: 96,
+            1.50: 92,
+            1.75: 88,
+            2.00: 84,
+            2.25: 80,
+            2.50: 76,
+            2.75: 72,
+            3.00: 68,
+            3.25: 64,
+            3.50: 60,
+            3.75: 56,
+            4.00: 52,
+            4.25: 48,
+            4.50: 44,
+            4.75: 40,
+            5.00: 36,
+        };
+
+        const exactMatch = collegeScaleMap[gradeValue];
+        if (exactMatch !== undefined) {
+            return exactMatch;
+        }
+
+        const clamped = Math.max(1, Math.min(5, gradeValue));
+        const floorKey = Math.floor(clamped * 4) / 4;
+        const ceilKey = Math.ceil(clamped * 4) / 4;
+
+        const floorValue = collegeScaleMap[floorKey];
+        const ceilValue = collegeScaleMap[ceilKey];
+
+        if (floorValue === undefined || ceilValue === undefined) {
+            return null;
+        }
+
+        const ratio = (clamped - floorKey) / (ceilKey - floorKey || 1);
+        return Math.round((floorValue + (ceilValue - floorValue) * ratio));
+    }
+
+    return null;
+};
+
+const getAcademicTier = (normalizedScore) => {
+    if (normalizedScore === null || normalizedScore === undefined) return 'No Academic Record';
+
+    if (normalizedScore >= 90) return 'Good Standing';
+    if (normalizedScore >= 80) return 'Academic Watch';
+    return 'Academic Probation';
+};
+
 const calculateComplianceScore = ({
     sub = null,
     att = null,
@@ -265,6 +325,8 @@ module.exports = {
     clampCompliance,
     getComplianceSettings,
     resolveGradeScale,
+    normalizeAcademicGrade,
+    getAcademicTier,
     calculateComplianceScore,
     calculateCurrentCompliance,
     logComplianceIncident,

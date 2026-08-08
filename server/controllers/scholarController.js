@@ -1,4 +1,5 @@
 const db = require('../config/db');
+const { calculateComplianceScore, getAcademicTier, normalizeAcademicGrade } = require('../utils/complianceLogger');
 
 const ALL_LEVELS = [
     'grade_7', 'grade_8', 'grade_9', 'grade_10',
@@ -95,6 +96,181 @@ exports.getAnnouncements = (req, res) => {
             });
 
         res.json(results);
+    });
+};
+
+// ─── SCHOLAR COMPLIANCE STATUS ─────────────────────────────────
+exports.getComplianceStatus = (req, res) => {
+    const scholar_id = req.user?.scholar_id;
+    if (!scholar_id) {
+        return res.status(403).json({ error: 'Scholar identity missing from token.' });
+    }
+
+    const settingsSql = `
+        SELECT id, min_compliance, allowed_missed, required_hours,
+            missed_submission_deduction, service_hour_shortfall_deduction,
+            absent_duty_deduction, late_submission_deduction,
+            negative_letter_deduction, quality_drop_deduction,
+            extra_service_bonus, good_maintenance_bonus
+        FROM compliance_settings WHERE id = 1 LIMIT 1
+    `;
+
+    const scholarSql = `
+        SELECT u.year_level, g.units, g.grade, g.grade_scale
+        FROM users u
+        LEFT JOIN grades g ON g.scholar_id = u.scholar_id
+        WHERE u.scholar_id = ?
+    `;
+
+    db.query(settingsSql, (settingsErr, settingsRows) => {
+        if (settingsErr) {
+            console.error('getComplianceStatus settings error:', settingsErr);
+            return res.status(500).json({ error: 'Error loading compliance settings.' });
+        }
+
+        const settings = (settingsRows && settingsRows[0]) ? settingsRows[0] : null;
+
+        db.query(
+            `
+                SELECT
+                    COUNT(*) AS total_submissions,
+                    SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved,
+                    SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
+                    SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending,
+                    AVG(quality_score) AS avg_quality,
+                    SUM(CASE WHEN service_hours IS NOT NULL THEN service_hours ELSE 0 END) AS total_service_hours,
+                    MAX(submitted_at) AS last_submission,
+                    SUM(CASE WHEN sentiment_label LIKE '%Negative%' THEN 1 ELSE 0 END) AS negative_letters
+                FROM submissions
+                WHERE scholar_id = ?
+            `,
+            [scholar_id],
+            (subErr, subRows) => {
+                if (subErr) {
+                    console.error('getComplianceStatus submissions error:', subErr);
+                    return res.status(500).json({ error: 'Error loading submission metrics.' });
+                }
+
+                db.query(
+                    `
+                        SELECT
+                            COUNT(*) AS total_duties,
+                            SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) AS present,
+                            SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) AS absent
+                        FROM duty_attendance
+                        WHERE scholar_id = ?
+                    `,
+                    [scholar_id],
+                    (attErr, attRows) => {
+                        if (attErr) {
+                            console.error('getComplianceStatus attendance error:', attErr);
+                            return res.status(500).json({ error: 'Error loading attendance metrics.' });
+                        }
+
+                        db.query(scholarSql, [scholar_id], (gradeErr, gradeRows) => {
+                            if (gradeErr) {
+                                console.error('getComplianceStatus grades error:', gradeErr);
+                                return res.status(500).json({ error: 'Error loading academic grades.' });
+                            }
+
+                            const sub = subRows && subRows[0] ? subRows[0] : null;
+                            const att = attRows && attRows[0] ? attRows[0] : null;
+                            const score = calculateComplianceScore({ sub, att, settings, today: new Date() });
+
+                            const academicGrades = Array.isArray(gradeRows) ? gradeRows : [];
+                            let weightedSum = 0;
+                            let totalUnits = 0;
+
+                            academicGrades.forEach((row) => {
+                                const gradeScale = row.grade_scale || 'k12';
+                                const normalized = normalizeAcademicGrade(gradeScale, row.grade);
+                                const units = Number(row.units) || 0;
+                                if (normalized === null || units <= 0) return;
+                                weightedSum += units * normalized;
+                                totalUnits += units;
+                            });
+
+                            const academicScore = totalUnits > 0
+                                ? Number((weightedSum / totalUnits).toFixed(2))
+                                : null;
+                            const academicStatus = getAcademicTier(academicScore);
+
+                            const scholarFlags = [];
+                            if (score.deductions.serviceHourShortfall.points > 0) {
+                                scholarFlags.push({
+                                    type: 'Service Hours',
+                                    description: score.deductions.serviceHourShortfall.missingHours === 0
+                                        ? 'You are meeting your current service hours target for this term.'
+                                        : `You are ${score.deductions.serviceHourShortfall.missingHours} service hour${score.deductions.serviceHourShortfall.missingHours === 1 ? '' : 's'} short of your current target.`,
+                                    severity: score.deductions.serviceHourShortfall.missingHours >= 5 ? 'medium' : 'low',
+                                });
+                            }
+                            if (score.deductions.missedSubmission.points > 0) {
+                                scholarFlags.push({
+                                    type: 'Monthly Report',
+                                    description: score.deductions.missedSubmission.missingReports === 0
+                                        ? 'You are keeping up with your monthly reports.'
+                                        : `You are missing ${score.deductions.missedSubmission.missingReports} monthly report${score.deductions.missedSubmission.missingReports === 1 ? '' : 's'} for the current term progress.`,
+                                    severity: score.deductions.missedSubmission.missingReports >= 2 ? 'medium' : 'low',
+                                });
+                            }
+                            if (score.deductions.absentDuty.points > 0) {
+                                scholarFlags.push({
+                                    type: 'Duty Attendance',
+                                    description: `${score.deductions.absentDuty.absentCount} duty absence${score.deductions.absentDuty.absentCount === 1 ? '' : 's'} recorded.`,
+                                    severity: score.deductions.absentDuty.absentCount >= 2 ? 'medium' : 'low',
+                                });
+                            }
+                            if (score.deductions.lateSubmission.points > 0) {
+                                scholarFlags.push({
+                                    type: 'Report Timeliness',
+                                    description: score.deductions.lateSubmission.daysSinceSubmission === null
+                                        ? 'No reports submitted yet for this term.'
+                                        : `Your last report was submitted ${score.deductions.lateSubmission.daysSinceSubmission} day${score.deductions.lateSubmission.daysSinceSubmission === 1 ? '' : 's'} ago.`,
+                                    severity: 'medium',
+                                });
+                            }
+                            if (score.deductions.negativeLetter.points > 0) {
+                                scholarFlags.push({
+                                    type: 'Letter Sentiment',
+                                    description: `You have ${score.deductions.negativeLetter.negativeLetters} letter${score.deductions.negativeLetter.negativeLetters === 1 ? '' : 's'} that need a more positive tone.`,
+                                    severity: 'low',
+                                });
+                            }
+                            if (score.deductions.qualityDrop.points > 0) {
+                                scholarFlags.push({
+                                    type: 'Letter Quality',
+                                    description: `Your average submission quality is ${score.deductions.qualityDrop.avgQuality}%.`,
+                                    severity: score.deductions.qualityDrop.avgQuality < 50 ? 'medium' : 'low',
+                                });
+                            }
+                            if (score.deductions.extraServiceBonus.points > 0) {
+                                scholarFlags.push({
+                                    type: 'Service Bonus',
+                                    description: 'You have extra service hours and are earning bonus credit toward your compliance score.',
+                                    severity: 'low',
+                                });
+                            }
+                            if (score.deductions.goodMaintenanceBonus.points > 0) {
+                                scholarFlags.push({
+                                    type: 'Good Progress',
+                                    description: 'Your consistent work has earned you a maintenance bonus.',
+                                    severity: 'low',
+                                });
+                            }
+
+                            res.json({
+                                overall_compliance: score.overallCompliance,
+                                risk_level: score.riskScore >= 60 ? 'high' : score.riskScore >= 40 ? 'medium' : 'low',
+                                flags: scholarFlags,
+                                academic_status: academicStatus,
+                                normalized_academic_score: academicScore,
+                            });
+                        });
+                    }
+                );
+            }
+        );
     });
 };
 

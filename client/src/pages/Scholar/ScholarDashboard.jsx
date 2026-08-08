@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import useComplianceStatus from '../../hooks/useComplianceStatus';
 import {
     CheckCircle, XCircle, Clock, AlertTriangle,
     Megaphone, ChevronRight, FileText, Upload,
@@ -13,7 +14,11 @@ const authHeader = () => {
 };
 
 const ScholarDashboard = () => {
+    const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/+$|\/$/g, '');
+    const API = API_BASE.endsWith('/api') ? API_BASE : `${API_BASE}/api`;
+
     const navigate = useNavigate();
+    const { data: complianceData, loading: complianceLoading, error: complianceError, refetch: refreshCompliance } = useComplianceStatus();
     const name = localStorage.getItem('name');
     const scholarId = localStorage.getItem('scholar_id');
     const [latestSubmission, setLatestSubmission] = useState(null);
@@ -24,10 +29,10 @@ const ScholarDashboard = () => {
         const fetchData = async () => {
             try {
                 const [subRes, annRes] = await Promise.allSettled([
-                    axios.get(`http://localhost:5000/api/submission/history/${scholarId}`, {
+                    axios.get(`${API}/submission/history/${scholarId}`, {
                         headers: authHeader(),
                     }),
-                    axios.get('http://localhost:5000/api/scholar/announcements', {
+                    axios.get(`${API}/scholar/announcements`, {
                         headers: authHeader(),
                     }),
                 ]);
@@ -63,6 +68,27 @@ const ScholarDashboard = () => {
         return 'bg-red-400';
     };
 
+    const getComplianceLabel = (value) => {
+        if (value >= 90) return 'Excellent';
+        if (value >= 80) return 'Good Standing';
+        if (value >= 70) return 'Low Risk';
+        if (value >= 50) return 'Medium Risk';
+        return 'High Risk';
+    };
+
+    const getComplianceBadge = (value) => {
+        if (value >= 90) return 'bg-emerald-50 text-emerald-700';
+        if (value >= 80) return 'bg-sky-50 text-sky-700';
+        if (value >= 70) return 'bg-amber-50 text-amber-700';
+        if (value >= 50) return 'bg-orange-50 text-orange-700';
+        return 'bg-red-50 text-red-700';
+    };
+
+    const complianceScore = complianceData?.overall_compliance ?? null;
+    const complianceLabel = complianceScore !== null ? getComplianceLabel(complianceScore) : 'Loading...';
+    const complianceBadgeClass = complianceScore !== null ? getComplianceBadge(complianceScore) : 'bg-slate-100 text-slate-500';
+    const topFlags = complianceData?.flags?.slice(0, 2) ?? [];
+
     const Skeleton = ({ className }) => (
         <div className={`animate-pulse bg-slate-100 rounded-2xl ${className}`} />
     );
@@ -82,21 +108,49 @@ const ScholarDashboard = () => {
 
             {loading ? (
                 <div className="space-y-4">
-                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                        {Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-28" />)}
+                    <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                        <Skeleton className="h-28" />
+                        <div className="grid grid-cols-2 gap-4">
+                            {Array(3).fill(0).map((_, i) => <Skeleton key={i} className="h-28" />)}
+                        </div>
                     </div>
                     <Skeleton className="h-40" />
                 </div>
             ) : (
                 <>
                     {/* Stat Cards */}
-                    <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-8 font-sans">
+                    <section className="grid grid-cols-1 xl:grid-cols-4 gap-3 sm:gap-4 mb-8 font-sans">
                         <div className="bg-white border border-slate-100 rounded-[1.75rem] p-5 shadow-sm">
                             <div className="w-9 h-9 bg-[#7f2d3a]/10 text-[#7f2d3a] rounded-xl flex items-center justify-center mb-4">
                                 <TrendingUp size={18} />
                             </div>
-                            <p className="text-2xl font-black text-slate-900">{progressPercent}%</p>
-                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Compliance Rate</p>
+                            <p className="text-2xl font-black text-slate-900">{complianceScore !== null ? `${Math.round(complianceScore)}%` : '—'}</p>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Compliance Credits</p>
+                            <div className={`inline-flex items-center gap-2 mt-3 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wider ${complianceBadgeClass}`}>
+                                <span>{complianceLabel}</span>
+                            </div>
+                            <div className="mt-4 space-y-2">
+                                {complianceLoading ? (
+                                    <p className="text-xs text-slate-400">Loading compliance details…</p>
+                                ) : complianceError ? (
+                                    <p className="text-xs text-red-500">Unable to load compliance status.</p>
+                                ) : topFlags.length ? (
+                                    topFlags.map((flag, index) => (
+                                        <div key={index} className="rounded-2xl bg-slate-50 p-3 text-xs text-slate-600">
+                                            {flag.description}
+                                        </div>
+                                    ))
+                                ) : (
+                                    <p className="text-xs text-slate-400">No active compliance flags. Keep it up!</p>
+                                )}
+                            </div>
+                            <button
+                                type="button"
+                                onClick={refreshCompliance}
+                                className="mt-4 inline-flex items-center justify-center rounded-full border border-[#7f2d3a] px-3 py-2 text-[10px] font-black uppercase tracking-widest text-[#7f2d3a] hover:bg-[#7f2d3a]/5 transition"
+                            >
+                                Refresh
+                            </button>
                         </div>
                         <div className="bg-white border border-slate-100 rounded-[1.75rem] p-5 shadow-sm">
                             <div className="w-9 h-9 bg-emerald-50 text-emerald-600 rounded-xl flex items-center justify-center mb-4">

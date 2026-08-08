@@ -120,6 +120,10 @@ const initializeDatabase = () => {
             password VARCHAR(255) NOT NULL,
             role ENUM('admin','scholar','staff','officer') NOT NULL DEFAULT 'scholar',
             year_level VARCHAR(64) DEFAULT NULL,
+            phone VARCHAR(64) DEFAULT NULL,
+            address VARCHAR(255) DEFAULT NULL,
+            course VARCHAR(255) DEFAULT NULL,
+            school VARCHAR(255) DEFAULT NULL,
             qr_code VARCHAR(255) DEFAULT NULL,
             status VARCHAR(32) DEFAULT 'active',
             must_change_password TINYINT DEFAULT 1,
@@ -130,6 +134,48 @@ const initializeDatabase = () => {
         if (userErr) {
             console.error('Failed to ensure users table:', userErr.message);
             return;
+        }
+
+        const allowUserProfileColumnMigration =
+            process.env.ALLOW_AUTO_USER_PROFILE_MIGRATION === 'true' ||
+            process.env.NODE_ENV !== 'production';
+
+        if (!allowUserProfileColumnMigration) {
+            console.log('Skipping users profile column auto-migration in production.');
+        } else {
+            const requiredProfileColumns = {
+                phone: 'VARCHAR(64) DEFAULT NULL',
+                address: 'VARCHAR(255) DEFAULT NULL',
+                course: 'VARCHAR(255) DEFAULT NULL',
+                school: 'VARCHAR(255) DEFAULT NULL',
+            };
+
+            db.query('SHOW COLUMNS FROM users', (colErr, colRows) => {
+                if (colErr) {
+                    console.error('Failed to inspect users columns:', colErr.message);
+                    return;
+                }
+
+                const existingColumns = new Set(colRows.map((row) => row.Field));
+                const missing = Object.entries(requiredProfileColumns)
+                    .filter(([column]) => !existingColumns.has(column));
+
+                if (missing.length === 0) {
+                    console.log('✅ Users profile columns already present.');
+                } else {
+                    const alterSql = 'ALTER TABLE users ' + missing
+                        .map(([column, definition]) => `ADD COLUMN ${column} ${definition}`)
+                        .join(', ');
+                    console.log('Adding missing users profile columns:', missing.map(([column]) => column).join(', '));
+                    db.query(alterSql, (alterErr) => {
+                        if (alterErr) {
+                            console.error('Failed to add missing users profile columns:', alterErr.message);
+                        } else {
+                            console.log('✅ Added missing users profile columns:', missing.map(([column]) => column).join(', '));
+                        }
+                    });
+                }
+            });
         }
 
         db.query(`

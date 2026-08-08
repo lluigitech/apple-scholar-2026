@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import useComplianceStatus from '../../hooks/useComplianceStatus';
 import {
   User, BookOpen, Heart, FileText, TrendingUp,
   CheckCircle, XCircle, Clock, AlertTriangle, ChevronDown, ChevronUp, Pencil,
 } from 'lucide-react';
 
-const API_BASE = 'http://localhost:5000/api';
-const SUBMISSION_API = `${API_BASE}/submission`;
+const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/+$|\/$/g, '');
+const API = API_BASE.endsWith('/api') ? API_BASE : `${API_BASE}/api`;
+const SUBMISSION_API = `${API}/submission`;
 
 // ── Token system ──────────────────────────────────────────
 // Deep maroon carries authority/brand, gold is the "seal" accent.
@@ -59,6 +61,7 @@ function formatDate(value) {
 const ScholarProfile = () => {
   const userId = localStorage.getItem('id');
   const scholarId = localStorage.getItem('scholar_id');
+  const { data: complianceData, loading: complianceLoading, error: complianceError, refetch: refreshCompliance } = useComplianceStatus();
   const [profile, setProfile] = useState(null);
   const [grades, setGrades] = useState([]);
   const [history, setHistory] = useState([]);
@@ -84,10 +87,10 @@ const ScholarProfile = () => {
       setError('');
       try {
         const [profileRes, historyRes, gradesRes, dutiesRes] = await Promise.allSettled([
-          axios.get(`${API_BASE}/scholar/profile/${userId}`, { headers: authHeader() }),
+          axios.get(`${API}/scholar/profile/${userId}`, { headers: authHeader() }),
           axios.get(`${SUBMISSION_API}/history/${scholarId}`, { headers: authHeader() }),
           axios.get(`${SUBMISSION_API}/grades/${scholarId}`, { headers: authHeader() }),
-          axios.get(`${API_BASE}/scholar/my-duties`, { headers: authHeader() }),
+          axios.get(`${API}/scholar/my-duties`, { headers: authHeader() }),
         ]);
         if (profileRes.status === 'fulfilled') setProfile(profileRes.value.data);
         if (historyRes.status === 'fulfilled') setHistory(historyRes.value.data || []);
@@ -233,6 +236,26 @@ const ScholarProfile = () => {
   const displayYearLevel = profile?.year_level || 'N/A';
   const displayId = profile?.scholar_id || localStorage.getItem('scholar_id') || 'N/A';
   const displayStatus = profile?.status || 'Active';
+
+  const getComplianceLabel = (value) => {
+    if (value >= 90) return 'Excellent';
+    if (value >= 80) return 'Good Standing';
+    if (value >= 70) return 'Low Risk';
+    if (value >= 50) return 'Medium Risk';
+    return 'High Risk';
+  };
+
+  const getBadgeStyles = (value) => {
+    if (value >= 90) return 'bg-emerald-50 text-emerald-700';
+    if (value >= 80) return 'bg-sky-50 text-sky-700';
+    if (value >= 70) return 'bg-amber-50 text-amber-700';
+    if (value >= 50) return 'bg-orange-50 text-orange-700';
+    return 'bg-red-50 text-red-700';
+  };
+
+  const complianceScore = complianceData?.overall_compliance ?? null;
+  const complianceLabel = complianceScore !== null ? getComplianceLabel(complianceScore) : 'Loading...';
+  const complianceBadgeClass = complianceScore !== null ? getBadgeStyles(complianceScore) : 'bg-slate-100 text-slate-500';
 
   const serif = { fontFamily: "'Playfair Display', serif" };
   const sans = { fontFamily: "'DM Sans', sans-serif" };
@@ -385,6 +408,74 @@ const ScholarProfile = () => {
       </div>
 
       <div className="px-4 sm:px-6 lg:p-8 lg:pt-0">
+        <div className="grid gap-5 mb-8">
+          <div className="rounded-3xl bg-white p-6 shadow-sm border border-slate-100">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400 mb-2">Scholar Compliance Snapshot</p>
+                <h2 className="text-3xl font-black text-slate-900">{complianceScore !== null ? `${Math.round(complianceScore)}%` : '—'}</h2>
+                <p className={`inline-flex items-center rounded-full px-3 py-1 mt-3 text-xs font-black uppercase tracking-[0.2em] ${complianceBadgeClass}`}>
+                  {complianceLabel}
+                </p>
+              </div>
+              <div className="text-sm text-slate-500 max-w-xl">
+                <p className="font-semibold text-slate-700">Academic status:</p>
+                <p>{complianceData?.academic_status || 'No academic score available yet.'}</p>
+                <p className="mt-3">This shows your current compliance score and the top actions that can improve it.</p>
+              </div>
+            </div>
+
+            <div className="mt-6 border-t border-slate-100 pt-5">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Active flags</p>
+                  <p className="text-sm text-slate-600">Keep track of what to address next.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={refreshCompliance}
+                  className="text-[10px] font-black uppercase tracking-[0.2em] text-[#7f2d3a] hover:text-[#4f1620]"
+                >
+                  Refresh
+                </button>
+              </div>
+
+              <div className="mt-4 space-y-3">
+                {complianceLoading ? (
+                  <p className="text-sm text-slate-400">Loading compliance data…</p>
+                ) : complianceError ? (
+                  <p className="text-sm text-red-500">Unable to load compliance status right now.</p>
+                ) : complianceData?.flags?.length ? (
+                  complianceData?.flags?.map((flag, index) => (
+                    <div key={index} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                      <p className="text-sm font-semibold text-slate-900">{flag.type}</p>
+                      <p className="mt-1 text-sm text-slate-600">{flag.description}</p>
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
+                    <p className="text-sm font-semibold text-slate-900">No current flags</p>
+                    <p className="mt-1 text-sm text-slate-600">Your score is on track. Keep submitting on time and completing your service hours.</p>
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-6 rounded-2xl bg-[#f8fafc] p-4 text-sm text-slate-600">
+                <p className="font-semibold text-slate-800">Recovery tip</p>
+                <p className="mt-2">Completing one more service hour or submitting your next report early can help raise your score and keep you in good standing.</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-3xl bg-slate-50 p-6 border border-slate-100">
+            <h3 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500 mb-3">Academic status</h3>
+            <p className="text-lg font-bold text-slate-900 mb-1">{complianceData?.academic_status || 'No academic status yet'}</p>
+            <p className="text-sm text-slate-600">This is separate from your compliance score and reflects how your recent grades are performing.</p>
+            {complianceData?.normalized_academic_score !== null && (
+              <p className="mt-4 text-sm text-slate-700">Current normalized academic score: {complianceData?.normalized_academic_score}</p>
+            )}
+          </div>
+        </div>
         {/* ── Compliance ledger meter — floats up over the hero ── */}
         <div
           className="relative -mt-10 sm:-mt-12 mb-8 sm:mb-10 p-5 sm:p-6 rounded-2xl bg-white"
