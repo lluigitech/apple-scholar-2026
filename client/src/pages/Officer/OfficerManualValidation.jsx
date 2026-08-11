@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import axios from 'axios';
 import {
   Shield, Search, ChevronDown, ChevronUp, CheckCircle2, XCircle,
@@ -8,6 +8,7 @@ import {
 // Reusing your existing shared components instead of duplicating them
 import FilePreviewModal from '../../components/Officer/ManualValidation/FilePreviewModal';
 import ReviewModal from '../../components/Officer/ManualValidation/ReviewModal';
+import { LetterDocumentCard } from '../../components/Officer/ManualValidation/CorrespondenceTab';
 import { fileKind } from '../../utils/submissionHelpers';
 
 const API = 'http://localhost:5000/api';
@@ -106,6 +107,10 @@ const ReviewControls = ({ item, onReview, onOpenReject, busy }) => {
 
 const LetterItem = ({ item, onReview, onOpenReject, busy, onPreview }) => {
   const [open, setOpen] = useState(false);
+  const backendRoot = API.replace(/\/api$/, '');
+  const generatedPdfUrl = item.generated_pdf_path ? `${backendRoot}${item.generated_pdf_path}` : null;
+  const generatedPdfSrc = generatedPdfUrl ? `${generatedPdfUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH` : null;
+
   return (
     <div className="rounded-xl border border-slate-100 p-4 mb-2 bg-white">
       <div className="flex items-start justify-between gap-3">
@@ -121,6 +126,7 @@ const LetterItem = ({ item, onReview, onOpenReject, busy, onPreview }) => {
               </span>
             )}
           </div>
+
           <p className="text-xs text-slate-600 leading-relaxed" style={{
             display: '-webkit-box',
             WebkitLineClamp: open ? 'unset' : 2,
@@ -136,7 +142,37 @@ const LetterItem = ({ item, onReview, onOpenReject, busy, onPreview }) => {
             </button>
           )}
 
-          {item.media?.length > 0 && (
+          {item.generated_pdf_path && (
+            <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-500 font-black">Generated PDF</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-800">Letter template preview available</p>
+                </div>
+                <button onClick={() => onPreview(item.generated_pdf_path, 'Generated PDF')}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wide text-white"
+                  style={{ backgroundColor: '#2563eb' }}>
+                  <ExternalLink size={14} />
+                  Open PDF
+                </button>
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">This PDF was generated automatically from the submitted letter and scholar profile.</p>
+            </div>
+          )}
+
+          {open ? (
+            <div className="mt-4 space-y-4">
+              {item.generated_pdf_path && (
+                <button onClick={() => onPreview(item.generated_pdf_path, 'Generated PDF')}
+                  className="flex items-center gap-2 px-3 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wide transition-opacity hover:opacity-85"
+                  style={{ backgroundColor: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe' }}>
+                  <ExternalLink size={14} />
+                  View generated PDF
+                </button>
+              )}
+              <LetterDocumentCard sub={item} />
+            </div>
+          ) : item.media?.length > 0 ? (
             <div className="flex flex-wrap gap-2 mt-3">
               {/* NOTE: scholar's photo description/comment is intentionally NOT passed here
                   and NOT shown as a label — that field stays hidden from the officer side. */}
@@ -149,7 +185,7 @@ const LetterItem = ({ item, onReview, onOpenReject, busy, onPreview }) => {
                 </button>
               ))}
             </div>
-          )}
+          ) : null}
         </div>
         <div className="flex-shrink-0">
           <ReviewControls item={item} onReview={onReview} onOpenReject={onOpenReject} busy={busy} />
@@ -347,7 +383,7 @@ const OfficerManualValidation = () => {
   // Shared in-page file preview (same component used by OfficerManualValidation.jsx)
   const [filePreview, setFilePreview] = useState(null); // { url, kind, label }
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       const res = await axios.get(`${API}/submission/scholar-view`, { headers: authHeader() });
@@ -357,9 +393,13 @@ const OfficerManualValidation = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    (async () => {
+      await fetchData();
+    })();
+  }, [fetchData]);
 
   // Accept = instant, no modal needed. Branches to the grades-specific
   // endpoint when the item is a semester grades submission (no single `id`).
@@ -424,11 +464,13 @@ const OfficerManualValidation = () => {
 
   const handlePreview = (path, label = 'File Preview', description = null) => {
     if (!path) return;
-    const proxied = path.includes('res.cloudinary.com')
-      ? `${API}/submission/preview?url=${encodeURIComponent(path)}`
-      : path;
-    setFilePreview({ url: proxied, kind: fileKind(path), label, description });
-  };
+    const backendRoot = API.replace(/\/api$/, '');
+    const normalized = path.startsWith('/') ? `${backendRoot}${path}` : path;
+    const proxied = normalized.includes('res.cloudinary.com')
+      ? `${API}/submission/preview?url=${encodeURIComponent(normalized)}`
+      : normalized;
+    setFilePreview({ url: proxied, kind: fileKind(normalized), label, description });
+  }; 
 
   const filtered = scholars.filter(s => {
     const q = search.trim().toLowerCase();

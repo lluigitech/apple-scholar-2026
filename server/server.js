@@ -164,12 +164,44 @@ const initializeDatabase = () => {
                     console.log('✅ Users profile columns already present.');
                 } else {
                     const alterSql = 'ALTER TABLE users ' + missing
-                        .map(([column, definition]) => `ADD COLUMN ${column} ${definition}`)
+                        .map(([column, definition]) => `ADD COLUMN IF NOT EXISTS ${column} ${definition}`)
                         .join(', ');
                     console.log('Adding missing users profile columns:', missing.map(([column]) => column).join(', '));
                     db.query(alterSql, (alterErr) => {
                         if (alterErr) {
-                            console.error('Failed to add missing users profile columns:', alterErr.message);
+                            console.error('Failed to add missing users profile columns using IF NOT EXISTS:', alterErr.message);
+                            console.error('Users profile column migration failed. The following columns may still be missing: %s', missing.map(([column]) => column).join(', '));
+                            console.error('Please add them manually or retry after resolving any table lock issues. Example SQL:');
+                            missing.forEach(([column, definition]) => {
+                                console.error(`  ALTER TABLE users ADD COLUMN ${column} ${definition};`);
+                            });
+
+                            const fallbackQueries = missing.map(
+                                ([column, definition]) => `ALTER TABLE users ADD COLUMN ${column} ${definition}`
+                            );
+
+                            const runFallback = (index = 0) => {
+                                if (index >= fallbackQueries.length) {
+                                    console.log('Completed fallback users profile column migration.');
+                                    return;
+                                }
+
+                                db.query(fallbackQueries[index], (fallbackErr) => {
+                                    const fieldName = missing[index][0];
+                                    if (fallbackErr) {
+                                        if (fallbackErr.message.includes('Duplicate column name')) {
+                                            console.warn(`Column already exists: ${fieldName}`);
+                                        } else {
+                                            console.error(`Failed to add ${fieldName}:`, fallbackErr.message);
+                                        }
+                                    } else {
+                                        console.log(`✅ Added missing users profile column: ${fieldName}`);
+                                    }
+                                    runFallback(index + 1);
+                                });
+                            };
+
+                            runFallback();
                         } else {
                             console.log('✅ Added missing users profile columns:', missing.map(([column]) => column).join(', '));
                         }
@@ -247,7 +279,15 @@ const initializeDatabase = () => {
         ADD COLUMN IF NOT EXISTS negative_letter_deduction INT NOT NULL DEFAULT 8,
         ADD COLUMN IF NOT EXISTS quality_drop_deduction INT NOT NULL DEFAULT 4,
         ADD COLUMN IF NOT EXISTS extra_service_bonus INT NOT NULL DEFAULT 2,
-        ADD COLUMN IF NOT EXISTS good_maintenance_bonus INT NOT NULL DEFAULT 5;
+        ADD COLUMN IF NOT EXISTS good_maintenance_bonus INT NOT NULL DEFAULT 5,
+        ADD COLUMN IF NOT EXISTS missed_submission_grace_count INT NOT NULL DEFAULT 2,
+        ADD COLUMN IF NOT EXISTS late_submission_grace_count INT NOT NULL DEFAULT 2,
+        ADD COLUMN IF NOT EXISTS recovery_enabled TINYINT(1) NOT NULL DEFAULT 1,
+        ADD COLUMN IF NOT EXISTS early_submission_bonus DECIMAL(4,2) NOT NULL DEFAULT 0.50,
+        ADD COLUMN IF NOT EXISTS service_hours_completion_bonus DECIMAL(4,2) NOT NULL DEFAULT 2.00,
+        ADD COLUMN IF NOT EXISTS consecutive_early_bonus DECIMAL(4,2) NOT NULL DEFAULT 1.00,
+        ADD COLUMN IF NOT EXISTS perfect_attendance_bonus DECIMAL(4,2) NOT NULL DEFAULT 0.50,
+        ADD COLUMN IF NOT EXISTS monthly_recovery_cap DECIMAL(4,2) NOT NULL DEFAULT 3.00;
     `, (alterErr) => {
         if (alterErr) console.error('Failed to add compliance_settings fields:', alterErr);
         else console.log('✅ compliance_settings fields ensured');
@@ -269,6 +309,31 @@ const initializeDatabase = () => {
     `, (alterErr) => {
         if (alterErr) console.error('Failed to ensure submissions schema:', alterErr);
         else console.log('✅ submissions table schema ensured');
+    });
+
+    // Speed up Scholar queries by indexing common filter columns.
+    db.query(`
+        ALTER TABLE submissions
+        ADD INDEX IF NOT EXISTS idx_submissions_scholar_id (scholar_id);
+    `, (idxErr) => {
+        if (idxErr) console.error('Failed to add submissions scholar_id index:', idxErr.message);
+        else console.log('✅ submissions.scholar_id index ensured');
+    });
+
+    db.query(`
+        ALTER TABLE duty_attendance
+        ADD INDEX IF NOT EXISTS idx_duty_attendance_scholar_id (scholar_id);
+    `, (idxErr) => {
+        if (idxErr) console.error('Failed to add duty_attendance scholar_id index:', idxErr.message);
+        else console.log('✅ duty_attendance.scholar_id index ensured');
+    });
+
+    db.query(`
+        ALTER TABLE submission_media
+        ADD INDEX IF NOT EXISTS idx_submission_media_submission_id (submission_id);
+    `, (idxErr) => {
+        if (idxErr) console.error('Failed to add submission_media submission_id index:', idxErr.message);
+        else console.log('✅ submission_media.submission_id index ensured');
     });
 
     // Ensure tasks table exists
@@ -293,9 +358,15 @@ const initializeDatabase = () => {
     });
 };
 
+const enableDbAutoMigration = process.env.DB_AUTO_MIGRATION !== 'false';
+
 db.ready
     .then(() => {
-        initializeDatabase();
+        if (enableDbAutoMigration) {
+            initializeDatabase();
+        } else {
+            console.log('Skipping automatic DB schema migration because DB_AUTO_MIGRATION=false');
+        }
     })
     .catch((err) => {
         console.error('Database initialization skipped because the connection is not ready:', err.message || err);

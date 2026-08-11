@@ -14,25 +14,30 @@ import {
    ──────────────────────────────────────────────────────────────────────── */
 const API = 'http://localhost:5000/api';
 const SUBMISSION_API = `${API}/submission`;
-const MAROON = '#7f2d3a'; // aligned with the rest of the portals (Admin/Officer/Staff)
+
+// ── Token system — shared across the Scholar Portal ──
+const MAROON = '#7f2d3a';
+const MAROON_DEEP = '#4f1620';
+const GOLD = '#b98b4e';
+const IVORY = '#FBF7F2';
+const INK = '#241512';
 
 const token = () => localStorage.getItem('token');
 const authHeaders = () => ({ headers: { Authorization: `Bearer ${token()}` } });
 const scholarId = () => localStorage.getItem('scholar_id');
 const yearLevel = () => localStorage.getItem('year_level') || '';
 
-/* ── Card "look" config, keyed by type — same palette family used in
-   PRIORITY_CONFIG across the Announcement pages ──────────────────────── */
+/* ── Card "look" config, keyed by type — recolored onto the shared palette ── */
 const typeConfig = {
-  task:      { icon: ClipboardCheck, bg: '#fef3c7', text: '#92400e', border: '#fcd34d', label: 'Task'            },
-  deadline:  { icon: Clock,          bg: '#fef9c3', text: '#b45309', border: '#fde68a', label: 'Deadline'        },
-  reminder:  { icon: Bell,           bg: '#dbeafe', text: '#1e40af', border: '#93c5fd', label: 'Reminder'        },
-  approved:  { icon: CheckCircle,    bg: '#dcfce7', text: '#15803d', border: '#bbf7d0', label: 'Approved'        },
-  rejected:  { icon: XCircle,        bg: '#fee2e2', text: '#991b1b', border: '#fecaca', label: 'Returned'        },
-  pending:   { icon: Clock,          bg: '#fef9c3', text: '#854d0e', border: '#fde68a', label: 'Pending Review'  },
-  critical:  { icon: AlertCircle,    bg: '#fee2e2', text: '#991b1b', border: '#fca5a5', label: 'Critical'        },
-  important: { icon: AlertTriangle,  bg: '#fef3c7', text: '#92400e', border: '#fcd34d', label: 'Important'       },
-  info:      { icon: Info,           bg: '#dbeafe', text: '#1e40af', border: '#93c5fd', label: 'Info'            },
+  task:      { icon: ClipboardCheck, dot: MAROON,    bg: '#F5E8EA', text: MAROON,     label: 'Task'            },
+  deadline:  { icon: Clock,          dot: GOLD,       bg: '#F6EFE1', text: '#8a6a3a',  label: 'Deadline'        },
+  reminder:  { icon: Bell,           dot: GOLD,       bg: '#F6EFE1', text: '#8a6a3a',  label: 'Reminder'        },
+  approved:  { icon: CheckCircle,    dot: '#15803d',  bg: '#EAF3EC', text: '#15803d',  label: 'Approved'        },
+  rejected:  { icon: XCircle,        dot: '#991b1b',  bg: '#FBE9E9', text: '#991b1b',  label: 'Returned'        },
+  pending:   { icon: Clock,          dot: '#92400e',  bg: '#FBF0DE', text: '#92400e',  label: 'Pending Review'  },
+  critical:  { icon: AlertCircle,    dot: '#991b1b',  bg: '#FBE9E9', text: '#991b1b',  label: 'Critical'        },
+  important: { icon: AlertTriangle,  dot: '#92400e',  bg: '#FBF0DE', text: '#92400e',  label: 'Important'       },
+  info:      { icon: Info,           dot: GOLD,       bg: '#F6EFE1', text: '#8a6a3a',  label: 'Info'            },
 };
 
 const sourceConfig = {
@@ -262,30 +267,42 @@ function ScholarNotification() {
     total: feed.length,
   };
 
-  return (
-    <div className="min-h-screen bg-slate-50/50 p-4 sm:p-6 font-sans">
+  const serif = { fontFamily: "'Playfair Display', serif" };
+  const sans = { fontFamily: "'DM Sans', sans-serif" };
 
-      {/* Header */}
-      <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm mb-6">
-        <span
-          className="text-[10px] font-black uppercase tracking-[0.2em] px-3 py-1 rounded-full"
-          style={{ background: '#F5E8EA', color: MAROON }}
+  return (
+    <div style={{ ...sans, background: IVORY, minHeight: '100vh' }}>
+
+      {/* ── Hero band ─────────────────────────────────────── */}
+      <div
+        className="relative overflow-hidden px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 pb-14 sm:pb-16"
+        style={{ background: `linear-gradient(135deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)` }}
+      >
+        <svg
+          className="absolute -right-8 -top-10 w-52 h-52 sm:-right-6 sm:-top-8 sm:w-64 sm:h-64 opacity-[0.14] pointer-events-none"
+          viewBox="0 0 200 200"
+          fill="none"
         >
-          Scholar Portal
-        </span>
-        <div className="flex items-start justify-between mt-2 gap-4 flex-wrap">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight font-serif">
-              Notifications
-            </h1>
-            <p className="text-xs text-slate-400 mt-1">
-              Tasks, deadline alerts, and updates — all in one place.
+          <path
+            d="M100 62c-6-14-20-24-36-24-4 0-8 1-8 1s-2 10 4 22c5 10 15 18 26 19-4 12-6 26-6 38 0 34 18 62 40 62 8 0 12-4 20-4s12 4 20 4c22 0 40-30 40-64 0-24-12-42-30-42-8 0-14 4-20 4s-10-3-16-6c2-11 8-20 16-25-2-1-6-2-10-2-16 0-30 8-40 17z"
+            fill={GOLD}
+          />
+          <path d="M100 62c2-16 10-30 22-38" stroke={GOLD} strokeWidth="6" strokeLinecap="round" />
+        </svg>
+
+        <div className="relative flex items-start justify-between gap-4 flex-wrap">
+          <div className="min-w-0">
+            <p className="text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.2em] sm:tracking-[0.25em] mb-2" style={{ color: GOLD }}>
+              Scholar Portal
             </p>
+            <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-white" style={serif}>Notifications</h1>
+            <p className="text-xs mt-2" style={{ color: '#e9c9a8' }}>Tasks, deadline alerts, and updates — all in one place.</p>
           </div>
           {unread > 0 && (
             <button
               onClick={markAllRead}
-              className="shrink-0 flex items-center gap-2 px-4 py-2.5 border border-slate-200 text-slate-500 text-xs font-black uppercase tracking-widest rounded-2xl hover:bg-slate-50 transition-all"
+              className="shrink-0 flex items-center gap-2 px-4 py-2.5 text-xs font-bold uppercase tracking-wider rounded-full transition-colors"
+              style={{ background: 'rgba(255,255,255,0.12)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)' }}
             >
               Mark all read
             </button>
@@ -293,191 +310,222 @@ function ScholarNotification() {
         </div>
       </div>
 
-      {/* Summary Cards */}
-      <div className="grid grid-cols-3 gap-3 mb-5">
-        <div className="rounded-2xl p-4 text-center" style={{ background: '#fee2e2' }}>
-          <p className="text-2xl font-black font-serif" style={{ color: '#991b1b' }}>{counts.critical}</p>
-          <p className="text-[10px] font-bold uppercase tracking-wider mt-0.5" style={{ color: '#991b1b' }}>Critical</p>
-        </div>
-        <div className="rounded-2xl p-4 text-center" style={{ background: '#fef3c7' }}>
-          <p className="text-2xl font-black font-serif" style={{ color: '#92400e' }}>{counts.tasks}</p>
-          <p className="text-[10px] font-bold uppercase tracking-wider mt-0.5" style={{ color: '#92400e' }}>Open Tasks</p>
-        </div>
-        <div className="bg-white border border-slate-100 rounded-2xl p-4 text-center">
-          <p className="text-2xl font-black font-serif text-slate-700">{unread}</p>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mt-0.5">Unread</p>
-        </div>
-      </div>
+      <div className="px-4 sm:px-6 lg:p-8 lg:pt-0">
 
-      {/* Upcoming Deadlines */}
-      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm p-5 mb-5">
-        <div className="flex items-center gap-2 mb-3">
-          <Calendar size={15} style={{ color: MAROON }} />
-          <h3 className="text-sm font-bold text-slate-800">Upcoming Deadlines</h3>
+        {/* ── Summary strip — floats over the hero ────────────── */}
+        <div
+          className="relative -mt-8 sm:-mt-10 mb-6 sm:mb-8 rounded-2xl bg-white overflow-hidden"
+          style={{ boxShadow: '0 12px 30px -12px rgba(79,22,32,0.25)' }}
+        >
+          <div className="grid grid-cols-3 divide-x divide-slate-100">
+            <div className="p-4 sm:p-5 text-center">
+              <p className="text-2xl sm:text-3xl font-bold" style={{ ...serif, color: '#991b1b' }}>{counts.critical}</p>
+              <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: '#c9a9b0' }}>Critical</p>
+            </div>
+            <div className="p-4 sm:p-5 text-center">
+              <p className="text-2xl sm:text-3xl font-bold" style={{ ...serif, color: '#92400e' }}>{counts.tasks}</p>
+              <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: '#c9a9b0' }}>Open Tasks</p>
+            </div>
+            <div className="p-4 sm:p-5 text-center">
+              <p className="text-2xl sm:text-3xl font-bold" style={{ ...serif, color: MAROON }}>{unread}</p>
+              <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: '#c9a9b0' }}>Unread</p>
+            </div>
+          </div>
         </div>
-        {deadlines.length === 0 ? (
-          <p className="text-xs text-slate-400">No upcoming deadlines. 🎉</p>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {deadlines.map((d, i) => (
-              <div
-                key={i}
-                className="flex items-center justify-between p-3 rounded-xl gap-2"
-                style={{ background: d.urgent ? '#fef9c3' : '#f8fafc' }}
-              >
-                <div className="flex items-center gap-2 min-w-0">
-                  <FileText size={13} className="flex-shrink-0" style={{ color: d.urgent ? '#b45309' : '#94a3b8' }} />
-                  <span className="text-xs font-bold text-slate-700 truncate">{d.task}</span>
+
+        {/* ── Upcoming Deadlines — a horizontal countdown ribbon ── */}
+        <div className="rounded-2xl bg-white p-5 mb-6" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)' }}>
+          <div className="flex items-center gap-2 mb-3">
+            <Calendar size={15} style={{ color: MAROON }} />
+            <h3 className="text-sm font-bold" style={{ ...serif, color: INK }}>Upcoming Deadlines</h3>
+          </div>
+          {deadlines.length === 0 ? (
+            <p className="text-xs text-slate-400">No upcoming deadlines.</p>
+          ) : (
+            <div className="flex gap-3 overflow-x-auto pb-1">
+              {deadlines.map((d, i) => (
+                <div
+                  key={i}
+                  className="flex-shrink-0 rounded-xl px-4 py-3 min-w-[140px]"
+                  style={{ background: d.urgent ? '#FBF0DE' : IVORY, border: `1px solid ${d.urgent ? '#f3d9a6' : '#f0e6e0'}` }}
+                >
+                  <p className="text-2xl font-bold leading-none" style={{ ...serif, color: d.urgent ? '#92400e' : MAROON }}>
+                    {d.daysLeft >= 0 ? d.daysLeft : '—'}
+                  </p>
+                  <p className="text-[9px] font-bold uppercase tracking-widest mt-1" style={{ color: d.urgent ? '#92400e' : '#a89890' }}>
+                    {d.daysLeft >= 0 ? 'days left' : 'overdue'}
+                  </p>
+                  <p className="text-xs font-semibold mt-1.5 truncate" style={{ color: INK }}>{d.task}</p>
                 </div>
-                <span className="text-[10px] font-black uppercase tracking-wider flex-shrink-0" style={{ color: d.urgent ? '#b45309' : '#64748b' }}>
-                  {d.daysLeft >= 0 ? `${d.daysLeft}d left` : 'Overdue'}
-                </span>
-              </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Search + Type Dropdown */}
+        <div className="flex flex-col sm:flex-row gap-3 mb-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-4 top-3.5" size={16} style={{ color: '#c9b3b8' }} />
+            <input
+              type="text"
+              placeholder="Search notifications..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              className="w-full bg-white pl-11 pr-4 py-3 text-sm rounded-2xl outline-none transition-all placeholder:text-slate-300"
+              style={{ border: '1px solid #f0e6e0', boxShadow: '0 8px 24px -16px rgba(36,21,18,0.15)' }}
+              onFocus={e => (e.target.style.borderColor = MAROON)}
+              onBlur={e => (e.target.style.borderColor = '#f0e6e0')}
+            />
+          </div>
+          <div className="relative sm:w-56 shrink-0">
+            <select
+              value={typeFilter}
+              onChange={e => setTypeFilter(e.target.value)}
+              className="w-full appearance-none bg-white pl-4 pr-9 py-3 text-sm font-bold rounded-2xl outline-none transition-all cursor-pointer capitalize"
+              style={{ border: '1px solid #f0e6e0', boxShadow: '0 8px 24px -16px rgba(36,21,18,0.15)', color: '#374151' }}
+            >
+              {TYPE_FILTERS.map(f => (
+                <option key={f} value={f} className="capitalize">{f === 'all' ? 'All Types' : f}</option>
+              ))}
+            </select>
+            <ChevronDown size={15} className="absolute right-3.5 top-3.5 pointer-events-none" style={{ color: '#c9b3b8' }} />
+          </div>
+        </div>
+
+        <div className="flex gap-6 mb-6 flex-wrap border-b" style={{ borderColor: '#f0e6e0' }}>
+          {SOURCE_TABS.map(f => (
+            <button
+              key={f.key}
+              onClick={() => setSourceFilter(f.key)}
+              className="text-xs pb-2.5 font-bold uppercase tracking-wider transition-colors"
+              style={{
+                color: sourceFilter === f.key ? MAROON : '#c9b3b8',
+                borderBottom: sourceFilter === f.key ? `2px solid ${MAROON}` : '2px solid transparent',
+                marginBottom: -1,
+              }}
+            >
+              {f.label}
+            </button>
+          ))}
+        </div>
+
+        {/* ── Feed — a connected activity timeline ────────────── */}
+        {loading ? (
+          <div className="space-y-3 pt-2">
+            {Array(4).fill(0).map((_, i) => (
+              <div key={i} className="animate-pulse rounded-2xl h-20" style={{ background: '#EFE7E2' }} />
             ))}
+          </div>
+        ) : feed.length === 0 ? (
+          <div className="bg-white rounded-[2rem] p-16 text-center" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)' }}>
+            <Bell size={40} className="mx-auto mb-3" style={{ color: '#e9d9dc' }} />
+            <p className="text-sm font-bold" style={{ color: '#c9b3b8' }}>No notifications for this filter.</p>
+          </div>
+        ) : (
+          <div className="relative pb-8">
+            {/* the spine — turns the feed into one continuous timeline instead of loose cards */}
+            <div className="absolute left-[7px] top-2 bottom-2 w-px" style={{ background: '#ecdfe1' }} />
+
+            <div className="space-y-5">
+              {feed.map((item) => {
+                if (item.category === 'task') {
+                  const Icon = item.icon;
+                  const dotColor = item.urgent ? '#92400e' : MAROON;
+                  return (
+                    <div key={item.id} className="relative pl-9">
+                      <span
+                        className="absolute left-0 top-1.5 w-[15px] h-[15px] rounded-full z-10 flex items-center justify-center"
+                        style={{ background: dotColor, boxShadow: `0 0 0 3px ${dotColor}22` }}
+                      >
+                        <span className="w-1.5 h-1.5 rounded-full bg-white" />
+                      </span>
+
+                      <div className="bg-white p-5 rounded-2xl" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)' }}>
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                          <div className="flex items-start gap-3 flex-1 min-w-0">
+                            <div className="p-2.5 rounded-xl mt-0.5 flex-shrink-0" style={{ background: '#F5E8EA', color: MAROON }}>
+                              <Icon size={16} />
+                            </div>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2 flex-wrap mb-1">
+                                <span className="font-bold text-sm" style={{ color: INK }}>{item.title}</span>
+                                <span
+                                  className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider"
+                                  style={{ background: item.urgent ? '#FBF0DE' : '#F5E8EA', color: item.urgent ? '#92400e' : MAROON }}
+                                >
+                                  {item.urgent ? 'Due Soon' : 'Task'}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-500 leading-relaxed">{item.description}</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => navigate(item.route)}
+                            className="w-full sm:w-auto flex-shrink-0 px-5 py-2.5 rounded-full text-white text-xs font-bold uppercase tracking-widest hover:opacity-90 transition-all"
+                            style={{ background: `linear-gradient(120deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)` }}
+                          >
+                            {item.actionLabel}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+
+                const cfg = typeConfig[item.type];
+                const Icon = cfg.icon;
+                const src = sourceConfig[item.source];
+                const SrcIcon = src.icon;
+
+                return (
+                  <div key={item.id} className="relative pl-9">
+                    <span
+                      className="absolute left-0 top-1.5 w-[15px] h-[15px] rounded-full z-10 flex items-center justify-center"
+                      style={item.read
+                        ? { background: '#fff', border: '2px solid #d8c9c2' }
+                        : { background: cfg.dot, boxShadow: `0 0 0 3px ${cfg.dot}22` }}
+                    >
+                      {!item.read && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                    </span>
+
+                    <div
+                      onClick={() => markRead(item.id)}
+                      className="bg-white p-5 rounded-2xl cursor-pointer transition-all"
+                      style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)', opacity: item.read ? 0.72 : 1 }}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className="p-2 rounded-xl mt-0.5 flex-shrink-0" style={{ background: cfg.bg, color: cfg.text }}>
+                          <Icon size={14} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex flex-wrap items-center gap-2 mb-1">
+                            <span className="font-bold text-sm" style={{ color: INK }}>{item.title}</span>
+                            <span
+                              className="text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider"
+                              style={{ background: cfg.bg, color: cfg.text }}
+                            >
+                              {cfg.label}
+                            </span>
+                          </div>
+                          <p className="text-xs text-slate-500 leading-relaxed mb-2 break-words">{item.message}</p>
+                          <div className="flex flex-wrap items-center gap-2 pt-2" style={{ borderTop: '1px solid #f5eee9' }}>
+                            <Clock size={10} style={{ color: '#c9b3b8' }} />
+                            <span className="text-[10px]" style={{ color: '#c9b3b8' }}>{timeAgo(item.date)}</span>
+                            <span style={{ color: '#e9dfd8' }}>•</span>
+                            <span className="text-[10px] font-bold uppercase tracking-wider flex items-center gap-1" style={{ color: MAROON }}>
+                              <SrcIcon size={9} /> {src.label}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
-
-      {/* Search + Source Tabs */}
-      <div className="flex flex-col sm:flex-row gap-3 mb-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-4 top-3.5 text-slate-300" size={16} />
-          <input
-            type="text"
-            placeholder="Search notifications..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="w-full bg-white border border-slate-200 pl-11 pr-4 py-3 text-sm rounded-2xl outline-none focus:border-[#7f2d3a] focus:ring-2 focus:ring-[#7f2d3a]/10 transition-all placeholder:text-slate-300 shadow-sm"
-          />
-        </div>
-        <div className="relative sm:w-56 shrink-0">
-          <select
-            value={typeFilter}
-            onChange={e => setTypeFilter(e.target.value)}
-            className="w-full appearance-none bg-white border border-slate-200 pl-4 pr-9 py-3 text-sm font-bold rounded-2xl outline-none focus:border-[#7f2d3a] focus:ring-2 focus:ring-[#7f2d3a]/10 transition-all shadow-sm cursor-pointer capitalize text-slate-700"
-          >
-            {TYPE_FILTERS.map(f => (
-              <option key={f} value={f} className="capitalize">{f === 'all' ? 'All Types' : f}</option>
-            ))}
-          </select>
-          <ChevronDown size={15} className="absolute right-3.5 top-3.5 text-slate-400 pointer-events-none" />
-        </div>
-      </div>
-
-      <div className="flex gap-2 mb-5 flex-wrap">
-        {SOURCE_TABS.map(f => (
-          <button
-            key={f.key}
-            onClick={() => setSourceFilter(f.key)}
-            className="text-xs px-4 py-1.5 rounded-xl border font-bold capitalize transition-all"
-            style={{
-              background:  sourceFilter === f.key ? MAROON : '#fff',
-              color:       sourceFilter === f.key ? '#fff' : '#64748b',
-              borderColor: sourceFilter === f.key ? MAROON : '#e2e8f0',
-            }}
-          >
-            {f.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Feed */}
-      {loading ? (
-        <div className="space-y-3">
-          {Array(4).fill(0).map((_, i) => (
-            <div key={i} className="animate-pulse bg-slate-100 rounded-2xl h-24" />
-          ))}
-        </div>
-      ) : feed.length === 0 ? (
-        <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm p-16 text-center">
-          <Bell size={40} className="mx-auto mb-3 text-slate-200" />
-          <p className="text-sm font-bold text-slate-300">No notifications for this filter.</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {feed.map((item) => {
-            if (item.category === 'task') {
-              const Icon = item.icon;
-              return (
-                <div
-                  key={item.id}
-                  className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm"
-                  style={{ borderLeft: `4px solid ${item.urgent ? '#d97706' : MAROON}` }}
-                >
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                    <div className="flex items-start gap-3 flex-1 min-w-0">
-                      <div className="p-2.5 rounded-xl mt-0.5 flex-shrink-0" style={{ background: '#F5E8EA', color: MAROON }}>
-                        <Icon size={16} />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap mb-1">
-                          <span className="font-black text-slate-800 text-sm">{item.title}</span>
-                          <span
-                            className="text-[10px] font-bold px-2 py-0.5 rounded-lg uppercase tracking-wider"
-                            style={{ background: item.urgent ? '#fef3c7' : '#F5E8EA', color: item.urgent ? '#92400e' : MAROON }}
-                          >
-                            {item.urgent ? 'Due Soon' : 'Task'}
-                          </span>
-                        </div>
-                        <p className="text-xs text-slate-500 leading-relaxed">{item.description}</p>
-                      </div>
-                    </div>
-                    <button
-                      onClick={() => navigate(item.route)}
-                      className="w-full sm:w-auto flex-shrink-0 px-5 py-2.5 rounded-xl text-white text-xs font-black uppercase tracking-widest hover:opacity-90 transition-all"
-                      style={{ background: MAROON }}
-                    >
-                      {item.actionLabel}
-                    </button>
-                  </div>
-                </div>
-              );
-            }
-
-            const cfg = typeConfig[item.type];
-            const Icon = cfg.icon;
-            const src = sourceConfig[item.source];
-            const SrcIcon = src.icon;
-
-            return (
-              <div
-                key={item.id}
-                onClick={() => markRead(item.id)}
-                className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm cursor-pointer hover:border-slate-200 transition-all"
-                style={{ borderLeft: `4px solid ${item.read ? '#e2e8f0' : cfg.border}` }}
-              >
-                <div className="flex items-start gap-3">
-                  <div className="p-2 rounded-xl mt-0.5 flex-shrink-0" style={{ background: cfg.bg, color: cfg.text }}>
-                    <Icon size={14} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex flex-wrap items-center gap-2 mb-1">
-                      <span className="font-black text-slate-800 text-sm">{item.title}</span>
-                      {!item.read && <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: MAROON }} />}
-                      <span
-                        className="text-[10px] font-bold px-2 py-0.5 rounded-lg uppercase tracking-wider"
-                        style={{ background: cfg.bg, color: cfg.text }}
-                      >
-                        {cfg.label}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-500 leading-relaxed mb-2 break-words">{item.message}</p>
-                    <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-50">
-                      <Clock size={10} className="text-slate-300" />
-                      <span className="text-[10px] text-slate-400">{timeAgo(item.date)}</span>
-                      <span className="text-slate-200">•</span>
-                      <span className="text-[10px] font-bold uppercase tracking-wider flex items-center gap-1" style={{ color: MAROON }}>
-                        <SrcIcon size={9} /> {src.label}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
     </div>
   );
 }

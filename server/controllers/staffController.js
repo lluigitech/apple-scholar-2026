@@ -17,10 +17,13 @@ exports.getPendingScholars = (req, res) => {
 // ─── ANNOUNCEMENTS ────────────────────────────────────────────
 exports.getAnnouncements = (req, res) => {
     const sql = `
-        SELECT id, title, content, priority, target_roles, target_levels, created_by, created_by_role, is_active, created_at
-        FROM announcements
-        WHERE is_active = 1 AND (JSON_CONTAINS(target_roles, '"staff"') OR created_by_role = 'staff')
-        ORDER BY created_at DESC
+        SELECT a.id, a.title, a.content, a.priority, a.target_roles, a.target_levels,
+               a.created_by, a.created_by_role, a.is_active, a.created_at,
+               u.full_name AS created_by_name
+        FROM announcements a
+        LEFT JOIN users u ON u.id = a.created_by
+        WHERE a.is_active = 1 AND (JSON_CONTAINS(a.target_roles, '"staff"') OR a.created_by_role = 'staff')
+        ORDER BY a.created_at DESC
     `;
     db.query(sql, (err, results) => {
         if (err) {
@@ -31,6 +34,8 @@ exports.getAnnouncements = (req, res) => {
             ...row,
             target_roles: typeof row.target_roles === 'string' ? JSON.parse(row.target_roles || '[]') : (row.target_roles || []),
             target_levels: typeof row.target_levels === 'string' ? JSON.parse(row.target_levels || '[]') : (row.target_levels || []),
+            created_by_role: String(row.created_by_role || '').trim().toLowerCase(),
+            created_by_name: row.created_by_name || (row.created_by ? 'Unknown' : 'System'),
         }));
         res.json(parsed);
     });
@@ -43,11 +48,12 @@ exports.createAnnouncement = (req, res) => {
         return res.status(400).json({ error: 'title, content, and created_by are required.' });
     }
 
+    const creatorId = created_by === undefined || created_by === null || created_by === '' ? null : Number(created_by);
     const sql = `
         INSERT INTO announcements (title, content, priority, target_roles, target_levels, created_by, created_by_role, is_active, created_at)
         VALUES (?, ?, ?, ?, ?, ?, 'staff', 1, NOW())
     `;
-    db.query(sql, [title, content, priority, JSON.stringify(['scholar']), JSON.stringify(target_levels), created_by], (err, result) => {
+    db.query(sql, [title, content, priority, JSON.stringify(['scholar']), JSON.stringify(target_levels), creatorId], (err, result) => {
         if (err) {
             console.error('Error creating staff announcement:', err);
             return res.status(500).json({ error: 'Failed to create announcement.' });

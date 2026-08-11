@@ -134,6 +134,7 @@ function CreateModal({ authorName, onClose, onCreated }) {
     const [levels,      setLevels]      = useState([]);
     const [error,       setError]       = useState('');
     const [submitting,  setSubmitting]  = useState(false);
+    const authorId = localStorage.getItem('id') || localStorage.getItem('user_id') || null;
 
     const toggleRole = (role) => {
         setTargetRoles(prev => prev.includes(role) ? prev.filter(r => r !== role) : [...prev, role]);
@@ -151,7 +152,7 @@ function CreateModal({ authorName, onClose, onCreated }) {
                 title:         title.trim(),
                 content:       content.trim(),
                 priority,
-                created_by:    authorName,
+                created_by:    authorId,
                 target_roles:  targetRoles,
                 target_levels: targetRoles.includes('scholar') ? levels : [],
             });

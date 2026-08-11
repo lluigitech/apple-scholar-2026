@@ -1,29 +1,140 @@
-import React from 'react';
 import {
     Mail, CheckCircle2, XCircle, AlertTriangle,
-    ChevronDown, ChevronUp, MessageSquare, TrendingUp,
+    ChevronDown, ChevronUp, TrendingUp,
 } from 'lucide-react';
 import { Badge, Skeleton, Empty } from './CommonUI';
-import { statusBadge, sentimentBadge, qualityColor } from '../../../utils/submissionHelpers';
+import { statusBadge, sentimentBadge, qualityColor, getMediaItems, fileKind } from '../../../utils/submissionHelpers';
 import { groupByScholarMonth } from '../../../utils/groupSubmissions';
 
 const MAROON = '#7f2d3a';
 
+const getLetterMedia = (sub) => {
+    if (Array.isArray(sub.media) && sub.media.length > 0) {
+        return sub.media
+            .map((item) => ({
+                path: item.file_path || item.path || item.url,
+                description: item.description || item.caption || '',
+            }))
+            .filter((item) => item.path);
+    }
+    return getMediaItems(sub);
+};
+
+export const LetterDocumentCard = ({ sub }) => {
+    const media = getLetterMedia(sub);
+    const scholarName = sub.full_name || sub.scholar_id || 'Scholar';
+    const year = sub.year_level || '—';
+    const course = sub.course || '—';
+    const school = sub.school || '—';
+    const dateLabel = sub.submitted_at
+        ? new Date(sub.submitted_at).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })
+        : 'Date unavailable';
+
+    const attachments = [
+        { label: 'Report Card', url: sub.report_card_path },
+        { label: 'Certificate of Registration', url: sub.cor_path },
+    ].filter((item) => item.url);
+
+    return (
+        <div className="bg-white rounded-[2rem] border border-slate-200 shadow-[0_18px_45px_rgba(15,23,42,0.08)] overflow-hidden">
+            <div className="p-8" style={{ fontFamily: "'DM Sans', sans-serif" }}>
+                <div className="mb-8">
+                    <p className="text-[10px] uppercase tracking-[0.35em] text-slate-400 mb-2">Kalinga at Pag-ibig Foundation Inc.</p>
+                    <h2 className="text-3xl font-black leading-tight" style={{ fontFamily: "'Playfair Display', serif", color: '#3f2c27' }}>
+                        Apple Scholars
+                    </h2>
+                    <p className="text-sm text-slate-500">Rodriguez, Rizal</p>
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2 mb-8 text-sm text-slate-700">
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400 mb-2">Name</p>
+                        <p className="font-semibold text-slate-800">{scholarName}</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400 mb-2">Year</p>
+                        <p className="font-semibold text-slate-800">{year}</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400 mb-2">Course</p>
+                        <p className="font-semibold text-slate-800">{course}</p>
+                    </div>
+                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+                        <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400 mb-2">School</p>
+                        <p className="font-semibold text-slate-800">{school}</p>
+                    </div>
+                </div>
+
+                <div className="space-y-4 mb-8 text-sm text-slate-700 leading-relaxed">
+                    <p className="text-slate-500">{dateLabel}</p>
+                    <p className="font-semibold">Dear Kalinga,</p>
+                    <div className="whitespace-pre-line text-slate-700">
+                        {sub.letter_content || <span className="italic text-slate-400">No letter content submitted.</span>}
+                    </div>
+                    <p className="font-semibold">Your scholar,</p>
+                    <p className="text-lg font-black" style={{ fontFamily: "'Playfair Display', serif" }}>{scholarName}</p>
+                </div>
+
+                {(media.length > 0 || attachments.length > 0) && (
+                    <div className="space-y-6 mb-6">
+                        <div>
+                            <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400 mb-4 font-black">Documentation</p>
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                {media.map((item, index) => (
+                                    <div key={index} className="rounded-3xl overflow-hidden border border-slate-200 bg-slate-50">
+                                        {fileKind(item.path) === 'image' ? (
+                                            <img src={item.path} alt={item.description || `Documentation ${index + 1}`}
+                                                className="w-full h-40 object-cover" />
+                                        ) : (
+                                            <div className="flex h-40 items-center justify-center bg-slate-100 text-slate-500">
+                                                <span className="text-sm font-semibold">View file</span>
+                                            </div>
+                                        )}
+                                        <div className="p-3 text-xs text-slate-500">
+                                            {item.description || `Documentation ${index + 1}`}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {attachments.length > 0 && (
+                            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                                <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400 mb-3 font-black">Additional attachments</p>
+                                <div className="space-y-3">
+                                    {attachments.map((item, index) => (
+                                        <a key={index} href={item.url} target="_blank" rel="noreferrer"
+                                            className="block rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
+                                            {item.label}
+                                        </a>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+            <div className="border-t border-slate-200 bg-slate-50 px-6 py-4 text-[10px] uppercase tracking-[0.25em] text-slate-500 flex items-center justify-between">
+                <span>Page 1</span>
+                <span>Kalinga at Pag-ibig Foundation</span>
+            </div>
+        </div>
+    );
+};
+
 // One scholar's letter card. Unchanged from before, just extracted so it
 // can render nested under a scholar+month group header.
 const LetterCard = ({
-    sub, expandedCorr, setExpandedCorr, showFull, setShowFull,
+    sub, expandedCorr, setExpandedCorr,
     corrMode, setCorrMode, corrNote, setCorrNote, submitCorrReview,
     setModal, setDecision, setFeedback,
 }) => {
-    const st       = statusBadge(sub.status);
-    const sn       = sentimentBadge(sub.sentiment_label);
-    const isOpen   = expandedCorr === sub.id;
-    const mode     = corrMode[sub.id] || null;
-    const note     = corrNote[sub.id] || '';
-    const longLetter = sub.letter_content?.length > 280;
-    const fullLetter = showFull[`c-${sub.id}`];
-    const isNeg    = sub.sentiment_label?.includes('Negative');
+    const st     = statusBadge(sub.status);
+    const sn     = sentimentBadge(sub.sentiment_label);
+    const isOpen = expandedCorr === sub.id;
+    const mode   = corrMode[sub.id] || null;
+    const note   = corrNote[sub.id] || '';
+    const isNeg  = sub.sentiment_label?.includes('Negative');
 
     return (
         <div className="bg-white rounded-2xl border shadow-sm overflow-hidden transition-all"
@@ -62,31 +173,7 @@ const LetterCard = ({
                 <div className="border-t border-slate-50 px-6 py-5 space-y-5"
                     style={{ backgroundColor: '#fafafa' }}>
 
-                    {/* Letter */}
-                    <div>
-                        <div className="flex items-center justify-between mb-2">
-                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex items-center gap-1.5">
-                                <MessageSquare size={10} /> Letter Content
-                            </p>
-                            {longLetter && (
-                                <button
-                                    onClick={() => setShowFull(p => ({ ...p, [`c-${sub.id}`]: !p[`c-${sub.id}`] }))}
-                                    className="text-[10px] font-black uppercase tracking-wider hover:underline"
-                                    style={{ color: MAROON }}>
-                                    {fullLetter ? 'Show less' : 'Read full'}
-                                </button>
-                            )}
-                        </div>
-                        <div className="bg-white rounded-xl p-4 border border-slate-100">
-                            <p className="text-xs text-slate-600 leading-relaxed italic whitespace-pre-line"
-                                style={!fullLetter && longLetter ? {
-                                    display: '-webkit-box', WebkitLineClamp: 5,
-                                    WebkitBoxOrient: 'vertical', overflow: 'hidden'
-                                } : {}}>
-                                "{sub.letter_content}"
-                            </p>
-                        </div>
-                    </div>
+                    <LetterDocumentCard sub={sub} />
 
                     {/* NLP */}
                     {(sub.sentiment_label || sub.quality_score !== null) && (

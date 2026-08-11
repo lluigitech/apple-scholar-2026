@@ -128,7 +128,7 @@ const AdminAnnouncement = () => {
     const [search, setSearch] = useState('');
     const [priorityFilter, setPriorityFilter] = useState('all');
 
-    const createdBy = localStorage.getItem('name') || 'Admin';
+    const createdBy = localStorage.getItem('id') || localStorage.getItem('user_id') || null;
 
     const fetchAnnouncements = async () => {
         try {

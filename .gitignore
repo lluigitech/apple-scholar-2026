@@ -9,3 +9,7 @@ dist/
 build/
 client/dist/
 client/build/
+server/uploads/generated-letters/
+submission-*.docx
+submission-*.pdf
+submission-*.png

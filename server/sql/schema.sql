@@ -78,6 +78,14 @@ CREATE TABLE IF NOT EXISTS compliance_settings (
   quality_drop_deduction INT NOT NULL DEFAULT 4,
   extra_service_bonus INT NOT NULL DEFAULT 2,
   good_maintenance_bonus INT NOT NULL DEFAULT 5,
+  missed_submission_grace_count INT NOT NULL DEFAULT 2,
+  late_submission_grace_count INT NOT NULL DEFAULT 2,
+  recovery_enabled TINYINT(1) NOT NULL DEFAULT 1,
+  early_submission_bonus DECIMAL(4,2) NOT NULL DEFAULT 0.50,
+  service_hours_completion_bonus DECIMAL(4,2) NOT NULL DEFAULT 2.00,
+  consecutive_early_bonus DECIMAL(4,2) NOT NULL DEFAULT 1.00,
+  perfect_attendance_bonus DECIMAL(4,2) NOT NULL DEFAULT 0.50,
+  monthly_recovery_cap DECIMAL(4,2) NOT NULL DEFAULT 3.00,
   updated_by INT DEFAULT NULL,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

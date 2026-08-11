@@ -4,6 +4,7 @@ import useComplianceStatus from '../../hooks/useComplianceStatus';
 import {
   User, BookOpen, Heart, FileText, TrendingUp,
   CheckCircle, XCircle, Clock, AlertTriangle, ChevronDown, ChevronUp, Pencil,
+  ShieldCheck, RefreshCw,
 } from 'lucide-react';
 
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/+$|\/$/g, '');
@@ -19,6 +20,7 @@ const MAROON_DEEP = '#4f1620';
 const GOLD = '#b98b4e';
 const IVORY = '#FBF7F2';
 const INK = '#241512';
+const ROSE = '#F5E8EA';
 
 const authHeader = () => {
   const token = localStorage.getItem('token');
@@ -237,6 +239,11 @@ const ScholarProfile = () => {
   const displayId = profile?.scholar_id || localStorage.getItem('scholar_id') || 'N/A';
   const displayStatus = profile?.status || 'Active';
 
+  // Recolored onto the shared ledger palette — Excellent/Good Standing share
+  // the "on track" green, Low Risk reads as an amber caution note in gold,
+  // Medium/High Risk escalate through amber to red. Same five tiers as
+  // before, just mapped onto tokens used everywhere else on this page
+  // instead of ad hoc Tailwind color classes.
   const getComplianceLabel = (value) => {
     if (value >= 90) return 'Excellent';
     if (value >= 80) return 'Good Standing';
@@ -245,17 +252,17 @@ const ScholarProfile = () => {
     return 'High Risk';
   };
 
-  const getBadgeStyles = (value) => {
-    if (value >= 90) return 'bg-emerald-50 text-emerald-700';
-    if (value >= 80) return 'bg-sky-50 text-sky-700';
-    if (value >= 70) return 'bg-amber-50 text-amber-700';
-    if (value >= 50) return 'bg-orange-50 text-orange-700';
-    return 'bg-red-50 text-red-700';
+  const getBadgeStyle = (value) => {
+    if (value >= 90) return { color: '#15803d', bg: '#EAF3EC' };
+    if (value >= 80) return { color: '#15803d', bg: '#EAF3EC' };
+    if (value >= 70) return { color: '#8a6a3a', bg: '#F6EFE1' };
+    if (value >= 50) return { color: '#92400e', bg: '#FBF0DE' };
+    return { color: '#991b1b', bg: '#FBE9E9' };
   };
 
   const complianceScore = complianceData?.overall_compliance ?? null;
   const complianceLabel = complianceScore !== null ? getComplianceLabel(complianceScore) : 'Loading...';
-  const complianceBadgeClass = complianceScore !== null ? getBadgeStyles(complianceScore) : 'bg-slate-100 text-slate-500';
+  const complianceBadge = complianceScore !== null ? getBadgeStyle(complianceScore) : { color: '#a89890', bg: '#f1ece8' };
 
   const serif = { fontFamily: "'Playfair Display', serif" };
   const sans = { fontFamily: "'DM Sans', sans-serif" };
@@ -408,82 +415,96 @@ const ScholarProfile = () => {
       </div>
 
       <div className="px-4 sm:px-6 lg:p-8 lg:pt-0">
-        <div className="grid gap-5 mb-8">
-          <div className="rounded-3xl bg-white p-6 shadow-sm border border-slate-100">
+
+        {/* ── Compliance Snapshot — recolored onto the ledger palette ── */}
+        <div className="grid gap-5 mb-8 relative -mt-10 sm:-mt-12">
+          <div className="rounded-2xl bg-white p-6" style={{ boxShadow: '0 12px 30px -12px rgba(79,22,32,0.25)', borderTop: `2px solid ${GOLD}` }}>
             <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
               <div>
-                <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400 mb-2">Scholar Compliance Snapshot</p>
-                <h2 className="text-3xl font-black text-slate-900">{complianceScore !== null ? `${Math.round(complianceScore)}%` : '—'}</h2>
-                <p className={`inline-flex items-center rounded-full px-3 py-1 mt-3 text-xs font-black uppercase tracking-[0.2em] ${complianceBadgeClass}`}>
+                <div className="flex items-center gap-2 mb-2">
+                  <ShieldCheck size={13} style={{ color: MAROON }} />
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: '#a56475' }}>Scholar Compliance Snapshot</p>
+                </div>
+                <h2 className="text-3xl font-bold" style={{ ...serif, color: INK }}>{complianceScore !== null ? `${Math.round(complianceScore)} Credits` : '—'}</h2>
+                <p className="inline-flex items-center rounded-full px-3 py-1 mt-3 text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: complianceBadge.color, background: complianceBadge.bg }}>
                   {complianceLabel}
                 </p>
               </div>
               <div className="text-sm text-slate-500 max-w-xl">
-                <p className="font-semibold text-slate-700">Academic status:</p>
+                <p className="font-semibold" style={{ color: INK }}>Academic status:</p>
                 <p>{complianceData?.academic_status || 'No academic score available yet.'}</p>
                 <p className="mt-3">This shows your current compliance score and the top actions that can improve it.</p>
               </div>
             </div>
 
-            <div className="mt-6 border-t border-slate-100 pt-5">
+            <div className="mt-6 pt-5" style={{ borderTop: '1px solid #f0e6e0' }}>
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Active flags</p>
-                  <p className="text-sm text-slate-600">Keep track of what to address next.</p>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: '#a56475' }}>Active flags</p>
+                  <p className="text-sm text-slate-500 mt-0.5">Keep track of what to address next.</p>
                 </div>
                 <button
                   type="button"
                   onClick={refreshCompliance}
-                  className="text-[10px] font-black uppercase tracking-[0.2em] text-[#7f2d3a] hover:text-[#4f1620]"
+                  className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-[0.2em] transition-colors"
+                  style={{ color: MAROON }}
+                  onMouseEnter={(e) => (e.currentTarget.style.color = MAROON_DEEP)}
+                  onMouseLeave={(e) => (e.currentTarget.style.color = MAROON)}
                 >
-                  Refresh
+                  <RefreshCw size={11} /> Refresh
                 </button>
               </div>
 
-              <div className="mt-4 space-y-3">
+              <div className="mt-4 space-y-2.5">
                 {complianceLoading ? (
                   <p className="text-sm text-slate-400">Loading compliance data…</p>
                 ) : complianceError ? (
-                  <p className="text-sm text-red-500">Unable to load compliance status right now.</p>
+                  <p className="text-sm" style={{ color: '#991b1b' }}>Unable to load compliance status right now.</p>
                 ) : complianceData?.flags?.length ? (
                   complianceData?.flags?.map((flag, index) => (
-                    <div key={index} className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                      <p className="text-sm font-semibold text-slate-900">{flag.type}</p>
-                      <p className="mt-1 text-sm text-slate-600">{flag.description}</p>
+                    <div key={index} className="rounded-xl p-4" style={{ background: IVORY, border: '1px solid #f0e6e0' }}>
+                      <p className="text-sm font-semibold" style={{ color: INK }}>{flag.type}</p>
+                      <p className="mt-1 text-sm text-slate-500">{flag.description}</p>
                     </div>
                   ))
                 ) : (
-                  <div className="rounded-2xl border border-slate-100 bg-slate-50 p-4">
-                    <p className="text-sm font-semibold text-slate-900">No current flags</p>
-                    <p className="mt-1 text-sm text-slate-600">Your score is on track. Keep submitting on time and completing your service hours.</p>
+                  <div className="rounded-xl p-4" style={{ background: '#EAF3EC' }}>
+                    <p className="text-sm font-semibold" style={{ color: '#0e5c2c' }}>No current flags</p>
+                    <p className="mt-1 text-sm" style={{ color: '#4c9d6a' }}>Your score is on track. Keep submitting on time and completing your service hours.</p>
                   </div>
                 )}
               </div>
 
-              <div className="mt-6 rounded-2xl bg-[#f8fafc] p-4 text-sm text-slate-600">
-                <p className="font-semibold text-slate-800">Recovery tip</p>
-                <p className="mt-2">Completing one more service hour or submitting your next report early can help raise your score and keep you in good standing.</p>
+              <div className="mt-6 rounded-xl p-4 text-sm" style={{ background: '#F6EFE1' }}>
+                <p className="font-semibold" style={{ color: '#8a6a3a' }}>Recovery tip</p>
+                <p className="mt-2" style={{ color: '#8a6a3a' }}>Completing one more service hour or submitting your next report early can help raise your score and keep you in good standing.</p>
               </div>
             </div>
           </div>
 
-          <div className="rounded-3xl bg-slate-50 p-6 border border-slate-100">
-            <h3 className="text-sm font-black uppercase tracking-[0.2em] text-slate-500 mb-3">Academic status</h3>
-            <p className="text-lg font-bold text-slate-900 mb-1">{complianceData?.academic_status || 'No academic status yet'}</p>
-            <p className="text-sm text-slate-600">This is separate from your compliance score and reflects how your recent grades are performing.</p>
+          <div className="rounded-2xl p-6" style={{ background: ROSE }}>
+            <div className="flex items-center gap-2.5 mb-3">
+              <span className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 bg-white/70">
+                <BookOpen size={13} style={{ color: MAROON }} />
+              </span>
+              <h3 className="text-sm font-bold uppercase tracking-wider" style={{ color: MAROON_DEEP }}>Academic Status</h3>
+            </div>
+            <p className="text-lg font-bold mb-1" style={{ ...serif, color: INK }}>{complianceData?.academic_status || 'No academic status yet'}</p>
+            <p className="text-sm" style={{ color: '#a56475' }}>This is separate from your compliance score and reflects how your recent grades are performing.</p>
             {complianceData?.normalized_academic_score !== null && (
-              <p className="mt-4 text-sm text-slate-700">Current normalized academic score: {complianceData?.normalized_academic_score}</p>
+              <p className="mt-4 text-sm font-semibold" style={{ color: INK }}>Current normalized academic score: {complianceData?.normalized_academic_score}</p>
             )}
           </div>
         </div>
-        {/* ── Compliance ledger meter — floats up over the hero ── */}
+
+        {/* ── Compliance ledger meter ─────────────────────────── */}
         <div
-          className="relative -mt-10 sm:-mt-12 mb-8 sm:mb-10 p-5 sm:p-6 rounded-2xl bg-white"
-          style={{ boxShadow: '0 12px 30px -12px rgba(79,22,32,0.25)' }}
+          className="mb-8 sm:mb-10 p-5 sm:p-6 rounded-2xl bg-white"
+          style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)' }}
         >
           <div className="flex items-end justify-between mb-3 gap-2">
             <p className="text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.15em] sm:tracking-[0.2em] text-slate-400">Compliance Standing</p>
-            <p className="text-xl sm:text-2xl font-bold flex-shrink-0" style={{ ...serif, color: MAROON }}>{compliance}<span className="text-sm">%</span></p>
+            <p className="text-xl sm:text-2xl font-bold flex-shrink-0" style={{ ...serif, color: MAROON }}>{compliance}<span className="text-sm"> Credits</span></p>
           </div>
           <div className="flex w-full h-2.5 rounded-full overflow-hidden gap-1">
             {requirements.map((cat) => {
@@ -510,7 +531,7 @@ const ScholarProfile = () => {
             <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center mb-2 sm:mb-3 bg-white/70">
               <TrendingUp size={14} style={{ color: MAROON }} />
             </div>
-            <p className="text-lg sm:text-2xl font-bold truncate" style={{ ...serif, color: MAROON }}>{compliance}%</p>
+            <p className="text-lg sm:text-2xl font-bold truncate" style={{ ...serif, color: MAROON }}>{compliance} Credits</p>
             <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider mt-0.5 leading-tight" style={{ color: '#a56475' }}>Overall Compliance</p>
           </div>
           <div className="min-w-0 rounded-2xl p-4 sm:p-5" style={{ background: '#EAF3EC' }}>

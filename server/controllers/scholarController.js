@@ -11,11 +11,11 @@ const ALL_LEVELS = [
 exports.getProfile = (req, res) => {
     const sql = `
         SELECT id, scholar_id, full_name, email, role, year_level, status, created_at,
-               phone, address, course, school
+               qr_code
         FROM users WHERE id = ?
     `;
     db.query(sql, [req.params.id], (err, data) => {
-        if (err)         return res.status(500).json({ error: 'Error sa scholar profile' });
+        if (err) return res.status(500).json({ error: 'Error loading scholar profile' });
         if (!data.length) return res.status(404).json({ error: 'Scholar not found' });
         res.json(data[0]);
     });
@@ -30,7 +30,7 @@ exports.updateProfile = (req, res) => {
         return res.status(403).json({ error: 'You can only update your own profile.' });
     }
 
-    const allowedFields = ['full_name', 'email', 'phone', 'address', 'course', 'school', 'year_level'];
+    const allowedFields = ['full_name', 'email', 'year_level', 'qr_code'];
     const updates = {};
 
     allowedFields.forEach((field) => {
@@ -55,7 +55,7 @@ exports.updateProfile = (req, res) => {
 
         const fetchSql = `
             SELECT id, scholar_id, full_name, email, role, year_level, status, created_at,
-                   phone, address, course, school
+                   qr_code
             FROM users WHERE id = ?
         `;
 
@@ -72,9 +72,12 @@ exports.getAnnouncements = (req, res) => {
     const { year_level } = req.query;
 
     const sql = `
-        SELECT id, title, content, priority, target_levels, created_by, created_at
-        FROM announcements
-        ORDER BY created_at DESC
+        SELECT a.id, a.title, a.content, a.priority, a.target_roles, a.target_levels,
+               a.created_by, a.created_by_role, a.created_at,
+               u.full_name AS created_by_name
+        FROM announcements a
+        LEFT JOIN users u ON u.id = a.created_by
+        ORDER BY a.created_at DESC
     `;
 
     db.query(sql, (err, data) => {
@@ -83,9 +86,14 @@ exports.getAnnouncements = (req, res) => {
         const results = data
             .map(row => ({
                 ...row,
+                target_roles: typeof row.target_roles === 'string'
+                    ? JSON.parse(row.target_roles || '[]')
+                    : (row.target_roles || []),
                 target_levels: typeof row.target_levels === 'string'
                     ? JSON.parse(row.target_levels || '[]')
                     : (row.target_levels || []),
+                created_by_role: String(row.created_by_role || '').trim().toLowerCase(),
+                created_by_name: row.created_by_name || (row.created_by ? 'Unknown' : 'System'),
             }))
             .filter(row => {
                 const levels = row.target_levels;
@@ -111,7 +119,11 @@ exports.getComplianceStatus = (req, res) => {
             missed_submission_deduction, service_hour_shortfall_deduction,
             absent_duty_deduction, late_submission_deduction,
             negative_letter_deduction, quality_drop_deduction,
-            extra_service_bonus, good_maintenance_bonus
+            extra_service_bonus, good_maintenance_bonus,
+            missed_submission_grace_count, late_submission_grace_count,
+            recovery_enabled, early_submission_bonus,
+            service_hours_completion_bonus, consecutive_early_bonus,
+            perfect_attendance_bonus, monthly_recovery_cap
         FROM compliance_settings WHERE id = 1 LIMIT 1
     `;
 
@@ -140,7 +152,9 @@ exports.getComplianceStatus = (req, res) => {
                     AVG(quality_score) AS avg_quality,
                     SUM(CASE WHEN service_hours IS NOT NULL THEN service_hours ELSE 0 END) AS total_service_hours,
                     MAX(submitted_at) AS last_submission,
-                    SUM(CASE WHEN sentiment_label LIKE '%Negative%' THEN 1 ELSE 0 END) AS negative_letters
+                    SUM(CASE WHEN sentiment_label LIKE '%Negative%' THEN 1 ELSE 0 END) AS negative_letters,
+                    SUM(CASE WHEN submission_type = 'letter' AND submitted_at <= DATE_SUB(LAST_DAY(submitted_at), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS early_submissions,
+                    GROUP_CONCAT(DISTINCT DATE_FORMAT(submitted_at, '%Y-%m') ORDER BY DATE_FORMAT(submitted_at, '%Y-%m') SEPARATOR ',') AS early_submission_months
                 FROM submissions
                 WHERE scholar_id = ?
             `,

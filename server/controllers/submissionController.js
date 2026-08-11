@@ -1,7 +1,9 @@
+const fs = require('fs');
 const path = require('path');
 const db = require('../config/db');
 const cloudinary = require('../config/cloudinary');
 const nodemailer = require('nodemailer');
+const letterPdfGenerator = require('../services/letterPdfGenerator');
 const http = require('http');
 const https = require('https');
 const { URL } = require('url');
@@ -259,68 +261,96 @@ exports.submitCompliance = async (req, res) => {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
-        db.query(sql, [
-            normalizedPayload.scholar_id,
-            normalizedPayload.submission_type,
-            normalizedPayload.letter_content,
-            normalizedPayload.sentiment_score,
-            normalizedPayload.sentiment_label,
-            normalizedPayload.report_card_path,
-            normalizedPayload.cor_path,
-            normalizedPayload.service_activity,
-            normalizedPayload.service_hours,
-            normalizedPayload.service_date,
-            normalizedPayload.quality_score,
-            normalizedPayload.quality_status,
-            'pending',   // status - always starts fresh, regardless of any earlier rejected row
-            null,        // officer_comment - always starts empty, old officer feedback stays only on the old row
-        ], (err, result) => {
-            if (err) {
-                console.error('DB error saving submission:', err);
-                return res.status(500).json({ error: 'Error saving submission' });
+        calculateCurrentCompliance(scholar_id, (preCalcErr, preCompliance, preMinCompliance, preScore) => {
+            if (preCalcErr) {
+                console.error('Error calculating compliance before submission:', preCalcErr);
             }
 
-            calculateCurrentCompliance(scholar_id, (calcErr, currentCompliance) => {
-                if (!calcErr && typeof currentCompliance === 'number') {
-                    logComplianceIncident(
-                        scholar_id,
-                        'submission_created',
-                        0,
-                        currentCompliance,
-                        currentCompliance,
-                        `Compliance submission recorded for ${resolvedType}.`
-                    );
+            db.query(sql, [
+                normalizedPayload.scholar_id,
+                normalizedPayload.submission_type,
+                normalizedPayload.letter_content,
+                normalizedPayload.sentiment_score,
+                normalizedPayload.sentiment_label,
+                normalizedPayload.report_card_path,
+                normalizedPayload.cor_path,
+                normalizedPayload.service_activity,
+                normalizedPayload.service_hours,
+                normalizedPayload.service_date,
+                normalizedPayload.quality_score,
+                normalizedPayload.quality_status,
+                'pending',   // status - always starts fresh, regardless of any earlier rejected row
+                null,        // officer_comment - always starts empty, old officer feedback stays only on the old row
+            ], (err, result) => {
+                if (err) {
+                    console.error('DB error saving submission:', err);
+                    return res.status(500).json({ error: 'Error saving submission' });
                 }
-            });
 
-            const submissionId = result.insertId;
-            const descriptions = JSON.parse(media_descriptions || '[]');
+                calculateCurrentCompliance(scholar_id, (calcErr, currentCompliance, minCompliance, currentScore) => {
+                    if (!calcErr && typeof currentCompliance === 'number') {
+                        logComplianceIncident(
+                            scholar_id,
+                            'submission_created',
+                            0,
+                            currentCompliance,
+                            currentCompliance,
+                            `Compliance submission recorded for ${resolvedType}.`
+                        );
 
-            if (mediaFiles.length > 0) {
-                const mediaValues = mediaFiles
-                    .map((file, idx) => {
-                        const mediaPath = file?.path || null;
-                        if (!mediaPath) return null;
-                        return [submissionId, mediaPath, descriptions[idx] || ''];
-                    })
-                    .filter(Boolean);
+                        if (currentScore?.totalBonusPoints > (preScore?.totalBonusPoints || 0)) {
+                            const bonusDelta = Math.round((currentScore.totalBonusPoints - (preScore?.totalBonusPoints || 0)) * 100) / 100;
+                            logComplianceBonus(
+                                scholar_id,
+                                'submission_recovery_bonus',
+                                bonusDelta,
+                                preCompliance,
+                                currentCompliance,
+                                `Recovery bonus awarded after ${resolvedType} submission.`
+                            );
+                        }
+                    }
+                });
 
-                if (mediaValues.length > 0) {
-                    const mediaSql = "INSERT INTO submission_media (submission_id, file_path, description) VALUES ?";
-                    db.query(mediaSql, [mediaValues], (mediaErr) => {
-                        if (mediaErr) console.error('Media save error:', mediaErr);
-                    });
+                const submissionId = result.insertId;
+                const descriptions = JSON.parse(media_descriptions || '[]');
+
+                if (mediaFiles.length > 0) {
+                    const mediaValues = mediaFiles
+                        .map((file, idx) => {
+                            const mediaPath = file?.path || null;
+                            if (!mediaPath) return null;
+                            return [submissionId, mediaPath, descriptions[idx] || ''];
+                        })
+                        .filter(Boolean);
+
+                    if (mediaValues.length > 0) {
+                        const mediaSql = "INSERT INTO submission_media (submission_id, file_path, description) VALUES ?";
+                        db.query(mediaSql, [mediaValues], (mediaErr) => {
+                            if (mediaErr) console.error('Media save error:', mediaErr);
+                        });
+                    }
                 }
-            }
 
-            res.status(201).json({
-                message: 'Submission successful',
-                submissionId,
-                submission_type: resolvedType,
-                quality_score: normalizedPayload.quality_score,
-                quality_status: normalizedPayload.quality_status,
-            });
+                if (resolvedType === 'letter') {
+                    letterPdfGenerator.generateLetterPdf(submissionId)
+                        .then((publicPath) => {
+                            console.log(`Generated PDF for submission ${submissionId}: ${publicPath}`);
+                        })
+                        .catch((genErr) => {
+                            console.error(`Failed to generate PDF for letter submission ${submissionId}:`, genErr);
+                        });
+                }
+
+                res.status(201).json({
+                    message: 'Submission successful',
+                    submissionId,
+                    submission_type: resolvedType,
+                    quality_score: normalizedPayload.quality_score,
+                    quality_status: normalizedPayload.quality_status,
+                });
         });
+    });
     } catch (err) {
         console.error('Submit error:', err);
         res.status(500).json({ error: 'Server error' });
@@ -422,7 +452,7 @@ exports.getAllSubmissions = (req, res) => {
 // ============================================================
 exports.getScholarSubmissions = (req, res) => {
     const submissionsSql = `
-        SELECT s.*, s.officer_comment AS staff_comment, COALESCE(u.full_name, s.scholar_id) AS full_name, u.year_level,
+        SELECT s.*, s.officer_comment AS staff_comment, COALESCE(u.full_name, s.scholar_id) AS full_name, u.year_level, u.course, u.school,
         GROUP_CONCAT(
             CONCAT_WS('||', sm.id, sm.file_path, IFNULL(sm.description, ''))
             SEPARATOR ';;'
@@ -493,13 +523,17 @@ exports.getScholarSubmissions = (req, res) => {
                     sentiment_label: row.sentiment_label,
                     report_card_path: row.report_card_path,
                     cor_path: row.cor_path,
+                    generated_pdf_path: row.generated_pdf_path,
+                    year_level: row.year_level,
+                    course: row.course,
+                    school: row.school,
                     quality_score: row.quality_score,
                     quality_status: row.quality_status,
                     status: row.status,
                     staff_comment: row.staff_comment,
                     submitted_at: row.submitted_at,
                     media, // includes per-photo description (visible to officer AND scholar)
-                };
+                }; 
 
                 switch (row.submission_type) {
                     case 'letter':
@@ -1195,5 +1229,45 @@ exports.evaluateLetterML = async (req, res) => {
             fallback: true,
             message: 'Naive Bayes service is offline. Use rule-based scoring as fallback.',
         });
+    }
+};
+
+// Generate or return existing generated PDF for a submission (Officer on-demand)
+exports.getOrGenerateSubmissionPdf = async (req, res) => {
+    const { id } = req.params;
+    if (!id) return res.status(400).json({ error: 'Missing submission id' });
+
+    // Validate id is an integer-like value early to avoid unnecessary DB work
+    if (!Number.isInteger(Number(id))) return res.status(400).json({ error: 'Invalid submission id' });
+
+    try {
+        // First check DB for existing path
+        db.query('SELECT generated_pdf_path FROM submissions WHERE id = ? LIMIT 1', [id], async (err, rows) => {
+            if (err) return res.status(500).json({ error: 'DB error' });
+            const existing = rows?.[0]?.generated_pdf_path || null;
+
+            if (existing) {
+                // ensure file exists on disk
+                // Keep the 'uploads' segment — only strip a leading slash if present
+                const rel = existing.startsWith('/') ? existing.slice(1) : existing;
+                const abs = path.resolve(process.cwd(), rel);
+                if (fs.existsSync(abs)) {
+                    console.log(`Using cached PDF for submission ${id}: ${abs}`);
+                    return res.json({ path: existing });
+                }
+            }
+
+            // Generate anew
+            try {
+                const publicPath = await letterPdfGenerator.generateLetterPdf(id);
+                return res.json({ path: publicPath });
+            } catch (genErr) {
+                console.error('PDF generation error:', genErr);
+                return res.status(500).json({ error: 'Failed to generate PDF', detail: String(genErr) });
+            }
+        });
+    } catch (e) {
+        console.error(e);
+        res.status(500).json({ error: 'Server error' });
     }
 };

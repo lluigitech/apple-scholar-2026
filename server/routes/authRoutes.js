@@ -61,18 +61,17 @@ router.post('/login', (req, res) => {
                 { expiresIn: '8h' }
             );
 
-            try {
-                await logAuditEvent({
-                    req,
-                    userId: user.id,
-                    action: 'login',
-                    module: 'Authentication',
-                    details: `User ${user.email} logged in successfully`,
-                    result: 'success',
-                });
-            } catch (auditErr) {
+            // Fire audit logging in the background so login response is not delayed.
+            logAuditEvent({
+                req,
+                userId: user.id,
+                action: 'login',
+                module: 'Authentication',
+                details: `User ${user.email} logged in successfully`,
+                result: 'success',
+            }).catch((auditErr) => {
                 console.warn('[LOGIN] audit logging failed, continuing:', auditErr && auditErr.message ? auditErr.message : auditErr);
-            }
+            });
 
             return res.json({
                 status: "Success",

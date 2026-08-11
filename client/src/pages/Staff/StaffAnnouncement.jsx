@@ -119,6 +119,7 @@ function CreateModal({ authorName, onClose, onCreated }) {
     const [levels, setLevels]     = useState([]);
     const [error, setError]       = useState('');
     const [submitting, setSubmitting] = useState(false);
+    const authorId = localStorage.getItem('id') || localStorage.getItem('user_id') || null;
 
     const handleSubmit = async () => {
         if (!title.trim())   { setError('Title is required.');   return; }
@@ -130,7 +131,7 @@ function CreateModal({ authorName, onClose, onCreated }) {
                 title: title.trim(),
                 content: content.trim(),
                 priority,
-                created_by: authorName,
+                created_by: authorId,
                 target_levels: levels,
             });
             onCreated();

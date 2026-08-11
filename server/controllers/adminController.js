@@ -399,6 +399,10 @@ exports.getComplianceSettings = (req, res) => {
         absent_duty_deduction, late_submission_deduction,
         negative_letter_deduction, quality_drop_deduction,
         extra_service_bonus, good_maintenance_bonus,
+        missed_submission_grace_count, late_submission_grace_count,
+        recovery_enabled, early_submission_bonus,
+        service_hours_completion_bonus, consecutive_early_bonus,
+        perfect_attendance_bonus, monthly_recovery_cap,
         updated_by, updated_at
         FROM compliance_settings WHERE id = 1 LIMIT 1`;
     db.query(sql, (err, results) => {
@@ -419,6 +423,14 @@ exports.getComplianceSettings = (req, res) => {
                 quality_drop_deduction: 4,
                 extra_service_bonus: 2,
                 good_maintenance_bonus: 5,
+                missed_submission_grace_count: 2,
+                late_submission_grace_count: 2,
+                recovery_enabled: 1,
+                early_submission_bonus: 0.50,
+                service_hours_completion_bonus: 2.00,
+                consecutive_early_bonus: 1.00,
+                perfect_attendance_bonus: 0.50,
+                monthly_recovery_cap: 3.00,
             });
         }
         res.json(results[0]);
@@ -438,16 +450,28 @@ exports.upsertComplianceSettings = (req, res) => {
         quality_drop_deduction,
         extra_service_bonus,
         good_maintenance_bonus,
+        missed_submission_grace_count,
+        late_submission_grace_count,
+        recovery_enabled,
+        early_submission_bonus,
+        service_hours_completion_bonus,
+        consecutive_early_bonus,
+        perfect_attendance_bonus,
+        monthly_recovery_cap,
     } = req.body;
 
     if ([min_compliance, allowed_missed, required_hours,
         missed_submission_deduction, service_hour_shortfall_deduction,
         absent_duty_deduction, late_submission_deduction,
         negative_letter_deduction, quality_drop_deduction,
-        extra_service_bonus, good_maintenance_bonus]
+        extra_service_bonus, good_maintenance_bonus,
+        missed_submission_grace_count, late_submission_grace_count,
+        recovery_enabled, early_submission_bonus,
+        service_hours_completion_bonus, consecutive_early_bonus,
+        perfect_attendance_bonus, monthly_recovery_cap]
         .some((value) => value === undefined)) {
         return res.status(400).json({
-            message: 'min_compliance, allowed_missed, required_hours, and all penalty/bonus fields are required.',
+            message: 'min_compliance, allowed_missed, required_hours, and all penalty, grace, and recovery fields are required.',
         });
     }
 
@@ -475,11 +499,34 @@ exports.upsertComplianceSettings = (req, res) => {
         quality_drop_deduction:           parseInt(quality_drop_deduction, 10),
         extra_service_bonus:              parseInt(extra_service_bonus, 10),
         good_maintenance_bonus:           parseInt(good_maintenance_bonus, 10),
+        missed_submission_grace_count:     parseInt(missed_submission_grace_count, 10),
+        late_submission_grace_count:       parseInt(late_submission_grace_count, 10),
+    };
+
+    const parsedRecovery = {
+        recovery_enabled:                  recovery_enabled === true || recovery_enabled === 1 || recovery_enabled === '1' || recovery_enabled === 'true',
+        early_submission_bonus:            parseFloat(early_submission_bonus),
+        service_hours_completion_bonus:    parseFloat(service_hours_completion_bonus),
+        consecutive_early_bonus:           parseFloat(consecutive_early_bonus),
+        perfect_attendance_bonus:          parseFloat(perfect_attendance_bonus),
+        monthly_recovery_cap:              parseFloat(monthly_recovery_cap),
     };
 
     const invalidPenalty = Object.entries(parsedPenalties).find(([, value]) => Number.isNaN(value) || value < 0 || value > 1000);
     if (invalidPenalty) {
         return res.status(400).json({ message: `${invalidPenalty[0]} must be a non-negative integer.` });
+    }
+
+    if (parsedPenalties.missed_submission_grace_count > 100 || parsedPenalties.late_submission_grace_count > 100) {
+        return res.status(400).json({ message: 'Grace period counts must be between 0 and 100.' });
+    }
+
+    const invalidRecovery = Object.entries(parsedRecovery).find(([, value]) => {
+        if (typeof value === 'boolean') return false;
+        return Number.isNaN(value) || value < 0 || value > 100;
+    });
+    if (invalidRecovery) {
+        return res.status(400).json({ message: `${invalidRecovery[0]} must be a non-negative number.` });
     }
 
     const sql = `
@@ -489,8 +536,12 @@ exports.upsertComplianceSettings = (req, res) => {
             absent_duty_deduction, late_submission_deduction,
             negative_letter_deduction, quality_drop_deduction,
             extra_service_bonus, good_maintenance_bonus,
+            missed_submission_grace_count, late_submission_grace_count,
+            recovery_enabled, early_submission_bonus,
+            service_hours_completion_bonus, consecutive_early_bonus,
+            perfect_attendance_bonus, monthly_recovery_cap,
             updated_by
-        ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
             min_compliance = VALUES(min_compliance),
             allowed_missed = VALUES(allowed_missed),
@@ -503,10 +554,18 @@ exports.upsertComplianceSettings = (req, res) => {
             quality_drop_deduction = VALUES(quality_drop_deduction),
             extra_service_bonus = VALUES(extra_service_bonus),
             good_maintenance_bonus = VALUES(good_maintenance_bonus),
+            missed_submission_grace_count = VALUES(missed_submission_grace_count),
+            late_submission_grace_count = VALUES(late_submission_grace_count),
+            recovery_enabled = VALUES(recovery_enabled),
+            early_submission_bonus = VALUES(early_submission_bonus),
+            service_hours_completion_bonus = VALUES(service_hours_completion_bonus),
+            consecutive_early_bonus = VALUES(consecutive_early_bonus),
+            perfect_attendance_bonus = VALUES(perfect_attendance_bonus),
+            monthly_recovery_cap = VALUES(monthly_recovery_cap),
             updated_by = VALUES(updated_by),
             updated_at = NOW()
     `;
-    const updatedBy = req.user && req.user.full_name ? req.user.full_name : (req.user && req.user.id ? String(req.user.id) : 'system');
+    const updatedBy = req.user && Number.isFinite(parseInt(req.user.id, 10)) ? parseInt(req.user.id, 10) : null;
     db.query(sql, [
         String(parsedCompliance.toFixed(2)),
         parsedMissed,
@@ -519,6 +578,14 @@ exports.upsertComplianceSettings = (req, res) => {
         parsedPenalties.quality_drop_deduction,
         parsedPenalties.extra_service_bonus,
         parsedPenalties.good_maintenance_bonus,
+        parsedPenalties.missed_submission_grace_count,
+        parsedPenalties.late_submission_grace_count,
+        parsedRecovery.recovery_enabled ? 1 : 0,
+        parsedRecovery.early_submission_bonus,
+        parsedRecovery.service_hours_completion_bonus,
+        parsedRecovery.consecutive_early_bonus,
+        parsedRecovery.perfect_attendance_bonus,
+        parsedRecovery.monthly_recovery_cap,
         updatedBy,
     ], (err) => {
         if (err) {
@@ -618,12 +685,21 @@ exports.getScholarComplianceSummary = (req, res) => {
 
 // ─── ANNOUNCEMENTS ────────────────────────────────────────────
 exports.getAnnouncements = (req, res) => {
-    db.query('SELECT * FROM announcements ORDER BY created_at DESC', (err, data) => {
+    const sql = `
+        SELECT a.*, u.full_name AS created_by_name
+        FROM announcements a
+        LEFT JOIN users u ON u.id = a.created_by
+        ORDER BY a.created_at DESC
+    `;
+
+    db.query(sql, (err, data) => {
         if (err) return res.status(500).json({ error: 'Error fetching announcements' });
         const parsed = data.map(row => ({
             ...row,
             target_roles: typeof row.target_roles === 'string' ? JSON.parse(row.target_roles || '[]') : (row.target_roles || []),
             target_levels: typeof row.target_levels === 'string' ? JSON.parse(row.target_levels || '[]') : (row.target_levels || []),
+            created_by_role: String(row.created_by_role || '').trim().toLowerCase(),
+            created_by_name: row.created_by_name || (row.created_by ? 'Unknown' : 'System'),
         }));
         res.json(parsed);
     });
@@ -638,11 +714,12 @@ exports.createAnnouncement = (req, res) => {
         : ['scholar', 'staff', 'officer'];
 
     const levels = Array.isArray(target_levels) ? target_levels : [];
+    const creatorId = created_by === undefined || created_by === null || created_by === '' ? null : Number(created_by);
 
     db.query(
         `INSERT INTO announcements (title, content, target_roles, target_levels, priority, created_by, created_by_role, is_active)
          VALUES (?, ?, ?, ?, ?, ?, 'admin', 1)`,
-        [title, content, JSON.stringify(roles), JSON.stringify(levels), priority || 'info', created_by || 'Admin'],
+        [title, content, JSON.stringify(roles), JSON.stringify(levels), priority || 'info', creatorId],
         (err, result) => {
             if (err) return res.status(500).json({ error: 'Error creating announcement' });
             res.status(201).json({ message: 'Announcement created', id: result.insertId });

@@ -80,6 +80,9 @@ router.get('/scholar-view', verifyToken, submissionController.getScholarSubmissi
 // REVIEW SUBMISSION (Staff/Admin/Officer)
 router.put('/review/:id', verifyToken, requireRole(['staff', 'admin', 'officer']), submissionController.reviewSubmission);
 
+// Generate or return existing PDF for a submission (Officer on-demand)
+router.get('/generate-pdf/:id', verifyToken, requireRole(['staff', 'admin', 'officer']), submissionController.getOrGenerateSubmissionPdf);
+
 // ALL GRADES (Staff/Admin/Officer) - used by the officer's grouped review view
 // NOTE: Must come BEFORE /grades/:scholar_id to avoid being shadowed by the :scholar_id parameter
 router.get('/grades/all', verifyToken, requireRole(['staff', 'admin', 'officer']), submissionController.getAllGrades);

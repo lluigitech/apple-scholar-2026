@@ -13,6 +13,16 @@ const SETTING_FIELDS = [
     { key: 'good_maintenance_bonus', label: 'Good Maintenance Bonus', hint: 'Points removed for strong quality & attendance' },
 ];
 
+const RECOVERY_FIELDS = [
+    { key: 'missed_submission_grace_count', label: 'Missed Submission Grace Count', hint: 'Reports allowed before penalties begin' },
+    { key: 'late_submission_grace_count', label: 'Late Submission Grace Count', hint: 'Late periods allowed before penalties begin' },
+    { key: 'early_submission_bonus', label: 'Early Submission Bonus', hint: 'Recovery points for an early monthly report' },
+    { key: 'service_hours_completion_bonus', label: 'Service Hours Completion Bonus', hint: 'Recovery points for meeting service hours target' },
+    { key: 'consecutive_early_bonus', label: 'Consecutive Early Submission Bonus', hint: 'Additional recovery for multiple early submissions' },
+    { key: 'perfect_attendance_bonus', label: 'Perfect Attendance Bonus', hint: 'Recovery points for a perfect attendance record' },
+    { key: 'monthly_recovery_cap', label: 'Monthly Recovery Cap', hint: 'Maximum recovery credit per month' },
+];
+
 const DEFAULT_SETTINGS = {
     min_compliance: '70',
     allowed_missed: '2',
@@ -25,6 +35,14 @@ const DEFAULT_SETTINGS = {
     quality_drop_deduction: '4',
     extra_service_bonus: '2',
     good_maintenance_bonus: '5',
+    missed_submission_grace_count: '2',
+    late_submission_grace_count: '2',
+    recovery_enabled: true,
+    early_submission_bonus: '0.50',
+    service_hours_completion_bonus: '2.00',
+    consecutive_early_bonus: '1.00',
+    perfect_attendance_bonus: '0.50',
+    monthly_recovery_cap: '3.00',
 };
 
 const ComplianceManager = () => {
@@ -59,6 +77,14 @@ const ComplianceManager = () => {
                     quality_drop_deduction: String(res.data.quality_drop_deduction ?? DEFAULT_SETTINGS.quality_drop_deduction),
                     extra_service_bonus: String(res.data.extra_service_bonus ?? DEFAULT_SETTINGS.extra_service_bonus),
                     good_maintenance_bonus: String(res.data.good_maintenance_bonus ?? DEFAULT_SETTINGS.good_maintenance_bonus),
+                    missed_submission_grace_count: String(res.data.missed_submission_grace_count ?? DEFAULT_SETTINGS.missed_submission_grace_count),
+                    late_submission_grace_count: String(res.data.late_submission_grace_count ?? DEFAULT_SETTINGS.late_submission_grace_count),
+                    recovery_enabled: res.data.recovery_enabled !== undefined ? Boolean(res.data.recovery_enabled) : DEFAULT_SETTINGS.recovery_enabled,
+                    early_submission_bonus: String(res.data.early_submission_bonus ?? DEFAULT_SETTINGS.early_submission_bonus),
+                    service_hours_completion_bonus: String(res.data.service_hours_completion_bonus ?? DEFAULT_SETTINGS.service_hours_completion_bonus),
+                    consecutive_early_bonus: String(res.data.consecutive_early_bonus ?? DEFAULT_SETTINGS.consecutive_early_bonus),
+                    perfect_attendance_bonus: String(res.data.perfect_attendance_bonus ?? DEFAULT_SETTINGS.perfect_attendance_bonus),
+                    monthly_recovery_cap: String(res.data.monthly_recovery_cap ?? DEFAULT_SETTINGS.monthly_recovery_cap),
                 });
             } catch (e) {
                 console.error('Failed to load compliance settings', e);
@@ -108,6 +134,33 @@ const ComplianceManager = () => {
                 parsedSettings[field.key] = value;
             }
 
+            const parsedRecoverySettings = {
+                missed_submission_grace_count: parseInt(settings.missed_submission_grace_count, 10),
+                late_submission_grace_count: parseInt(settings.late_submission_grace_count, 10),
+                recovery_enabled: Boolean(settings.recovery_enabled),
+                early_submission_bonus: parseFloat(settings.early_submission_bonus),
+                service_hours_completion_bonus: parseFloat(settings.service_hours_completion_bonus),
+                consecutive_early_bonus: parseFloat(settings.consecutive_early_bonus),
+                perfect_attendance_bonus: parseFloat(settings.perfect_attendance_bonus),
+                monthly_recovery_cap: parseFloat(settings.monthly_recovery_cap),
+            };
+
+            if (Number.isNaN(parsedRecoverySettings.missed_submission_grace_count) || parsedRecoverySettings.missed_submission_grace_count < 0 || parsedRecoverySettings.missed_submission_grace_count > 100) {
+                setError('Missed Submission Grace Count must be a non-negative integer.');
+                return;
+            }
+            if (Number.isNaN(parsedRecoverySettings.late_submission_grace_count) || parsedRecoverySettings.late_submission_grace_count < 0 || parsedRecoverySettings.late_submission_grace_count > 100) {
+                setError('Late Submission Grace Count must be a non-negative integer.');
+                return;
+            }
+            for (const key of ['early_submission_bonus', 'service_hours_completion_bonus', 'consecutive_early_bonus', 'perfect_attendance_bonus', 'monthly_recovery_cap']) {
+                const value = parsedRecoverySettings[key];
+                if (Number.isNaN(value) || value < 0 || value > 100) {
+                    setError(`${key.replace(/_/g, ' ')} must be a non-negative number.`);
+                    return;
+                }
+            }
+
             const token = localStorage.getItem('token');
             const headers = token ? { Authorization: `Bearer ${token}` } : {};
 
@@ -116,6 +169,7 @@ const ComplianceManager = () => {
                 allowed_missed: parsedMissed,
                 required_hours: parsedHours,
                 ...parsedSettings,
+                ...parsedRecoverySettings,
             }, { headers });
 
             alert('System Threshold Parameters Synchronized Successfully.');
@@ -202,6 +256,42 @@ const ComplianceManager = () => {
                         ))}
                     </div>
 
+                    <div className="mt-6 rounded-3xl border border-slate-100 bg-slate-50 p-4">
+                        <div className="flex items-center justify-between gap-4">
+                            <div>
+                                <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Grace & Recovery Settings</p>
+                                <p className="text-sm text-slate-600">Enable grace periods and recovery bonuses for scholars who improve their performance.</p>
+                            </div>
+                            <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
+                                <input
+                                    type="checkbox"
+                                    checked={settings.recovery_enabled}
+                                    onChange={(e) => handleSettingChange('recovery_enabled', e.target.checked)}
+                                    className="h-4 w-4 rounded border-slate-300 text-[#7f2d3a] focus:ring-[#7f2d3a]"
+                                />
+                                Recovery Enabled
+                            </label>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {RECOVERY_FIELDS.map(({ key, label, hint }) => (
+                            <div key={key} className="space-y-2">
+                                <label className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">{label}</label>
+                                <input
+                                    type={key.includes('bonus') || key.includes('cap') ? 'text' : 'number'}
+                                    min="0"
+                                    step={key.includes('bonus') || key.includes('cap') ? '0.01' : '1'}
+                                    max="1000"
+                                    value={settings[key]}
+                                    onChange={(e) => handleSettingChange(key, e.target.value)}
+                                    className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-700 outline-none"
+                                />
+                                <p className="text-[10px] text-slate-400">{hint}</p>
+                            </div>
+                        ))}
+                    </div>
+
                     {error && (
                         <div className="rounded-2xl border border-red-100 bg-red-50 p-4 text-sm text-red-700">
                             <div className="flex items-start gap-2">
@@ -225,7 +315,7 @@ const ComplianceManager = () => {
                         <p className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">How this works</p>
                         <h2 className="text-xl font-black text-slate-900">Weight-based flagged scoring</h2>
                         <p className="text-sm leading-6 text-slate-600">
-                            The flagged scholar algorithm reads these values from the database and computes weighted deductions across seven risk categories. The final flagged status is based on whether the combined compliance score falls below the configured minimum.
+                            The compliance engine uses these values as incident-based point deductions and bonuses. Each rule lowers or restores a scholar's current compliance score, and the final status is compared against the configured minimum threshold.
                         </p>
                     </div>
                     <div className="rounded-3xl bg-slate-50 p-4 text-sm text-slate-600">
@@ -236,6 +326,12 @@ const ComplianceManager = () => {
                             <li>Absent duty, late submission, negative sentiment, and quality drops are incident-based.</li>
                             <li>Extra service hours and good maintenance earn bonus deduction credit.</li>
                         </ul>
+                    </div>
+                    <div className="rounded-3xl border border-slate-100 bg-slate-50 p-4 text-sm text-slate-600">
+                        <p className="font-semibold text-slate-800">Recovery and grace support</p>
+                        <p className="mt-2 text-slate-600">
+                            New grace period and recovery controls are now editable. Scholars can earn recovery credits for early reports, meeting service hour targets, perfect attendance, and consecutive early submissions.
+                        </p>
                     </div>
                     <div className="rounded-3xl border border-slate-100 bg-[#7f2d3a]/5 p-4 text-sm text-slate-800">
                         <p className="font-semibold text-[#3f1c1e]">Save rule</p>

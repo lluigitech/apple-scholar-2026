@@ -17,6 +17,8 @@
     "bcryptjs": "^3.0.3",
     "cloudinary": "^1.41.3",
     "cors": "^2.8.6",
+    "docxtemplater": "^3.69.3",
+    "docxtemplater-image-module-free": "^1.1.1",
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
     "express": "^5.2.1",
@@ -27,6 +29,7 @@
     "mysql2": "^3.22.3",
     "nodemailer": "^8.0.8",
     "pdfkit": "^0.18.0",
+    "pizzip": "^3.2.0",
     "qrcode": "^1.5.4",
     "sentiment": "^5.0.2"
   },

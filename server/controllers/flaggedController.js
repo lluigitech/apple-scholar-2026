@@ -91,7 +91,9 @@ exports.getFlaggedScholars = (req, res) => {
                 AVG(quality_score) AS avg_quality,
                 SUM(CASE WHEN service_hours IS NOT NULL THEN service_hours ELSE 0 END) AS total_service_hours,
                 MAX(submitted_at) AS last_submission,
-                SUM(CASE WHEN sentiment_label LIKE '%Negative%' THEN 1 ELSE 0 END) AS negative_letters
+                SUM(CASE WHEN sentiment_label LIKE '%Negative%' THEN 1 ELSE 0 END) AS negative_letters,
+                SUM(CASE WHEN submission_type = 'letter' AND submitted_at <= DATE_SUB(LAST_DAY(submitted_at), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS early_submissions,
+                GROUP_CONCAT(DISTINCT DATE_FORMAT(submitted_at, '%Y-%m') ORDER BY DATE_FORMAT(submitted_at, '%Y-%m') SEPARATOR ',') AS early_submission_months
             FROM submissions
             WHERE scholar_id IN (${placeholders})
             GROUP BY scholar_id
@@ -112,7 +114,11 @@ exports.getFlaggedScholars = (req, res) => {
             missed_submission_deduction, service_hour_shortfall_deduction,
             absent_duty_deduction, late_submission_deduction,
             negative_letter_deduction, quality_drop_deduction,
-            extra_service_bonus, good_maintenance_bonus
+            extra_service_bonus, good_maintenance_bonus,
+            missed_submission_grace_count, late_submission_grace_count,
+            recovery_enabled, early_submission_bonus,
+            service_hours_completion_bonus, consecutive_early_bonus,
+            perfect_attendance_bonus, monthly_recovery_cap
             FROM compliance_settings WHERE id = 1 LIMIT 1`;
 
         db.query(settingsSql, (err, settingsRows) => {
@@ -128,6 +134,14 @@ exports.getFlaggedScholars = (req, res) => {
                 quality_drop_deduction: 4,
                 extra_service_bonus: 2,
                 good_maintenance_bonus: 5,
+                missed_submission_grace_count: 2,
+                late_submission_grace_count: 2,
+                recovery_enabled: 1,
+                early_submission_bonus: 0.50,
+                service_hours_completion_bonus: 2.00,
+                consecutive_early_bonus: 1.00,
+                perfect_attendance_bonus: 0.50,
+                monthly_recovery_cap: 3.00,
             };
             const settings = (settingsRows && settingsRows[0]) ? settingsRows[0] : defaults;
 

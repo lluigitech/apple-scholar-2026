@@ -59,10 +59,14 @@ const ScholarAnnouncements = () => {
     }, []);
 
     const filtered = announcements.filter(ann => {
+        const title = String(ann.title || '').toLowerCase();
+        const content = String(ann.content || '').toLowerCase();
+        const normalizedRole = String(ann.created_by_role || '').trim().toLowerCase();
+
         const matchesSearch =
-            ann.title.toLowerCase().includes(search.toLowerCase()) ||
-            ann.content.toLowerCase().includes(search.toLowerCase());
-        const matchesSource   = sourceFilter === 'all' || ann.created_by_role === sourceFilter;
+            title.includes(search.toLowerCase()) ||
+            content.includes(search.toLowerCase());
+        const matchesSource = sourceFilter === 'all' || normalizedRole === sourceFilter;
         const matchesPriority = priorityFilter === 'all' || ann.priority === priorityFilter;
         return matchesSearch && matchesSource && matchesPriority;
     });
@@ -198,7 +202,8 @@ const ScholarAnnouncements = () => {
                     <div className="space-y-6 pb-8">
                         {filtered.map((ann, idx) => {
                             const cfg = PRIORITY_CONFIG[ann.priority] || PRIORITY_CONFIG.info;
-                            const src = SOURCE_CONFIG[ann.created_by_role];
+                            const normalizedRole = String(ann.created_by_role || '').trim().toLowerCase();
+                            const src = SOURCE_CONFIG[normalizedRole];
                             return (
                                 <div key={ann.id} className="relative">
                                     {/* push-pin — overlaps the card's top edge, like a notice pinned to a board */}
@@ -251,7 +256,7 @@ const ScholarAnnouncements = () => {
                                             </p>
                                             <span className="text-[10px]" style={{ color: '#c9b3b8' }}>•</span>
                                             <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: MAROON }}>
-                                                {ann.created_by}
+                                                {ann.created_by_name || ann.created_by || 'Unknown'}
                                             </span>
                                         </div>
                                     </div>

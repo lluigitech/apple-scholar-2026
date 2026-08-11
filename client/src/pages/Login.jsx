@@ -17,7 +17,7 @@ const Login = () => {
             const res = await axios.post('http://localhost:5000/api/login', { email, password });
             if (res.data.status === "Success") {
                 const userRole = res.data.role.toLowerCase().trim();
-                localStorage.setItem('token', res.data.token); 
+                localStorage.setItem('token', res.data.token);
                 localStorage.setItem('role', userRole);
                 localStorage.setItem('name', res.data.name);
                 localStorage.setItem('email', res.data.email || email);
@@ -50,212 +50,216 @@ const Login = () => {
     return (
         <>
             <style>{`
-                @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,600;0,700;1,600&family=DM+Sans:wght@300;400;500;600&display=swap');
+                @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;0,800;1,600&family=DM+Sans:wght@300;400;500;600;700&display=swap');
 
                 * { box-sizing: border-box; margin: 0; padding: 0; }
 
-                .login-root {
+                .kls-root {
                     min-height: 100vh;
                     display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    padding: 40px 20px;
                     font-family: 'DM Sans', sans-serif;
-                    background: #0e0608;
-                    overflow: hidden;
-                }
-
-                .login-left {
+                    background: #3a1620;
                     position: relative;
-                    width: 55%;
-                    display: flex;
-                    flex-direction: column;
-                    justify-content: space-between;
-                    padding: 48px 56px;
                     overflow: hidden;
                 }
 
-                .login-left-bg {
-                    position: absolute;
-                    inset: 0;
-                    background:
-                        radial-gradient(ellipse 80% 60% at 20% 80%, rgba(127,45,58,0.45) 0%, transparent 60%),
-                        radial-gradient(ellipse 60% 50% at 80% 20%, rgba(90,20,20,0.35) 0%, transparent 55%),
-                        linear-gradient(160deg, #1a0608 0%, #0e0608 50%, #160408 100%);
-                }
-
-                .login-left-bg::after {
+                .kls-root::before {
                     content: '';
                     position: absolute;
                     inset: 0;
-                    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 512 512' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
-                    pointer-events: none;
+                    background:
+                        radial-gradient(ellipse 70% 60% at 15% 10%, rgba(127,45,58,0.55) 0%, transparent 60%),
+                        radial-gradient(ellipse 60% 55% at 90% 90%, rgba(79,22,32,0.6) 0%, transparent 55%),
+                        linear-gradient(155deg, #2c111a 0%, #1e0c12 55%, #2a1119 100%);
                 }
 
-                .login-left-bg::before {
+                .kls-root::after {
                     content: '';
                     position: absolute;
                     inset: 0;
                     background-image:
-                        linear-gradient(rgba(127,45,58,0.06) 1px, transparent 1px),
-                        linear-gradient(90deg, rgba(127,45,58,0.06) 1px, transparent 1px);
-                    background-size: 60px 60px;
-                    pointer-events: none;
+                        linear-gradient(rgba(201,166,122,0.05) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(201,166,122,0.05) 1px, transparent 1px);
+                    background-size: 46px 46px;
+                    mask-image: radial-gradient(ellipse 70% 70% at 50% 50%, black 30%, transparent 75%);
                 }
 
-                .left-content { position: relative; z-index: 2; }
-
-                .logo-mark {
-                    display: flex;
-                    align-items: center;
-                    gap: 14px;
-                    margin-bottom: 80px;
-                }
-
-                .logo-icon {
-                    width: 44px;
-                    height: 44px;
-                    background: rgba(127,45,58,0.3);
-                    border: 1px solid rgba(127,45,58,0.5);
-                    border-radius: 12px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                }
-
-                .logo-text-main {
-                    font-family: 'Cormorant Garamond', serif;
-                    font-size: 18px;
-                    font-weight: 700;
-                    color: #fff;
-                    letter-spacing: -0.3px;
-                    line-height: 1.1;
-                }
-
-                .logo-text-sub {
-                    font-size: 9px;
-                    font-weight: 600;
-                    letter-spacing: 0.22em;
-                    text-transform: uppercase;
-                    color: #f5c842;
-                    margin-top: 1px;
-                }
-
-                .hero-heading {
-                    font-family: 'Cormorant Garamond', serif;
-                    font-size: clamp(48px, 5.5vw, 76px);
-                    font-weight: 700;
-                    line-height: 1.0;
-                    color: #fff;
-                    margin-bottom: 24px;
-                    letter-spacing: -1px;
-                }
-
-                .hero-heading .gold { color: #f5c842; font-style: italic; }
-
-                .hero-sub {
-                    font-size: 14px;
-                    font-weight: 300;
-                    color: rgba(255,255,255,0.45);
-                    line-height: 1.7;
-                    max-width: 380px;
-                    margin-bottom: 48px;
-                }
-
-                .stats-row { display: flex; gap: 32px; }
-
-                .stat-item {
-                    border-left: 2px solid rgba(127,45,58,0.5);
-                    padding-left: 16px;
-                }
-
-                .stat-value {
-                    font-family: 'Cormorant Garamond', serif;
-                    font-size: 28px;
-                    font-weight: 700;
-                    color: #f5c842;
-                    line-height: 1;
-                }
-
-                .stat-label {
-                    font-size: 9px;
-                    font-weight: 600;
-                    text-transform: uppercase;
-                    letter-spacing: 0.2em;
-                    color: rgba(255,255,255,0.3);
-                    margin-top: 4px;
-                }
-
-                .left-footer {
+                .kls-card {
                     position: relative;
                     z-index: 2;
+                    width: min(94vw, 1160px);
+                    min-height: 620px;
                     display: flex;
-                    align-items: center;
-                    gap: 8px;
-                    font-size: 11px;
-                    color: rgba(255,255,255,0.2);
-                    letter-spacing: 0.15em;
-                    text-transform: uppercase;
+                    background: #FBF7F2;
+                    border-radius: 22px;
+                    box-shadow: 0 30px 70px rgba(20,6,10,0.55), 0 2px 0 rgba(255,255,255,0.4) inset;
+                    overflow: hidden;
+                    animation: cardIn 0.6s cubic-bezier(0.16,1,0.3,1);
                 }
 
-                .left-footer-dot {
-                    width: 4px;
-                    height: 4px;
-                    border-radius: 50%;
-                    background: rgba(127,45,58,0.6);
+                @keyframes cardIn {
+                    from { opacity: 0; transform: translateY(18px); }
+                    to   { opacity: 1; transform: translateY(0); }
                 }
 
-                .orb {
+                /* ── STUB (left) ─────────────────────────────────────── */
+
+                .kls-stub {
+                    position: relative;
+                    width: 34%;
+                    min-width: 260px;
+                    max-width: 340px;
+                    flex-shrink: 0;
+                    background:
+                        linear-gradient(165deg, #4f1620 0%, #7f2d3a 60%, #6b2430 100%);
+                    padding: 44px 30px;
+                    display: flex;
+                    flex-direction: column;
+                    justify-content: space-between;
+                    color: #f3e6da;
+                    overflow: hidden;
+                }
+
+                .kls-stub::after {
+                    content: '';
                     position: absolute;
+                    right: -70px;
+                    bottom: -70px;
+                    width: 220px;
+                    height: 220px;
                     border-radius: 50%;
+                    background: radial-gradient(circle, rgba(201,166,122,0.14) 0%, transparent 70%);
                     pointer-events: none;
-                    z-index: 1;
                 }
 
-                .orb-1 {
-                    width: 320px;
-                    height: 320px;
-                    background: radial-gradient(circle, rgba(127,45,58,0.25) 0%, transparent 70%);
-                    bottom: -60px;
-                    right: -60px;
-                    animation: pulse 4s ease-in-out infinite;
-                }
+                .kls-stub-top { display: flex; flex-direction: column; gap: 26px; }
 
-                .orb-2 {
-                    width: 180px;
-                    height: 180px;
-                    background: radial-gradient(circle, rgba(245,200,66,0.08) 0%, transparent 70%);
-                    top: 30%;
-                    right: 10%;
-                    animation: pulse 6s ease-in-out infinite reverse;
-                }
-
-                @keyframes pulse {
-                    0%, 100% { opacity: 0.6; transform: scale(1); }
-                    50%       { opacity: 1;   transform: scale(1.08); }
-                }
-
-                .login-right {
-                    width: 45%;
-                    background: #fff;
+                .kls-mark {
+                    width: 40px;
+                    height: 40px;
+                    border-radius: 10px;
+                    background: rgba(255,255,255,0.08);
+                    border: 1px solid rgba(201,166,122,0.55);
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    padding: 48px 56px;
-                    position: relative;
                 }
 
-                .login-right::before {
-                    content: '';
+                .kls-brand-name {
+                    font-family: 'Playfair Display', serif;
+                    font-size: 15px;
+                    font-weight: 700;
+                    letter-spacing: -0.2px;
+                    line-height: 1.15;
+                    margin-top: 12px;
+                }
+
+                .kls-brand-sub {
+                    font-size: 8.5px;
+                    font-weight: 600;
+                    letter-spacing: 0.2em;
+                    text-transform: uppercase;
+                    color: #c9a67a;
+                    margin-top: 3px;
+                }
+
+                .kls-file-no {
+                    font-size: 9.5px;
+                    letter-spacing: 0.14em;
+                    color: rgba(243,230,218,0.55);
+                    border-top: 1px dashed rgba(201,166,122,0.4);
+                    padding-top: 12px;
+                }
+
+                .kls-file-no b { color: #e9c9a3; font-weight: 600; }
+
+                .kls-vertical {
                     position: absolute;
-                    top: 0; left: 0; right: 0;
-                    height: 3px;
-                    background: linear-gradient(90deg, #7f2d3a, #c4455a, #f5c842);
-                }
-
-                .form-wrapper { width: 100%; max-width: 360px; }
-
-                .form-eyebrow {
+                    left: 24px;
+                    bottom: 100px;
+                    writing-mode: vertical-rl;
+                    transform: rotate(180deg);
                     font-size: 9px;
                     font-weight: 600;
                     letter-spacing: 0.3em;
+                    text-transform: uppercase;
+                    color: rgba(243,230,218,0.28);
+                }
+
+                .kls-stub-bottom {
+                    font-size: 9.5px;
+                    line-height: 1.6;
+                    color: rgba(243,230,218,0.5);
+                    letter-spacing: 0.02em;
+                }
+
+                /* ── PERFORATION ─────────────────────────────────────── */
+
+                .kls-perf {
+                    position: relative;
+                    width: 0;
+                    background-image: repeating-linear-gradient(
+                        to bottom,
+                        rgba(122,90,80,0.35) 0 6px,
+                        transparent 6px 14px
+                    );
+                    background-position: center;
+                    background-size: 1.5px 100%;
+                    background-repeat: no-repeat;
+                }
+
+                .kls-perf::before,
+                .kls-perf::after {
+                    content: '';
+                    position: absolute;
+                    left: 50%;
+                    width: 26px;
+                    height: 26px;
+                    background: #3a1620;
+                    border-radius: 50%;
+                    transform: translateX(-50%);
+                    z-index: 3;
+                }
+
+                .kls-perf::before { top: -13px; }
+                .kls-perf::after { bottom: -13px; }
+
+                /* ── FORM (right) ────────────────────────────────────── */
+
+                .kls-form-side {
+                    position: relative;
+                    flex: 1;
+                    padding: 44px 64px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    overflow: hidden;
+                }
+
+                .kls-form-side::before {
+                    content: '';
+                    position: absolute;
+                    right: -60px;
+                    top: 50%;
+                    transform: translateY(-50%);
+                    width: 340px;
+                    height: 340px;
+                    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 200'%3E%3Cpath d='M100 62c-6-14-20-24-36-24-4 0-8 1-8 1s-2 10 4 22c5 10 15 18 26 19-4 12-6 26-6 38 0 34 18 62 40 62 8 0 12-4 20-4s12 4 20 4c22 0 40-30 40-64 0-24-12-42-30-42-8 0-14 4-20 4s-10-3-16-6c2-11 8-20 16-25-2-1-6-2-10-2-16 0-30 8-40 17z' fill='%237f2d3a'/%3E%3C/svg%3E");
+                    background-size: contain;
+                    background-repeat: no-repeat;
+                    opacity: 0.05;
+                    pointer-events: none;
+                }
+
+                .kls-form-wrapper { position: relative; z-index: 1; width: 100%; max-width: 360px; }
+
+                .kls-eyebrow {
+                    font-size: 9px;
+                    font-weight: 700;
+                    letter-spacing: 0.28em;
                     text-transform: uppercase;
                     color: #7f2d3a;
                     margin-bottom: 10px;
@@ -264,282 +268,269 @@ const Login = () => {
                     gap: 8px;
                 }
 
-                .form-eyebrow::before {
+                .kls-eyebrow::before {
                     content: '';
                     display: block;
-                    width: 20px;
+                    width: 18px;
                     height: 1px;
                     background: #7f2d3a;
                 }
 
-                .form-title {
-                    font-family: 'Cormorant Garamond', serif;
-                    font-size: 38px;
+                .kls-title {
+                    font-family: 'Playfair Display', serif;
+                    font-size: 40px;
                     font-weight: 700;
-                    color: #1a0608;
-                    line-height: 1.05;
+                    color: #241512;
+                    line-height: 1.06;
                     letter-spacing: -0.5px;
-                    margin-bottom: 8px;
+                    margin-bottom: 10px;
                 }
 
-                .form-desc {
-                    font-size: 13px;
-                    color: #94a3b8;
+                .kls-title .gold { color: #a3475a; font-style: italic; }
+
+                .kls-desc {
+                    font-size: 13.5px;
+                    color: #a89890;
                     font-weight: 300;
-                    margin-bottom: 36px;
-                    line-height: 1.5;
+                    margin-bottom: 30px;
+                    line-height: 1.6;
                 }
 
-                .error-msg {
-                    background: #fef2f2;
-                    border: 1px solid #fecaca;
+                .kls-error {
+                    background: #FBE9E9;
+                    border: 1px solid #f3c6c6;
                     border-radius: 10px;
                     padding: 10px 14px;
                     font-size: 12px;
-                    color: #dc2626;
-                    margin-bottom: 20px;
+                    color: #991b1b;
+                    margin-bottom: 18px;
                     display: flex;
                     align-items: center;
                     gap: 8px;
-                    animation: shake 0.3s ease;
+                    animation: kls-shake 0.3s ease;
                 }
 
-                @keyframes shake {
+                @keyframes kls-shake {
                     0%, 100% { transform: translateX(0); }
                     25%       { transform: translateX(-6px); }
                     75%       { transform: translateX(6px); }
                 }
 
-                .field { margin-bottom: 18px; }
+                .kls-field { margin-bottom: 16px; }
 
-                .field-label {
+                .kls-field-label {
                     display: block;
                     font-size: 9px;
                     font-weight: 700;
-                    letter-spacing: 0.25em;
+                    letter-spacing: 0.22em;
                     text-transform: uppercase;
-                    color: #7f2d3a;
-                    margin-bottom: 8px;
+                    color: #a56475;
+                    margin-bottom: 7px;
                 }
 
-                .field-input {
+                .kls-field-input {
                     width: 100%;
-                    background: #f8fafc;
-                    border: 1.5px solid #e2e8f0;
-                    border-radius: 14px;
-                    padding: 14px 18px;
-                    font-size: 14px;
+                    background: #fff;
+                    border: 1.5px solid #e9dfd8;
+                    border-radius: 12px;
+                    padding: 13px 16px;
+                    font-size: 13.5px;
                     font-family: 'DM Sans', sans-serif;
-                    font-weight: 400;
-                    color: #1e293b;
+                    color: #241512;
                     outline: none;
-                    transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
+                    transition: border-color 0.2s, box-shadow 0.2s;
                 }
 
-                .field-input::placeholder { color: #cbd5e1; }
-                .field-input:hover { border-color: #cbd5e1; background: #f1f5f9; }
-                .field-input:focus {
+                .kls-field-input::placeholder { color: #d8c9c2; }
+                .kls-field-input:hover { border-color: #d8c9c2; }
+                .kls-field-input:focus {
                     border-color: #7f2d3a;
-                    background: #fff;
                     box-shadow: 0 0 0 4px rgba(127,45,58,0.08);
                 }
 
-                .submit-btn {
+                .kls-submit {
                     width: 100%;
-                    background: #7f2d3a;
+                    background: linear-gradient(120deg, #7f2d3a 0%, #4f1620 100%);
                     color: #fff;
                     border: none;
-                    border-radius: 14px;
-                    padding: 15px 24px;
+                    border-radius: 999px;
+                    padding: 14px 22px;
                     font-family: 'DM Sans', sans-serif;
-                    font-size: 11px;
+                    font-size: 10.5px;
                     font-weight: 700;
-                    letter-spacing: 0.2em;
+                    letter-spacing: 0.18em;
                     text-transform: uppercase;
                     cursor: pointer;
                     display: flex;
                     align-items: center;
                     justify-content: center;
-                    gap: 10px;
-                    margin-top: 28px;
-                    transition: background 0.25s, transform 0.15s, box-shadow 0.25s;
-                    box-shadow: 0 8px 24px rgba(127,45,58,0.25);
-                    position: relative;
-                    overflow: hidden;
+                    gap: 9px;
+                    margin-top: 24px;
+                    transition: transform 0.15s, box-shadow 0.25s, opacity 0.2s;
+                    box-shadow: 0 8px 22px rgba(127,45,58,0.3);
                 }
 
-                .submit-btn::before {
-                    content: '';
-                    position: absolute;
-                    inset: 0;
-                    background: linear-gradient(135deg, rgba(255,255,255,0.08) 0%, transparent 60%);
-                }
-
-                .submit-btn:hover:not(:disabled) {
-                    background: #63232d;
+                .kls-submit:hover:not(:disabled) {
+                    opacity: 0.93;
                     transform: translateY(-2px);
-                    box-shadow: 0 14px 32px rgba(127,45,58,0.35);
+                    box-shadow: 0 12px 28px rgba(127,45,58,0.38);
                 }
 
-                .submit-btn:active:not(:disabled) { transform: translateY(0); }
-                .submit-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+                .kls-submit:active:not(:disabled) { transform: translateY(0); }
+                .kls-submit:disabled { opacity: 0.7; cursor: not-allowed; }
 
-                .spinner {
-                    width: 16px;
-                    height: 16px;
+                .kls-spinner {
+                    width: 15px;
+                    height: 15px;
                     border: 2px solid rgba(255,255,255,0.3);
                     border-top-color: #fff;
                     border-radius: 50%;
-                    animation: spin 0.7s linear infinite;
+                    animation: kls-spin 0.7s linear infinite;
                 }
 
-                @keyframes spin { to { transform: rotate(360deg); } }
+                @keyframes kls-spin { to { transform: rotate(360deg); } }
 
-                .form-footer {
-                    margin-top: 28px;
+                .kls-form-footer {
+                    margin-top: 24px;
                     display: flex;
                     align-items: center;
                     justify-content: center;
                     gap: 6px;
-                    font-size: 10px;
-                    color: #cbd5e1;
+                    font-size: 9.5px;
+                    color: #c9b3b8;
                     font-weight: 500;
                     text-transform: uppercase;
-                    letter-spacing: 0.15em;
+                    letter-spacing: 0.14em;
                 }
 
-                @media (max-width: 768px) {
-                    .login-root { flex-direction: column; }
-                    .login-left { width: 100%; padding: 36px 28px 48px; min-height: 50vh; }
-                    .login-right { width: 100%; padding: 40px 28px; }
-                    .hero-heading { font-size: 42px; }
-                    .stats-row { gap: 20px; }
+                @media (max-width: 720px) {
+                    .kls-card { flex-direction: column; width: 92vw; max-width: 420px; min-height: 0; }
+                    .kls-stub { width: 100%; max-width: none; flex-direction: row; align-items: center; padding: 20px 24px; }
+                    .kls-stub-top { flex-direction: row; align-items: center; gap: 14px; }
+                    .kls-file-no, .kls-vertical, .kls-stub-bottom { display: none; }
+                    .kls-form-side::before { display: none; }
+                    .kls-perf {
+                        width: 100%;
+                        height: 0;
+                        background-image: repeating-linear-gradient(
+                            to right,
+                            rgba(122,90,80,0.35) 0 6px,
+                            transparent 6px 14px
+                        );
+                        background-size: 100% 1.5px;
+                    }
+                    .kls-perf::before, .kls-perf::after {
+                        top: 50%; left: auto;
+                        transform: translateY(-50%);
+                    }
+                    .kls-perf::before { left: -13px; }
+                    .kls-perf::after { right: -13px; left: auto; }
+                    .kls-form-side { padding: 30px 26px; }
                 }
             `}</style>
 
-            <div className="login-root">
+            <div className="kls-root">
+                <div className="kls-card">
 
-                {/* LEFT PANEL */}
-                <div className="login-left">
-                    <div className="login-left-bg" />
-                    <div className="orb orb-1" />
-                    <div className="orb orb-2" />
-
-                    <div className="left-content">
-                        <div className="logo-mark">
-                            <div className="logo-icon">
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="#f5c842">
-                                    <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/>
+                    {/* STUB */}
+                    <div className="kls-stub">
+                        <div className="kls-stub-top">
+                            <div className="kls-mark">
+                                <svg width="20" height="20" viewBox="0 0 200 200" fill="none">
+                                    <path
+                                        d="M100 62c-6-14-20-24-36-24-4 0-8 1-8 1s-2 10 4 22c5 10 15 18 26 19-4 12-6 26-6 38 0 34 18 62 40 62 8 0 12-4 20-4s12 4 20 4c22 0 40-30 40-64 0-24-12-42-30-42-8 0-14 4-20 4s-10-3-16-6c2-11 8-20 16-25-2-1-6-2-10-2-16 0-30 8-40 17z"
+                                        fill="#c9a67a"
+                                    />
+                                    <path d="M100 62c2-16 10-30 22-38" stroke="#c9a67a" strokeWidth="10" strokeLinecap="round" />
                                 </svg>
                             </div>
                             <div>
-                                <div className="logo-text-main">Kalinga Foundation</div>
-                                <div className="logo-text-sub">Apple Scholar Program</div>
+                                <div className="kls-brand-name">Kalinga<br/>Foundation</div>
+                                <div className="kls-brand-sub">Apple Scholar Program</div>
                             </div>
                         </div>
 
-                        <h1 className="hero-heading">
-                            Scholar<br />
-                            <span className="gold">Compliance</span><br />
-                            Portal.
-                        </h1>
+                        <div className="kls-vertical">Scholar Compliance Portal</div>
 
-                        <p className="hero-sub">
-                            Intelligent tracking, correspondence evaluation, and academic progress
-                            analytics — built for the scholars of Payatas, Manila.
-                        </p>
-
-                        <div className="stats-row">
-                            <div className="stat-item">
-                                <div className="stat-value">4</div>
-                                <div className="stat-label">User Roles</div>
-                            </div>
-                            <div className="stat-item">
-                                <div className="stat-value">100%</div>
-                                <div className="stat-label">Web-Based</div>
-                            </div>
-                            <div className="stat-item">
-                                <div className="stat-value">Live</div>
-                                <div className="stat-label">Monitoring</div>
+                        <div>
+                            <div className="kls-file-no">FILE NO. <b>AS-2026</b></div>
+                            <div className="kls-stub-bottom" style={{ marginTop: 12 }}>
+                                Payatas, Quezon City<br />Manila, Philippines
                             </div>
                         </div>
                     </div>
 
-                    <div className="left-footer">
-                        <div className="left-footer-dot" />
-                        <span>Payatas, Quezon City · Manila, Philippines</span>
-                        <div className="left-footer-dot" />
-                        <span>2026</span>
-                    </div>
-                </div>
+                    <div className="kls-perf" />
 
-                {/* RIGHT PANEL */}
-                <div className="login-right">
-                    <div className="form-wrapper">
-                        <div className="form-eyebrow">Secure Access</div>
-                        <h2 className="form-title">Welcome<br />back.</h2>
-                        <p className="form-desc">Sign in to manage your compliance requirements and track your progress.</p>
+                    {/* FORM */}
+                    <div className="kls-form-side">
+                        <div className="kls-form-wrapper">
+                            <div className="kls-eyebrow">Secure Access</div>
+                            <h2 className="kls-title">Welcome<br /><span className="gold">back.</span></h2>
+                            <p className="kls-desc">Sign in to manage your compliance requirements and track your progress.</p>
 
-                        {error && (
-                            <div className="error-msg">
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                    <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                            {error && (
+                                <div className="kls-error">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                        <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
+                                    </svg>
+                                    {error}
+                                </div>
+                            )}
+
+                            <form onSubmit={handleLogin}>
+                                <div className="kls-field">
+                                    <label className="kls-field-label">Account Email</label>
+                                    <input
+                                        type="email"
+                                        required
+                                        className="kls-field-input"
+                                        placeholder="yourname@kalinga.org"
+                                        value={email}
+                                        onChange={(e) => setEmail(e.target.value)}
+                                        autoComplete="email"
+                                    />
+                                </div>
+
+                                <div className="kls-field">
+                                    <label className="kls-field-label">Password</label>
+                                    <input
+                                        type="password"
+                                        required
+                                        className="kls-field-input"
+                                        placeholder="••••••••"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        autoComplete="current-password"
+                                    />
+                                </div>
+
+                                <button type="submit" className="kls-submit" disabled={isLoading}>
+                                    {isLoading ? (
+                                        <>
+                                            <div className="kls-spinner" />
+                                            Authenticating...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                                                <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/>
+                                            </svg>
+                                            Sign In to Portal
+                                        </>
+                                    )}
+                                </button>
+                            </form>
+
+                            <div className="kls-form-footer">
+                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                    <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                                 </svg>
-                                {error}
+                                Kalinga Foundation · Audit Secure Trail
                             </div>
-                        )}
-
-                        <form onSubmit={handleLogin}>
-                            <div className="field">
-                                <label className="field-label">Account Email</label>
-                                <input
-                                    type="email"
-                                    required
-                                    className="field-input"
-                                    placeholder="yourname@kalinga.org"
-                                    value={email}
-                                    onChange={(e) => setEmail(e.target.value)}
-                                    autoComplete="email"
-                                />
-                            </div>
-
-                            <div className="field">
-                                <label className="field-label">Password</label>
-                                <input
-                                    type="password"
-                                    required
-                                    className="field-input"
-                                    placeholder="••••••••"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    autoComplete="current-password"
-                                />
-                            </div>
-
-                            <button type="submit" className="submit-btn" disabled={isLoading}>
-                                {isLoading ? (
-                                    <>
-                                        <div className="spinner" />
-                                        Authenticating...
-                                    </>
-                                ) : (
-                                    <>
-                                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                                            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/>
-                                        </svg>
-                                        Sign In to Portal
-                                    </>
-                                )}
-                            </button>
-                        </form>
-
-                        <div className="form-footer">
-                            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
-                            </svg>
-                            Kalinga Foundation · Audit Secure Trail
                         </div>
                     </div>
+
                 </div>
             </div>
         </>
