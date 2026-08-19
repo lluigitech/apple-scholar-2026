@@ -4,12 +4,12 @@ const defaults = {
     min_compliance: '70.00',
     allowed_missed: 2,
     required_hours: 30,
-    missed_submission_deduction: 12,
-    service_hour_shortfall_deduction: 2,
-    absent_duty_deduction: 6,
-    late_submission_deduction: 5,
-    negative_letter_deduction: 8,
-    quality_drop_deduction: 4,
+    missed_submission_deduction: 2,
+    service_hour_shortfall_deduction: 1,
+    absent_duty_deduction: 2,
+    late_submission_deduction: 1,
+    negative_letter_deduction: 1,
+    quality_drop_deduction: 0.5,
     extra_service_bonus: 2,
     good_maintenance_bonus: 5,
     missed_submission_grace_count: 2,
@@ -19,7 +19,7 @@ const defaults = {
     service_hours_completion_bonus: 2.00,
     consecutive_early_bonus: 1.00,
     perfect_attendance_bonus: 0.50,
-    monthly_recovery_cap: 3.00,
+    monthly_recovery_cap: 2.00,
 };
 
 const clampCompliance = (value) => Math.max(0, Math.min(100, Number(value.toFixed(2))));
@@ -84,7 +84,7 @@ const getComplianceSettings = (callback) => {
 const resolveGradeScale = (yearLevel) => {
     const normalized = typeof yearLevel === 'string' ? yearLevel.trim() : '';
     if (/^Grade\s+\d+$/i.test(normalized)) return 'k12';
-    if (/^(1st|2nd|3rd|4th|5th)\s+Year$/i.test(normalized)) return 'college';
+    if (/^(1st|2nd|3rd|4th|5th)\s+Year(\s+College)?$/i.test(normalized)) return 'college';
     return 'k12';
 };
 
@@ -331,12 +331,15 @@ const calculateComplianceScore = ({
     const overallCompliance = clampCompliance(100 - totalDeduction);
     const riskScore = 100 - overallCompliance;
     const minComplianceNum = parseFloat(settings.min_compliance || defaults.min_compliance);
+    const recoverableCredits = recoveryEnabled ? Math.max(0, bonuses.totalBonusPoints) : 0;
 
     return {
         overallCompliance,
         riskScore,
         totalDeduction,
         totalBonusPoints: bonuses.totalBonusPoints,
+        recoverableCredits,
+        recoveryEnabled,
         bonuses,
         minComplianceNum,
         deductions,
@@ -352,6 +355,7 @@ const calculateComplianceScore = ({
             present: presentCount,
             early_submission_count: earlySubmissionCount,
             consecutive_early_months: consecutiveEarlyMonths,
+            recoverable_credits: recoverableCredits,
         },
     };
 };
@@ -418,6 +422,16 @@ const logComplianceIncident = (scholarId, incidentType, deductionPoints, beforeC
             if (err) {
                 console.error('logComplianceIncident error:', err);
             }
+
+            db.query('SELECT email FROM users WHERE scholar_id = ? LIMIT 1', [scholarId], (userErr, userRows) => {
+                if (userErr || !userRows || userRows.length === 0) return;
+                const recipient = userRows[0].email;
+                db.query(
+                    'INSERT INTO notification_logs (scholar_id, recipient, channel, type, status, detail) VALUES (?, ?, ?, ?, ?, ?)',
+                    [scholarId, recipient, 'system', 'compliance_flag_triggered', 'generated', `${incidentType}: ${details || 'Compliance flag triggered.'}`],
+                    () => { /* ignore logging errors */ }
+                );
+            });
         }
     );
 };

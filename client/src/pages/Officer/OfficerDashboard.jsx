@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Users, Clock, CheckCircle, XCircle, TrendingUp,
   AlertTriangle, Calendar, Activity, Zap,
-  FileCheck, CalendarCheck, MessageCircle,
+  FileCheck, MessageCircle,
   ChevronRight, ShieldAlert, Mail, BarChart3, FileText
 } from 'lucide-react';
 
@@ -220,7 +220,6 @@ function QuickActions() {
 
   const actions = [
     { label: 'Manual Validation', icon: <FileCheck size={18} />, path: '/officer/validation', color: '#3b82f6', bg: '#eff6ff' },
-    { label: 'Duty Attendance', icon: <CalendarCheck size={18} />, path: '/officer/duty-attendance', color: '#16a34a', bg: '#f0fdf4' },
     { label: 'Flagged Scholars', icon: <ShieldAlert size={18} />, path: '/officer/flagged', color: MAROON, bg: MAROON_LIGHT },
     { label: 'Correspondence', icon: <Mail size={18} />, path: '/officer/correspondence-review', color: '#d97706', bg: '#fffbeb' },
     { label: 'Reports', icon: <BarChart3 size={18} />, path: '/officer/reports', color: '#8b5cf6', bg: '#f5f3ff' },

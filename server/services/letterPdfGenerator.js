@@ -9,6 +9,31 @@ const cloudinary = require('../config/cloudinary');
 
 const promiseDb = db.promise();
 
+const formatYearLevelLabel = (value) => {
+  if (!value) return '';
+  const normalized = String(value).trim().toLowerCase().replace(/_/g, ' ');
+  const aliasMap = {
+    'grade 7': 'Grade 7',
+    'grade 8': 'Grade 8',
+    'grade 9': 'Grade 9',
+    'grade 10': 'Grade 10',
+    'grade 11': 'Grade 11',
+    'grade 12': 'Grade 12',
+    'college 1': '1st Year College',
+    'college 2': '2nd Year College',
+    'college 3': '3rd Year College',
+    'college 4': '4th Year College',
+    'college 5': '5th Year College',
+    '1st year college': '1st Year College',
+    '2nd year college': '2nd Year College',
+    '3rd year college': '3rd Year College',
+    '4th year college': '4th Year College',
+    '5th year college': '5th Year College',
+  };
+
+  return aliasMap[normalized] || value;
+};
+
 const TEMPLATE_PATH = path.join(__dirname, '..', 'templates', 'letter-template.docx');
 const OUTPUT_DIR = path.join(__dirname, '..', 'uploads', 'generated-letters');
 const SOFFICE_PATH = process.env.SOFFICE_PATH || (process.platform === 'win32'
@@ -74,8 +99,8 @@ async function generateLetterPdf(submissionId) {
   const sub = rows[0];
 
   // Try to fetch user profile fields, but log the exact result and any failures.
-  let userProfile = { full_name: '', year_level: '', course: '', school: '' };
-  const [uRows] = await promiseDb.query('SELECT full_name, year_level, course, school FROM users WHERE scholar_id = ? LIMIT 1', [sub.scholar_id]);
+  let userProfile = { full_name: '', age: '', year_level: '', course: '', school: '' };
+  const [uRows] = await promiseDb.query('SELECT full_name, age, year_level, course, school FROM users WHERE scholar_id = ? LIMIT 1', [sub.scholar_id]);
   console.log('DEBUG userProfile query result', JSON.stringify(uRows, null, 2));
   if (uRows && uRows.length > 0) {
     userProfile = { ...userProfile, ...uRows[0] };
@@ -85,11 +110,12 @@ async function generateLetterPdf(submissionId) {
 
   // merge user profile into sub-like object used below
   sub.full_name = userProfile.full_name || '';
-  sub.year_level = userProfile.year_level || '';
+  sub.age = userProfile.age ?? '';
+  sub.year_level = formatYearLevelLabel(userProfile.year_level || '');
   sub.course = userProfile.course || '';
   sub.school = userProfile.school || '';
 
-  // Load media (up to two photos expected)
+  // Load up to two photos so the letter can render a balanced two-photo-per-page layout when available.
   const [mediaRows] = await promiseDb.query(
     `SELECT file_path, description FROM submission_media WHERE submission_id = ? ORDER BY id ASC LIMIT 2`,
     [submissionId]
@@ -98,8 +124,8 @@ async function generateLetterPdf(submissionId) {
   // Prepare data for docxtemplater
   const data = {
     name: sub.full_name || '',
-    age: '',
-    year_level: sub.year_level || '',
+    age: sub.age ?? '',
+    year_level: formatYearLevelLabel(sub.year_level || ''),
     course: sub.course || '',
     school: sub.school || '',
     date: sub.submitted_at ? new Date(sub.submitted_at).toLocaleDateString() : '',
@@ -111,15 +137,15 @@ async function generateLetterPdf(submissionId) {
   };
   console.log('DEBUG docxtemplater data', JSON.stringify(data, null, 2));
 
-  // Fetch photo buffers (if any) so image module can return Buffer synchronously
+  // Fetch up to two photo buffers for the final print layout.
   const imageBuffers = {
     photo1: null,
     photo2: null,
   };
-  for (let i = 0; i < 2; i++) {
-    const mr = mediaRows?.[i];
-    if (mr && mr.file_path) {
-      const buf = await fetchImageBuffer(mr.file_path);
+  for (let i = 0; i < Math.min(mediaRows.length, 2); i++) {
+    const media = mediaRows[i];
+    if (media && media.file_path) {
+      const buf = await fetchImageBuffer(media.file_path);
       imageBuffers[`photo${i + 1}`] = buf || null;
     }
   }
@@ -148,13 +174,15 @@ async function generateLetterPdf(submissionId) {
 
   const imageModule = new ImageModule({
     getImage: function(tagValue, tagName) {
-      const buffer = imageBuffers[tagValue] || TRANSPARENT_PNG;
+      if (!tagValue) return TRANSPARENT_PNG;
+      const buffer = imageBuffers[tagValue] || (tagValue === 'photo2' ? TRANSPARENT_PNG : TRANSPARENT_PNG);
       console.log('DEBUG getImage', tagValue, buffer && buffer.length);
       return buffer;
     },
     getSize: function(img, tagValue) {
       console.log('DEBUG getSize', img && img.length, tagValue);
-      return [450, 300];
+      if (tagValue === 'photo2') return [200, 150];
+      return [200, 150];
     }
   });
 

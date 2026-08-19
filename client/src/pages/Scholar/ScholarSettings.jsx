@@ -27,6 +27,7 @@ const ScholarSettings = () => {
     const [profile, setProfile] = useState({
         fullName: localStorage.getItem('name') || '',
         email: localStorage.getItem('email') || '',
+        age: localStorage.getItem('age') || '',
         phone: localStorage.getItem('phone') || '',
         studentId: localStorage.getItem('scholar_id') || '',
         yearLevel: localStorage.getItem('year_level') || '',
@@ -73,6 +74,7 @@ const ScholarSettings = () => {
                     ...prev,
                     fullName: data.full_name || prev.fullName,
                     email: data.email || prev.email,
+                    age: data.age ?? prev.age,
                     studentId: data.scholar_id || prev.studentId,
                     yearLevel: data.year_level || prev.yearLevel,
                     status: data.status || prev.status,

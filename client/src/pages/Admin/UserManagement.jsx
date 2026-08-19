@@ -42,6 +42,32 @@ const ID_LABEL = {
     admin:   'Admin ID',
 };
 
+const getLevelLabel = (role) => role === 'officer' ? 'Officer Level' : 'Year Level';
+
+const formatYearLevelLabel = (value) => {
+    if (!value) return 'Unassigned';
+    const normalized = String(value).trim().toLowerCase().replace(/_/g, ' ');
+    const aliasMap = {
+        'grade 7': 'Grade 7',
+        'grade 8': 'Grade 8',
+        'grade 9': 'Grade 9',
+        'grade 10': 'Grade 10',
+        'grade 11': 'Grade 11',
+        'grade 12': 'Grade 12',
+        'college 1': '1st Year College',
+        'college 2': '2nd Year College',
+        'college 3': '3rd Year College',
+        'college 4': '4th Year College',
+        'college 5': '5th Year College',
+        '1st year college': '1st Year College',
+        '2nd year college': '2nd Year College',
+        '3rd year college': '3rd Year College',
+        '4th year college': '4th Year College',
+        '5th year college': '5th Year College',
+    };
+    return aliasMap[normalized] || value;
+};
+
 // ── Atoms ──────────────────────────────────────────────────────
 const FieldLabel = ({ label, required, hint }) => (
     <div className="flex items-center justify-between mb-1.5">
@@ -215,10 +241,10 @@ const CreateModal = ({ onClose, onSuccess }) => {
                     </div>
                 </div>
 
-                {/* Year level — scholars only */}
-                {form.role === 'scholar' && (
+                {/* Assign year level to scholars and officers */}
+                {(form.role === 'scholar' || form.role === 'officer') && (
                     <div>
-                        <FieldLabel label="Year Level" />
+                        <FieldLabel label={getLevelLabel(form.role)} />
                         <SelectWrap>
                             <select className={selectCls} value={form.year_level}
                                 onChange={e => set('year_level', e.target.value)}>
@@ -344,10 +370,9 @@ const EditModal = ({ user, onClose, onSuccess }) => {
                     </div>
                 </div>
 
-                {/* Year level — scholars only */}
-                {form.role === 'scholar' && (
+                {(form.role === 'scholar' || form.role === 'officer') && (
                     <div>
-                        <FieldLabel label="Year Level" />
+                        <FieldLabel label={getLevelLabel(form.role)} />
                         <SelectWrap>
                             <select className={selectCls} value={form.year_level}
                                 onChange={e => set('year_level', e.target.value)}>
@@ -469,7 +494,7 @@ const STATUS_DOT = {
 
 const SkeletonRow = () => (
     <tr className="border-b border-slate-50">
-        {[40, 52, 64, 28, 24, 20].map((w, i) => (
+        {[40, 52, 64, 28, 24, 20, 30].map((w, i) => (
             <td key={i} className="px-5 py-4">
                 <div className="h-3 bg-slate-100 rounded-full animate-pulse" style={{ width: `${w}%` }} />
             </td>
@@ -579,9 +604,9 @@ const UserManagement = () => {
                         <thead>
                             <tr style={{ background: 'linear-gradient(180deg, #fafafa, #f5f5f7)' }}
                                 className="border-b border-slate-100">
-                                {['ID', 'Full Name', 'Email', 'Role', 'Status', 'Actions'].map((h, i) => (
+                                {['ID', 'Full Name', 'Email', 'Role', 'Assigned Level', 'Status', 'Actions'].map((h, i) => (
                                     <th key={h}
-                                        className={`px-5 py-3 text-[10px] font-bold uppercase tracking-widest ${i === 5 ? 'text-center' : ''}`}
+                                        className={`px-5 py-3 text-[10px] font-bold uppercase tracking-widest ${i === 6 ? 'text-center' : ''}`}
                                         style={{ color: i === 0 ? MAROON : '#94a3b8' }}>
                                         {h}
                                     </th>
@@ -622,11 +647,8 @@ const UserManagement = () => {
                                                         {badge.icon}{badge.label}
                                                     </span>
                                                 </td>
-                                                <td className="px-5 py-3.5">
-                                                    <span className="inline-flex items-center gap-1.5 text-xs text-slate-500 font-medium capitalize">
-                                                        <span className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${STATUS_DOT[user.status] || 'bg-slate-300'}`} />
-                                                        {user.status}
-                                                    </span>
+                                                <td className="px-5 py-3.5 text-xs text-slate-500">
+                                                    {formatYearLevelLabel(user.year_level)}
                                                 </td>
                                                 <td className="px-5 py-3.5">
                                                     <div className="flex items-center justify-center gap-0.5">
@@ -669,7 +691,7 @@ const UserManagement = () => {
                                     })
                                     : (
                                         <tr>
-                                            <td colSpan="6" className="py-16 text-center">
+                                            <td colSpan="7" className="py-16 text-center">
                                                 <div className="flex flex-col items-center gap-2">
                                                     <div className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-1"
                                                         style={{ background: MAROON_LIGHT }}>

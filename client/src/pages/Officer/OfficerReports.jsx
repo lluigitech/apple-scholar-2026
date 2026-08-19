@@ -175,10 +175,9 @@ export default function OfficerReports() {
       if (exportFilters.date_to) params.date_to = exportFilters.date_to;
 
       const reportType = exportFilters.report_type;
-      const results = { duty_attendance: [], submissions: [], requirements: [], activities: [] };
+      const results = { submissions: [], requirements: [], activities: [] };
       const fetchUrl = (url) => axios.get(`${API_BASE}${url}`, { ...authHeaders(), params }).then(r => r.data);
 
-      if (reportType === "all" || reportType === "duty_attendance") results.duty_attendance = await fetchUrl("/staff/reports/duty-attendance");
       if (reportType === "all" || reportType === "submissions") results.submissions = await fetchUrl("/staff/reports/submissions");
       if (reportType === "all" || reportType === "requirements") results.requirements = await fetchUrl("/staff/reports/requirements");
       if (reportType === "all" || reportType === "activities") results.activities = await fetchUrl("/staff/reports/activities");
@@ -214,38 +213,61 @@ export default function OfficerReports() {
   const pendingStaff = useMemo(() => reports.filter(r => !r.staffAction).length, [reports]);
 
   return (
-    <div className="min-h-screen bg-slate-50 p-4 sm:p-6">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <header className="rounded-[2rem] border border-slate-200 bg-white p-6 shadow-sm">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div className="space-y-3">
-              <p className="text-xs font-black uppercase tracking-[0.24em] text-slate-400">Officer Reports</p>
-              <h1 className="text-3xl font-black text-slate-900">Request Summary & Reports</h1>
-              <p className="max-w-2xl text-sm text-slate-500">View compliance status, review monthly scholar submissions, and generate exports from the officer dashboard.</p>
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 sm:p-6 lg:p-8">
+      <div className="mx-auto max-w-7xl">
+        
+        {/* ─── Header ─── */}
+        <header className="mb-8 rounded-3xl border border-slate-200 bg-white p-6 sm:p-8 shadow-sm">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="space-y-2">
+              <p className="text-xs font-black uppercase tracking-widest text-slate-400">Officer Portal</p>
+              <h1 className="text-4xl font-black text-slate-900">Reports & Analytics</h1>
+              <p className="max-w-xl text-sm text-slate-600">Track compliance, review submissions, and export comprehensive scholar reports</p>
             </div>
-            <div className="rounded-3xl bg-[#7f2d3a]/10 px-4 py-3 inline-flex items-center gap-3 text-sm font-semibold text-[#7f2d3a]">
-              <span className="inline-flex h-3 w-3 rounded-full bg-[#7f2d3a]" /> Live data from real backend reports
+            <div className="inline-flex items-center gap-2 rounded-full bg-green-50 px-4 py-2 border border-green-200">
+              <span className="inline-flex h-2.5 w-2.5 rounded-full bg-green-500" />
+              <span className="text-xs font-semibold text-green-700">System Active</span>
             </div>
           </div>
         </header>
 
-        <section className="rounded-[2rem] bg-white border border-slate-200 shadow-sm overflow-hidden">
-          <div className="flex flex-wrap gap-2 bg-slate-100 p-4 sm:p-5">
-            {tabItems.map(tab => (
-              <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
-                className={`rounded-2xl px-4 py-3 text-sm font-semibold transition ${activeTab === tab.key ? "bg-white text-[#7f2d3a] shadow-sm" : "text-slate-500 hover:bg-white/70 hover:text-slate-700"}`}
-              >
-                {tab.label}
-                {tab.key === "monthly-reports" && monthlyFetched && (
-                  <span className="ml-2 inline-flex h-6 min-w-[24px] items-center justify-center rounded-full bg-[#fef2f2] px-2 text-[0.65rem] font-bold text-red-600">{monthlyCounts.all}</span>
-                )}
-              </button>
-            ))}
+        {/* ─── Tab Container ─── */}
+        <section className="mb-6 rounded-3xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+          
+          {/* Tab Navigation */}
+          <div className="flex gap-0 border-b border-slate-200 bg-slate-50 p-3 sm:p-4">
+            {tabItems.map((tab, idx) => {
+              const isActive = activeTab === tab.key;
+              const tabCount = tab.key === "monthly-reports" && monthlyFetched ? monthlyCounts.all : null;
+              
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`relative px-4 py-2.5 text-sm font-semibold transition-all ${
+                    isActive
+                      ? "text-slate-900"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <span className="flex items-center gap-2">
+                    {tab.label}
+                    {tabCount && (
+                      <span className="inline-flex h-5 min-w-max items-center rounded-full bg-red-100 px-2 text-[0.65rem] font-bold text-red-700">
+                        {tabCount}
+                      </span>
+                    )}
+                  </span>
+                  {isActive && (
+                    <div className="absolute bottom-0 left-0 right-0 h-1 bg-gradient-to-r from-[#7f2d3a] to-[#a43d4d] rounded-t-full" />
+                  )}
+                </button>
+              );
+            })}
           </div>
 
-          <div className="p-6">
+          {/* Tab Content */}
+          <div className="p-6 lg:p-8">
             {activeTab === "compliance" && (
               <ComplianceSummaryTab
                 rows={complianceRows}
@@ -294,6 +316,7 @@ export default function OfficerReports() {
           </div>
         </section>
 
+        {/* ─── Report Detail Modal ─── */}
         {selectedReport && (
           <OfficerReportDetail
             report={selectedReport}

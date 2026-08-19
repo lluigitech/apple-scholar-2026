@@ -9,8 +9,6 @@ const SETTING_FIELDS = [
     { key: 'late_submission_deduction', label: 'Late Submission Deduction', hint: 'Points per overdue month' },
     { key: 'negative_letter_deduction', label: 'Negative Letter Deduction', hint: 'Points per negative letter' },
     { key: 'quality_drop_deduction', label: 'Quality Drop Deduction', hint: 'Points per quality bucket below 70%' },
-    { key: 'extra_service_bonus', label: 'Extra Service Bonus', hint: 'Points removed for extra service hours' },
-    { key: 'good_maintenance_bonus', label: 'Good Maintenance Bonus', hint: 'Points removed for strong quality & attendance' },
 ];
 
 const RECOVERY_FIELDS = [
@@ -27,12 +25,12 @@ const DEFAULT_SETTINGS = {
     min_compliance: '70',
     allowed_missed: '2',
     required_hours: '30',
-    missed_submission_deduction: '12',
-    service_hour_shortfall_deduction: '2',
-    absent_duty_deduction: '6',
-    late_submission_deduction: '5',
-    negative_letter_deduction: '8',
-    quality_drop_deduction: '4',
+    missed_submission_deduction: '2',
+    service_hour_shortfall_deduction: '1',
+    absent_duty_deduction: '2',
+    late_submission_deduction: '1',
+    negative_letter_deduction: '1',
+    quality_drop_deduction: '0.5',
     extra_service_bonus: '2',
     good_maintenance_bonus: '5',
     missed_submission_grace_count: '2',
@@ -42,7 +40,7 @@ const DEFAULT_SETTINGS = {
     service_hours_completion_bonus: '2.00',
     consecutive_early_bonus: '1.00',
     perfect_attendance_bonus: '0.50',
-    monthly_recovery_cap: '3.00',
+    monthly_recovery_cap: '2.00',
 };
 
 const ComplianceManager = () => {
@@ -75,8 +73,6 @@ const ComplianceManager = () => {
                     late_submission_deduction: String(res.data.late_submission_deduction ?? DEFAULT_SETTINGS.late_submission_deduction),
                     negative_letter_deduction: String(res.data.negative_letter_deduction ?? DEFAULT_SETTINGS.negative_letter_deduction),
                     quality_drop_deduction: String(res.data.quality_drop_deduction ?? DEFAULT_SETTINGS.quality_drop_deduction),
-                    extra_service_bonus: String(res.data.extra_service_bonus ?? DEFAULT_SETTINGS.extra_service_bonus),
-                    good_maintenance_bonus: String(res.data.good_maintenance_bonus ?? DEFAULT_SETTINGS.good_maintenance_bonus),
                     missed_submission_grace_count: String(res.data.missed_submission_grace_count ?? DEFAULT_SETTINGS.missed_submission_grace_count),
                     late_submission_grace_count: String(res.data.late_submission_grace_count ?? DEFAULT_SETTINGS.late_submission_grace_count),
                     recovery_enabled: res.data.recovery_enabled !== undefined ? Boolean(res.data.recovery_enabled) : DEFAULT_SETTINGS.recovery_enabled,
@@ -126,13 +122,20 @@ const ComplianceManager = () => {
 
             const parsedSettings = {};
             for (const field of SETTING_FIELDS) {
-                const value = parseInt(settings[field.key], 10);
+                const rawValue = settings[field.key];
+                const value = field.key === 'quality_drop_deduction'
+                    ? parseFloat(rawValue)
+                    : parseInt(rawValue, 10);
+
                 if (Number.isNaN(value) || value < 0 || value > 1000) {
-                    setError(`${field.label} must be a non-negative integer.`);
+                    setError(`${field.label} must be a non-negative number.`);
                     return;
                 }
                 parsedSettings[field.key] = value;
             }
+
+            parsedSettings.extra_service_bonus = parseInt(settings.extra_service_bonus ?? DEFAULT_SETTINGS.extra_service_bonus, 10);
+            parsedSettings.good_maintenance_bonus = parseInt(settings.good_maintenance_bonus ?? DEFAULT_SETTINGS.good_maintenance_bonus, 10);
 
             const parsedRecoverySettings = {
                 missed_submission_grace_count: parseInt(settings.missed_submission_grace_count, 10),
@@ -211,7 +214,7 @@ const ComplianceManager = () => {
 
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                         <div className="space-y-2">
-                            <label className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Minimum Overall Compliance</label>
+                            <label className="text-[10px] font-black uppercase tracking-[0.24em] text-slate-400">Minimum Compliance Credits</label>
                             <input
                                 type="text"
                                 value={minCompliance}

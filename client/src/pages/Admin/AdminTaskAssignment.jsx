@@ -4,9 +4,10 @@ const AdminTaskAssignment = () => {
   return (
     <TaskAssignmentBoard
       title="Task Assignment Center"
-      subtitle="Track required scholar submissions and create follow-up tasks"
+      subtitle="Track required scholar submissions and follow up on compliance progress"
       role="Admin"
       storageKey="admin-task-board"
+      canManageTasks={false}
     />
   );
 };

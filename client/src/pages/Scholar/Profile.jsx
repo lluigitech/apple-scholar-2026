@@ -60,6 +60,32 @@ function formatDate(value) {
   }
 }
 
+const formatYearLevelLabel = (value) => {
+  if (!value) return 'N/A';
+
+  const normalized = String(value).trim().toLowerCase().replace(/_/g, ' ');
+  const aliasMap = {
+    'grade 7': 'Grade 7',
+    'grade 8': 'Grade 8',
+    'grade 9': 'Grade 9',
+    'grade 10': 'Grade 10',
+    'grade 11': 'Grade 11',
+    'grade 12': 'Grade 12',
+    'college 1': '1st Year College',
+    'college 2': '2nd Year College',
+    'college 3': '3rd Year College',
+    'college 4': '4th Year College',
+    'college 5': '5th Year College',
+    '1st year college': '1st Year College',
+    '2nd year college': '2nd Year College',
+    '3rd year college': '3rd Year College',
+    '4th year college': '4th Year College',
+    '5th year college': '5th Year College',
+  };
+
+  return aliasMap[normalized] || value;
+};
+
 const ScholarProfile = () => {
   const userId = localStorage.getItem('id');
   const scholarId = localStorage.getItem('scholar_id');
@@ -74,8 +100,22 @@ const ScholarProfile = () => {
   const [editMode, setEditMode] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
+  const yearLevelOptions = [
+    { value: 'grade_7', label: 'Grade 7' },
+    { value: 'grade_8', label: 'Grade 8' },
+    { value: 'grade_9', label: 'Grade 9' },
+    { value: 'grade_10', label: 'Grade 10' },
+    { value: 'grade_11', label: 'Grade 11' },
+    { value: 'grade_12', label: 'Grade 12' },
+    { value: 'college_1', label: '1st Year College' },
+    { value: 'college_2', label: '2nd Year College' },
+    { value: 'college_3', label: '3rd Year College' },
+    { value: 'college_4', label: '4th Year College' },
+    { value: 'college_5', label: '5th Year College' },
+  ];
+
   const [form, setForm] = useState({
-    fullName: '', email: '', phone: '', address: '', course: '', school: '', yearLevel: '',
+    fullName: '', email: '', age: '', phone: '', address: '', course: '', school: '', yearLevel: '',
   });
 
   useEffect(() => {
@@ -113,6 +153,7 @@ const ScholarProfile = () => {
     setForm({
       fullName: profile.full_name || '',
       email: profile.email || '',
+      age: profile.age ?? '',
       phone: profile.phone || '',
       address: profile.address || '',
       course: profile.course || '',
@@ -135,6 +176,7 @@ const ScholarProfile = () => {
       const payload = {
         full_name: form.fullName.trim(),
         email: form.email.trim(),
+        age: form.age === '' ? null : Number(form.age),
         phone: form.phone.trim(),
         address: form.address.trim(),
         course: form.course.trim(),
@@ -235,7 +277,7 @@ const ScholarProfile = () => {
   const displayName = profile?.full_name || localStorage.getItem('name') || 'Scholar';
   const displayEmail = profile?.email || localStorage.getItem('email') || 'you@example.com';
   const displayCourse = profile?.course || 'N/A';
-  const displayYearLevel = profile?.year_level || 'N/A';
+  const displayYearLevel = formatYearLevelLabel(profile?.year_level);
   const displayId = profile?.scholar_id || localStorage.getItem('scholar_id') || 'N/A';
   const displayStatus = profile?.status || 'Active';
 
@@ -261,6 +303,7 @@ const ScholarProfile = () => {
   };
 
   const complianceScore = complianceData?.overall_compliance ?? null;
+  const recoverableCredits = Number(complianceData?.recoverable_credits || 0);
   const complianceLabel = complianceScore !== null ? getComplianceLabel(complianceScore) : 'Loading...';
   const complianceBadge = complianceScore !== null ? getBadgeStyle(complianceScore) : { color: '#a89890', bg: '#f1ece8' };
 
@@ -317,7 +360,7 @@ const ScholarProfile = () => {
                 setEditMode(false);
                 setError('');
                 setForm({
-                  fullName: profile?.full_name || '', email: profile?.email || '', phone: profile?.phone || '',
+                  fullName: profile?.full_name || '', email: profile?.email || '', age: profile?.age ?? '', phone: profile?.phone || '',
                   address: profile?.address || '', course: profile?.course || '', school: profile?.school || '',
                   yearLevel: profile?.year_level || '',
                 });
@@ -346,11 +389,11 @@ const ScholarProfile = () => {
               {[
                 { key: 'fullName', label: 'Full Name' },
                 { key: 'email', label: 'Email', type: 'email' },
+                { key: 'age', label: 'Age', type: 'number' },
                 { key: 'phone', label: 'Phone' },
                 { key: 'address', label: 'Address' },
                 { key: 'course', label: 'Course' },
                 { key: 'school', label: 'School' },
-                { key: 'yearLevel', label: 'Year Level' },
               ].map((f) => (
                 <label key={f.key} className="block">
                   <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: '#e9c9a8' }}>{f.label}</span>
@@ -365,6 +408,23 @@ const ScholarProfile = () => {
                   />
                 </label>
               ))}
+
+              <label className="block">
+                <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: '#e9c9a8' }}>Year Level</span>
+                <select
+                  value={form.yearLevel || ''}
+                  onChange={(e) => updateForm('yearLevel', e.target.value)}
+                  className="w-full mt-1 pb-2 text-sm text-white border-b outline-none transition-colors bg-transparent"
+                  style={{ borderColor: 'rgba(255,255,255,0.3)' }}
+                  onFocus={(e) => (e.target.style.borderColor = GOLD)}
+                  onBlur={(e) => (e.target.style.borderColor = 'rgba(255,255,255,0.3)')}
+                >
+                  <option value="" style={{ color: '#241512' }}>Select year level</option>
+                  {yearLevelOptions.map((option) => (
+                    <option key={option.value} value={option.value} style={{ color: '#241512' }}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
             </div>
             {error && <p className="text-xs font-bold mt-5" style={{ color: '#ffb4b4' }}>{error}</p>}
             <button
@@ -477,7 +537,11 @@ const ScholarProfile = () => {
 
               <div className="mt-6 rounded-xl p-4 text-sm" style={{ background: '#F6EFE1' }}>
                 <p className="font-semibold" style={{ color: '#8a6a3a' }}>Recovery tip</p>
-                <p className="mt-2" style={{ color: '#8a6a3a' }}>Completing one more service hour or submitting your next report early can help raise your score and keep you in good standing.</p>
+                <p className="mt-2" style={{ color: '#8a6a3a' }}>
+                  {recoverableCredits > 0
+                    ? `You currently have ${recoverableCredits.toFixed(2).replace(/\.00$/, '')} recoverable credit${recoverableCredits > 1 ? 's' : ''}. Completing one more service hour or submitting your next report early can offset deductions and raise your score.`
+                    : 'Completing one more service hour or submitting your next report early can help raise your score and keep you in good standing.'}
+                </p>
               </div>
             </div>
           </div>
@@ -532,7 +596,7 @@ const ScholarProfile = () => {
               <TrendingUp size={14} style={{ color: MAROON }} />
             </div>
             <p className="text-lg sm:text-2xl font-bold truncate" style={{ ...serif, color: MAROON }}>{compliance} Credits</p>
-            <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider mt-0.5 leading-tight" style={{ color: '#a56475' }}>Overall Compliance</p>
+            <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-wider mt-0.5 leading-tight" style={{ color: '#a56475' }}>Compliance Credits</p>
           </div>
           <div className="min-w-0 rounded-2xl p-4 sm:p-5" style={{ background: '#EAF3EC' }}>
             <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center mb-2 sm:mb-3 bg-white/70">

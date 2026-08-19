@@ -26,7 +26,6 @@ import OfficerManualValidation from './pages/Officer/OfficerManualValidation';
 import OfficerAnalytics from './pages/Officer/OfficerAnalytics';
 import OfficerAnnouncements from './pages/Officer/OfficerAnnouncements';
 import OfficerCommunication from './pages/Officer/OfficerCommunication';
-import OfficerDutyAttendance from './pages/Officer/OfficerDutyAttendance';
 import OfficerReports from './pages/Officer/OfficerReports';
 import OfficerTaskAssignment from './pages/Officer/OfficerTaskAssignment';
 
@@ -160,7 +159,6 @@ function App() {
             <Route path="analytics" element={<OfficerAnalytics />} />
             <Route path="announcements" element={<OfficerAnnouncements />} />
             <Route path="communication" element={<OfficerCommunication />} />
-            <Route path="duty-attendance" element={<OfficerDutyAttendance />} />
             <Route path="reports" element={<OfficerReports />} />
             <Route path="task-assignment" element={<OfficerTaskAssignment />} />
           </Route>

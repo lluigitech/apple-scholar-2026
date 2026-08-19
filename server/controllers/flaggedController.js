@@ -63,6 +63,12 @@ const getAcademicTier = (normalizedScore) => {
     return 'Academic Probation';
 };
 
+const getComplianceRiskTier = (overallCompliance) => {
+    if (overallCompliance >= 70) return 'low';
+    if (overallCompliance >= 50) return 'medium';
+    return 'high';
+};
+
 // ─── GET FLAGGED SCHOLARS (shared ng Officer at Admin portals) ─────────
 // Isang unified, proportional na compliance/risk formula.
 // Walang duplicate scoring, walang double-counting, at bawat flag ay
@@ -126,12 +132,12 @@ exports.getFlaggedScholars = (req, res) => {
                 min_compliance: '70.00',
                 allowed_missed: 2,
                 required_hours: 30,
-                missed_submission_deduction: 12,
-                service_hour_shortfall_deduction: 2,
-                absent_duty_deduction: 6,
-                late_submission_deduction: 5,
-                negative_letter_deduction: 8,
-                quality_drop_deduction: 4,
+                missed_submission_deduction: 2,
+                service_hour_shortfall_deduction: 1,
+                absent_duty_deduction: 2,
+                late_submission_deduction: 1,
+                negative_letter_deduction: 1,
+                quality_drop_deduction: 0.5,
                 extra_service_bonus: 2,
                 good_maintenance_bonus: 5,
                 missed_submission_grace_count: 2,
@@ -141,7 +147,7 @@ exports.getFlaggedScholars = (req, res) => {
                 service_hours_completion_bonus: 2.00,
                 consecutive_early_bonus: 1.00,
                 perfect_attendance_bonus: 0.50,
-                monthly_recovery_cap: 3.00,
+                monthly_recovery_cap: 2.00,
             };
             const settings = (settingsRows && settingsRows[0]) ? settingsRows[0] : defaults;
 
@@ -205,7 +211,7 @@ exports.getFlaggedScholars = (req, res) => {
 
                             const score = calculateComplianceScore({ sub, att, settings, today });
                             const overallCompliance = score.overallCompliance;
-                            const riskScore = score.riskScore;
+                            const riskLevel = getComplianceRiskTier(overallCompliance);
                             const flags = [];
 
                             const addFlag = (type, description, severity) => {
@@ -282,16 +288,16 @@ exports.getFlaggedScholars = (req, res) => {
                                 );
                             }
 
-                            if (overallCompliance >= score.minComplianceNum || flags.length === 0) return;
+                            if (riskLevel === 'low') return;
 
                             results.push({
                                 scholar_id:   scholar.scholar_id,
                                 full_name:    scholar.full_name,
                                 email:        scholar.email,
                                 year_level:   scholar.year_level || 'N/A',
-                                risk_score:   riskScore,
+                                risk_score:   score.riskScore,
                                 overall_compliance: overallCompliance,
-                                risk_level:   riskScore >= 60 ? 'high' : 'medium',
+                                risk_level:   riskLevel,
                                 flags,
                                 academic_status: academicStatus,
                                 stats: {

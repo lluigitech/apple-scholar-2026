@@ -27,6 +27,30 @@ const badgeMap = {
     rejected: { bg: '#fee2e2', color: '#991b1b', Icon: XCircle,      label: 'Rejected' },
 };
 
+const formatYearLevelLabel = (value) => {
+    if (!value) return '—';
+    const normalized = String(value).trim().toLowerCase().replace(/_/g, ' ');
+    const aliasMap = {
+        'grade 7': 'Grade 7',
+        'grade 8': 'Grade 8',
+        'grade 9': 'Grade 9',
+        'grade 10': 'Grade 10',
+        'grade 11': 'Grade 11',
+        'grade 12': 'Grade 12',
+        'college 1': '1st Year College',
+        'college 2': '2nd Year College',
+        'college 3': '3rd Year College',
+        'college 4': '4th Year College',
+        'college 5': '5th Year College',
+        '1st year college': '1st Year College',
+        '2nd year college': '2nd Year College',
+        '3rd year college': '3rd Year College',
+        '4th year college': '4th Year College',
+        '5th year college': '5th Year College',
+    };
+    return aliasMap[normalized] || value;
+};
+
 const StatusBadge = ({ status }) => {
     const cfg = badgeMap[status] ?? badgeMap.pending;
     const { Icon, bg, color, label } = cfg;
@@ -186,7 +210,7 @@ const ScholarProfileView = () => {
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet([{
             'Scholar ID': profile?.scholar_id, 'Full Name': profile?.full_name,
-            'Email': profile?.email, 'Year Level': profile?.year_level, 'Status': profile?.status,
+            'Email': profile?.email, 'Year Level': formatYearLevelLabel(profile?.year_level), 'Status': profile?.status,
         }]), 'Profile');
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(
             grades.flatMap(sem => sem.subjects.map(s => ({
@@ -295,7 +319,7 @@ const ScholarProfileView = () => {
                             {[
                                 [Hash, profile.scholar_id || '—'],
                                 [Mail, profile.email],
-                                [BookOpen, profile.year_level || '—'],
+                                [BookOpen, formatYearLevelLabel(profile.year_level)],
                             ].map(([Icon, val], i) => (
                                 <span key={i} className="flex items-center gap-1.5 text-xs text-slate-400">
                                     <Icon size={11} style={{ color: MAROON }} />{val}

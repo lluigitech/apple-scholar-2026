@@ -76,6 +76,33 @@ const ScoreBar = ({ score, weight, label }) => {
 // have to be retyped every time (e.g. after a rejection/resubmit).
 const scholarInfoStorageKey = (scholarId) => `scholar_info_cache_${scholarId}`;
 
+const formatYearLevelLabel = (value) => {
+  if (!value) return '';
+  const normalized = String(value).trim().toLowerCase().replace(/_/g, ' ');
+  if (!normalized) return '';
+
+  const aliasMap = {
+    'grade 7': 'Grade 7',
+    'grade 8': 'Grade 8',
+    'grade 9': 'Grade 9',
+    'grade 10': 'Grade 10',
+    'grade 11': 'Grade 11',
+    'grade 12': 'Grade 12',
+    'college 1': '1st Year College',
+    'college 2': '2nd Year College',
+    'college 3': '3rd Year College',
+    'college 4': '4th Year College',
+    'college 5': '5th Year College',
+    '1st year college': '1st Year College',
+    '2nd year college': '2nd Year College',
+    '3rd year college': '3rd Year College',
+    '4th year college': '4th Year College',
+    '5th year college': '5th Year College',
+  };
+
+  return aliasMap[normalized] || value;
+};
+
 function Submission() {
   const [tab, setTab] = useState('submit');
   const [selectedType, setSelectedType] = useState('monthly-report');
@@ -83,6 +110,7 @@ function Submission() {
   const [showConfirm, setShowConfirm] = useState(false);
   const [evalResult, setEvalResult] = useState(null);
   const [evaluating, setEvaluating] = useState(false);
+  const userId = localStorage.getItem('id');
 
   const [info, setInfo] = useState({
     name: '', age: '', year: '', course: '', school: '',
@@ -107,11 +135,24 @@ function Submission() {
   const wordCount = body.trim().split(/\s+/).filter(Boolean).length;
   const hasContent = info.name.trim().length > 0 && body.trim().length > 20;
 
-  // On first load, auto-fill Scholar Information from what was saved last
-  // time (name/age/year/course/school rarely change month to month), so
-  // scholars don't have to retype it on every new submission or resubmit.
   useEffect(() => {
+    const applyProfileInfo = (profile) => {
+      if (!profile) return;
+      const nextInfo = {
+        name: profile.full_name || '',
+        age: profile.age || '',
+        year: formatYearLevelLabel(profile.year_level),
+        course: profile.course || '',
+        school: profile.school || '',
+      };
+      setInfo(prev => ({ ...prev, ...nextInfo }));
+      if (scholarId) {
+        localStorage.setItem(scholarInfoStorageKey(scholarId), JSON.stringify(nextInfo));
+      }
+    };
+
     if (!scholarId) return;
+
     try {
       const cached = localStorage.getItem(scholarInfoStorageKey(scholarId));
       if (cached) {
@@ -121,8 +162,16 @@ function Submission() {
     } catch (err) {
       console.warn('Could not load cached scholar info', err);
     }
+
+    if (!userId) return;
+
+    axios.get(`http://localhost:5000/api/scholar/profile/${userId}`, { headers: authHeader() })
+      .then(({ data }) => applyProfileInfo(data))
+      .catch(() => {
+        // Keep cached profile if the live profile fetch fails.
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scholarId]);
+  }, [scholarId, userId]);
 
   // Keep the cache in sync as the scholar edits their info fields.
   useEffect(() => {
@@ -213,6 +262,11 @@ function Submission() {
     try {
       const formData = new FormData();
       formData.append('letter_content', body);
+      formData.append('name', info.name || '');
+      formData.append('age', info.age || '');
+      formData.append('year', info.year || '');
+      formData.append('course', info.course || '');
+      formData.append('school', info.school || '');
       formData.append('sentiment_score', evalResult.sentimentScore);
       formData.append('sentiment_label', evalResult.sentimentLabel);
       formData.append('quality_score', evalResult.overallScore);

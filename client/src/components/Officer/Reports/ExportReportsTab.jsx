@@ -12,7 +12,7 @@ export default function ExportReportsTab({
   filters, setField, scholars, data, loading, fetched, error,
   onGenerate, onDownload,
 }) {
-  const totalRecords = data.duty_attendance.length + data.submissions.length + data.requirements.length + data.activities.length;
+  const totalRecords = data.submissions.length + data.requirements.length + data.activities.length;
 
   return (
     <div className="space-y-5">
@@ -35,9 +35,8 @@ export default function ExportReportsTab({
           <DateField label="Date From" value={filters.date_from} onChange={e => setField("date_from", e.target.value)} />
           <DateField label="Date To"   value={filters.date_to}   onChange={e => setField("date_to",   e.target.value)} />
           <SelectField label="Report Type" icon={FileText} value={filters.report_type} onChange={e => setField("report_type", e.target.value)}>
-            <option value="all">All Reports</option>
-            <option value="duty_attendance">Duty Attendance</option>
-            <option value="submissions">Submissions</option>
+            <option value="all">All Officer Reports</option>
+            <option value="submissions">Monthly Reports / Submissions</option>
             <option value="requirements">Requirements (COR/Grades/Card)</option>
             <option value="activities">Activity Participation</option>
           </SelectField>
@@ -54,8 +53,7 @@ export default function ExportReportsTab({
       </div>
 
       {fetched && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-          <StatCard label="Duty Records"  count={data.duty_attendance.length} icon={ClipboardList}  color="text-blue-600"    bg="bg-blue-50"    border="border-blue-100" />
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
           <StatCard label="Submissions"   count={data.submissions.length}     icon={FileText}       color="text-violet-600"  bg="bg-violet-50"  border="border-violet-100" />
           <StatCard label="Requirements"  count={data.requirements.length}    icon={GraduationCap}  color="text-amber-600"   bg="bg-amber-50"   border="border-amber-100" />
           <StatCard label="Activities"    count={data.activities.length}      icon={Activity}       color="text-emerald-600" bg="bg-emerald-50" border="border-emerald-100" />
@@ -64,11 +62,6 @@ export default function ExportReportsTab({
 
       {fetched && (
         <div className="space-y-4">
-          {(filters.report_type === "all" || filters.report_type === "duty_attendance") && (
-            <Section title="Duty Attendance" count={data.duty_attendance.length}>
-              <DutyTable rows={data.duty_attendance} />
-            </Section>
-          )}
           {(filters.report_type === "all" || filters.report_type === "submissions") && (
             <Section title="Monthly Report Submissions" count={data.submissions.length}>
               <SubmissionsTable rows={data.submissions} />

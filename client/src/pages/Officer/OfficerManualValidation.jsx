@@ -20,6 +20,26 @@ const authHeader = () => {
 };
 
 // ────────────────────────────────────────────────────────────
+// Year Level Normalization
+// ────────────────────────────────────────────────────────────
+const normalizeYearLevel = (value) => {
+  if (!value) return '—';
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === 'grade 7' || normalized === 'grade_7' || normalized === 'g7') return 'Grade 7';
+  if (normalized === 'grade 8' || normalized === 'grade_8' || normalized === 'g8') return 'Grade 8';
+  if (normalized === 'grade 9' || normalized === 'grade_9' || normalized === 'g9') return 'Grade 9';
+  if (normalized === 'grade 10' || normalized === 'grade_10' || normalized === 'g10') return 'Grade 10';
+  if (normalized === 'grade 11' || normalized === 'grade_11' || normalized === 'g11') return 'Grade 11';
+  if (normalized === 'grade 12' || normalized === 'grade_12' || normalized === 'g12') return 'Grade 12';
+  if (normalized === '1st year college' || normalized === '1st year' || normalized === 'college_1' || normalized === 'college 1' || normalized === '1y') return '1st Year College';
+  if (normalized === '2nd year college' || normalized === '2nd year' || normalized === 'college_2' || normalized === 'college 2' || normalized === '2y') return '2nd Year College';
+  if (normalized === '3rd year college' || normalized === '3rd year' || normalized === 'college_3' || normalized === 'college 3' || normalized === '3y') return '3rd Year College';
+  if (normalized === '4th year college' || normalized === '4th year' || normalized === 'college_4' || normalized === 'college 4' || normalized === '4y') return '4th Year College';
+  if (normalized === '5th year college' || normalized === '5th year' || normalized === 'college_5' || normalized === 'college 5' || normalized === '5y') return '5th Year College';
+  return value;
+};
+
+// ────────────────────────────────────────────────────────────
 // Small shared bits
 // ────────────────────────────────────────────────────────────
 
@@ -105,7 +125,7 @@ const ReviewControls = ({ item, onReview, onOpenReject, busy }) => {
 // Item rows per section type
 // ────────────────────────────────────────────────────────────
 
-const LetterItem = ({ item, onReview, onOpenReject, busy, onPreview }) => {
+const LetterItem = ({ item, onReview, onOpenReject, busy, onPreview, onGeneratePdf, generatingPdfId }) => {
   const [open, setOpen] = useState(false);
   const backendRoot = API.replace(/\/api$/, '');
   const generatedPdfUrl = item.generated_pdf_path ? `${backendRoot}${item.generated_pdf_path}` : null;
@@ -142,7 +162,7 @@ const LetterItem = ({ item, onReview, onOpenReject, busy, onPreview }) => {
             </button>
           )}
 
-          {item.generated_pdf_path && (
+          {item.generated_pdf_path ? (
             <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
               <div className="flex items-center justify-between gap-4">
                 <div>
@@ -157,6 +177,22 @@ const LetterItem = ({ item, onReview, onOpenReject, busy, onPreview }) => {
                 </button>
               </div>
               <p className="mt-2 text-[11px] text-slate-500">This PDF was generated automatically from the submitted letter and scholar profile.</p>
+            </div>
+          ) : (
+            <div className="mt-4 rounded-3xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.3em] text-slate-500 font-black">Generated PDF</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-800">No PDF generated yet</p>
+                </div>
+                <button onClick={() => onGeneratePdf(item.id)}
+                  disabled={generatingPdfId === item.id}
+                  className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wide text-white"
+                  style={{ backgroundColor: generatingPdfId === item.id ? '#94a3b8' : '#2563eb' }}>
+                  {generatingPdfId === item.id ? 'Generating…' : 'Generate PDF'}
+                </button>
+              </div>
+              <p className="mt-2 text-[11px] text-slate-500">Generate the letter PDF now so officers can preview it instantly.</p>
             </div>
           )}
 
@@ -264,7 +300,7 @@ const FileItem = ({ item, label, path, onReview, onOpenReject, busy, onPreview }
 // Scholar card (one per scholar, expandable, all 4 sections inside)
 // ────────────────────────────────────────────────────────────
 
-const ScholarCard = ({ scholar, onReview, onOpenReject, busyId, onPreview }) => {
+const ScholarCard = ({ scholar, onReview, onOpenReject, busyId, onPreview, onGeneratePdf, generatingPdfId }) => {
   const [expanded, setExpanded] = useState(false);
 
   // ReviewModal expects modal.full_name / modal.scholar_id on the item itself,
@@ -322,7 +358,8 @@ const ScholarCard = ({ scholar, onReview, onOpenReject, busyId, onPreview }) => 
               ? <EmptyRow label="monthly letter" />
               : scholar.monthly_letters.map(item => (
                   <LetterItem key={item.id} item={withScholarMeta(item)} onReview={onReview} onOpenReject={onOpenReject}
-                    busy={busyId === item.id} onPreview={onPreview} />
+                    busy={busyId === item.id} onPreview={onPreview}
+                    onGeneratePdf={onGeneratePdf} generatingPdfId={generatingPdfId} />
                 ))}
           </div>
 
@@ -382,6 +419,7 @@ const OfficerManualValidation = () => {
 
   // Shared in-page file preview (same component used by OfficerManualValidation.jsx)
   const [filePreview, setFilePreview] = useState(null); // { url, kind, label }
+  const [generatingPdfId, setGeneratingPdfId] = useState(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -459,6 +497,18 @@ const OfficerManualValidation = () => {
       console.error('Review error:', e);
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleGeneratePdf = async (submissionId) => {
+    setGeneratingPdfId(submissionId);
+    try {
+      await axios.get(`${API}/submission/generate-pdf/${submissionId}`, { headers: authHeader() });
+      await fetchData();
+    } catch (e) {
+      console.error('Error generating PDF:', e);
+    } finally {
+      setGeneratingPdfId(null);
     }
   };
 
@@ -566,7 +616,8 @@ const OfficerManualValidation = () => {
         filtered.map(scholar => (
           <ScholarCard key={scholar.scholar_id} scholar={scholar}
             onReview={handleReview} onOpenReject={handleOpenReject}
-            busyId={busyId} onPreview={handlePreview} />
+            busyId={busyId} onPreview={handlePreview}
+            onGeneratePdf={handleGeneratePdf} generatingPdfId={generatingPdfId} />
         ))
       )}
 

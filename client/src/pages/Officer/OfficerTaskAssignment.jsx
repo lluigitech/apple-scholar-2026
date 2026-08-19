@@ -7,6 +7,7 @@ const OfficerTaskAssignment = () => {
       subtitle="Review submission progress and manage compliance follow-up tasks"
       role="Officer"
       storageKey="officer-task-board"
+      canManageTasks={true}
     />
   );
 };

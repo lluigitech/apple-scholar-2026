@@ -14,34 +14,39 @@ const CLOSING_PHRASES = [
     'kind regards', 'thank you', 'warm regards', 'truly yours',
 ];
 
+const asText = (value) => {
+    if (value === null || typeof value === 'undefined') return '';
+    return String(value).trim();
+};
+
 export const CHECKLIST = [
-    { id: 'name',    label: 'Scholar name filled in',              check: (i) => i.name.trim().length > 2 },
-    { id: 'age',     label: 'Age provided',                        check: (i) => i.age.trim().length > 0 },
-    { id: 'year',    label: 'Year level provided',                 check: (i) => i.year.trim().length > 0 },
-    { id: 'course',  label: 'Course provided',                     check: (i) => i.course.trim().length > 2 },
-    { id: 'school',  label: 'School provided',                     check: (i) => i.school.trim().length > 2 },
-    { id: 'body',    label: 'Letter body written (50+ words)',      check: (_, b) => b.trim().split(/\s+/).filter(Boolean).length >= 50 },
-    { id: 'length',  label: 'Letter meets length (150+ words)',    check: (_, b) => b.trim().split(/\s+/).filter(Boolean).length >= 150 },
+    { id: 'name',    label: 'Scholar name filled in',              check: (i) => asText(i.name).length > 2 },
+    { id: 'age',     label: 'Age provided',                        check: (i) => asText(i.age).length > 0 },
+    { id: 'year',    label: 'Year level provided',                 check: (i) => asText(i.year).length > 0 },
+    { id: 'course',  label: 'Course provided',                     check: (i) => asText(i.course).length > 2 },
+    { id: 'school',  label: 'School provided',                     check: (i) => asText(i.school).length > 2 },
+    { id: 'body',    label: 'Letter body written (50+ words)',      check: (_, b) => asText(b).split(/\s+/).filter(Boolean).length >= 50 },
+    { id: 'length',  label: 'Letter meets length (150+ words)',    check: (_, b) => asText(b).split(/\s+/).filter(Boolean).length >= 150 },
     { id: 'media',   label: 'At least 1 documentation photo',      check: (_, _b, m) => Array.isArray(m) && m.length >= 1 },
-    { id: 'mdesc',   label: 'All photos have descriptions',        check: (_, _b, m) => Array.isArray(m) && m.length > 0 && m.every(p => p.description?.trim().length > 3) },
+    { id: 'mdesc',   label: 'All photos have descriptions',        check: (_, _b, m) => Array.isArray(m) && m.length > 0 && m.every(p => asText(p.description).length > 3) },
 ];
 
 const countSentences = (text) => text.split(/[.!?]+/).map(s => s.trim()).filter(Boolean).length;
 const countParagraphs = (text) => text.split(/\n{2,}/).map(p => p.trim()).filter(Boolean).length;
 
 export function calcReportScore(info, body) {
-    const normalized = body.trim();
+    const normalized = asText(body);
     const text = normalized.toLowerCase();
     const words = normalized.split(/\s+/).filter(Boolean).length;
     const sentences = countSentences(normalized);
     const paragraphs = countParagraphs(normalized);
 
     let score = 0;
-    score += info.name.trim().length > 2 ? 10 : 0;
-    score += info.age.trim().length > 0 ? 5 : 0;
-    score += info.year.trim().length > 0 ? 5 : 0;
-    score += info.course.trim().length > 2 ? 5 : 0;
-    score += info.school.trim().length > 2 ? 5 : 0;
+    score += asText(info.name).length > 2 ? 10 : 0;
+    score += asText(info.age).length > 0 ? 5 : 0;
+    score += asText(info.year).length > 0 ? 5 : 0;
+    score += asText(info.course).length > 2 ? 5 : 0;
+    score += asText(info.school).length > 2 ? 5 : 0;
 
     score += words >= 50 ? 12 : 0;
     score += words >= 150 ? 16 : 0;

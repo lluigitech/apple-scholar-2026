@@ -1,6 +1,8 @@
 ﻿import { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Download, Eye, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertTriangle, RefreshCw, FileX } from 'lucide-react';
+import { Download, Eye, ChevronDown, ChevronUp, CheckCircle, XCircle, AlertTriangle, RefreshCw, FileX, ExternalLink } from 'lucide-react';
+import FilePreviewModal from '../../components/Officer/ManualValidation/FilePreviewModal';
+import { fileKind } from '../../utils/submissionHelpers';
 
 const API = 'http://localhost:5000/api';
 
@@ -55,7 +57,7 @@ const transformLetter = (row) => {
         rawId: row.id,
         scholarId: row.scholar_id,
         scholarName: row.full_name || row.scholar_id || 'Unknown',
-        yearLevel: row.year_level || '—',
+        yearLevel: normalizeYearLevel(row.year_level),
         type: 'Monthly Progress Report',
         submittedDate: row.submitted_at
             ? new Date(row.submitted_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -69,6 +71,7 @@ const transformLetter = (row) => {
         sentimentScore,
         sentiment,
         keyConcerns,
+        generatedPdfPath: row.generated_pdf_path || null,
         staffStatus: row.status,
         adminNote: row.staff_comment || '',
     };
@@ -80,7 +83,7 @@ const sentimentCfg = {
     negative: { color: '#991b1b', bg: '#fee2e2' },
 };
 
-const EvalCard = ({ letter, onSaveNote }) => {
+const EvalCard = ({ letter, onSaveNote, onPreview, onGeneratePdf, generatingPdfId }) => {
 
     const [expanded, setExpanded] = useState(false);
     const [adminNote, setAdminNote] = useState(letter.adminNote || '');
@@ -142,6 +145,38 @@ const EvalCard = ({ letter, onSaveNote }) => {
 
             {expanded && (
                 <div className="border-t border-gray-100 p-5 space-y-5">
+                    {letter.generatedPdfPath ? (
+                        <div className="rounded-3xl border border-gray-200 bg-slate-50 p-4 shadow-sm">
+                            <div className="flex items-center justify-between gap-4">
+                                <div>
+                                    <p className="text-xs uppercase tracking-[0.3em] text-slate-500 font-black">Generated PDF</p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-800">Letter template preview available</p>
+                                </div>
+                                <button onClick={() => onPreview(letter.generatedPdfPath, 'Generated PDF')}
+                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wide text-white"
+                                    style={{ backgroundColor: '#802B36' }}>
+                                    <ExternalLink size={14} /> Open PDF
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="rounded-3xl border border-gray-200 bg-slate-50 p-4 shadow-sm">
+                            <div className="flex items-center justify-between gap-4">
+                                <div>
+                                    <p className="text-xs uppercase tracking-[0.3em] text-slate-500 font-black">Generated PDF</p>
+                                    <p className="mt-1 text-sm font-semibold text-slate-800">No PDF generated yet</p>
+                                </div>
+                                <button onClick={() => onGeneratePdf(letter.rawId)}
+                                    disabled={generatingPdfId === letter.rawId}
+                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-xl text-[11px] font-bold uppercase tracking-wide text-white disabled:opacity-60"
+                                    style={{ backgroundColor: generatingPdfId === letter.rawId ? '#94a3b8' : '#802B36' }}>
+                                    {generatingPdfId === letter.rawId ? 'Generating...' : 'Generate PDF'}
+                                </button>
+                            </div>
+                            <p className="mt-2 text-[11px] text-slate-500">Generate the letter PDF now so it can be previewed here.</p>
+                        </div>
+                    )}
+
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                         <div>
                             <h4 className="text-xs font-semibold mb-3" style={{ fontFamily: "'DM Sans', sans-serif", color: '#1a1a1a' }}>
@@ -174,21 +209,21 @@ const EvalCard = ({ letter, onSaveNote }) => {
                         <div className="rounded-3xl border border-gray-100 bg-slate-50 p-4 h-full">
                             <p className="text-xs uppercase tracking-[0.24em] font-semibold text-slate-400 mb-4" style={{ fontFamily: "'DM Sans', sans-serif" }}>Letter Summary</p>
                             <div className="grid gap-3 text-xs text-slate-600">
-                                <div className="flex items-center justify-between">
+                                <div className="flex items-center justify-between gap-2">
                                     <span>Scholar ID</span>
-                                    <span className="font-semibold text-slate-900">{letter.scholarId}</span>
+                                    <span className="font-semibold text-slate-900 text-right">{letter.scholarId || '—'}</span>
                                 </div>
-                                <div className="flex items-center justify-between">
+                                <div className="flex items-center justify-between gap-2">
                                     <span>Year Level</span>
-                                    <span className="font-semibold text-slate-900">{letter.yearLevel}</span>
+                                    <span className="font-semibold text-slate-900 text-right">{letter.yearLevel}</span>
                                 </div>
-                                <div className="flex items-center justify-between">
+                                <div className="flex items-center justify-between gap-2">
                                     <span>Type</span>
-                                    <span className="font-semibold text-slate-900">{letter.type}</span>
+                                    <span className="font-semibold text-slate-900 text-right">{letter.type}</span>
                                 </div>
-                                <div className="flex items-center justify-between">
+                                <div className="flex items-center justify-between gap-2">
                                     <span>Status</span>
-                                    <span className="font-semibold text-slate-900 capitalize">{letter.staffStatus || 'pending'}</span>
+                                    <span className="font-semibold text-slate-900 text-right capitalize">{letter.staffStatus || 'pending'}</span>
                                 </div>
                             </div>
                         </div>
@@ -233,7 +268,32 @@ const EvalCard = ({ letter, onSaveNote }) => {
 };
 
 const transformScholar = (s) => {
-    const letters = (s.monthly_letters || []).map(transformLetter);
+    // Look for year_level across ALL submission types (letters, report cards, CORs, etc.)
+    let scholarYearLevel = '—';
+    const allSubmissions = [
+        ...(s.monthly_letters || []),
+        ...(s.report_cards || []),
+        ...(s.cors || []),
+        ...(s.other_documents || [])
+    ];
+    
+    // Find the first submission with a valid year_level
+    for (const submission of allSubmissions) {
+        if (submission.year_level && submission.year_level !== '—') {
+            scholarYearLevel = submission.year_level;
+            break;
+        }
+    }
+    
+    // Enrich each letter row with scholar context before transforming
+    const letters = (s.monthly_letters || []).map(letter => 
+        transformLetter({ 
+            ...letter, 
+            scholar_id: s.scholar_id, 
+            full_name: s.full_name,
+            year_level: letter.year_level || scholarYearLevel  // Ensure year_level is set
+        })
+    );
 
     // aggregate
     const totalLetters = letters.length;
@@ -242,7 +302,7 @@ const transformScholar = (s) => {
     return {
         scholar_id: s.scholar_id,
         full_name: s.full_name || 'Unknown',
-        year_level: (s.monthly_letters && s.monthly_letters[0] && s.monthly_letters[0].year_level) || '—',
+        year_level: normalizeYearLevel(scholarYearLevel),
         totalLetters,
         avgSentiment,
         avgCompleteness,
@@ -250,7 +310,7 @@ const transformScholar = (s) => {
     };
 };
 
-const ScholarCard = ({ scholar, onSaveNote }) => {
+const ScholarCard = ({ scholar, onSaveNote, onPreview, onGeneratePdf, generatingPdfId }) => {
     const [open, setOpen] = useState(false);
 
     return (
@@ -269,7 +329,16 @@ const ScholarCard = ({ scholar, onSaveNote }) => {
             </div>
             {open && (
                 <div className="mt-4 space-y-3">
-                    {scholar.letters.map(l => <EvalCard key={l.id} letter={l} onSaveNote={onSaveNote} />)}
+                    {scholar.letters.map(l => (
+                        <EvalCard
+                            key={l.id}
+                            letter={l}
+                            onSaveNote={onSaveNote}
+                            onPreview={onPreview}
+                            onGeneratePdf={onGeneratePdf}
+                            generatingPdfId={generatingPdfId}
+                        />
+                    ))}
                 </div>
             )}
         </div>
@@ -282,6 +351,8 @@ const CorrespondenceEvaluator = () => {
     const [error, setError] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
     const [gradeFilter, setGradeFilter] = useState('all');
+    const [generatingPdfId, setGeneratingPdfId] = useState(null);
+    const [filePreview, setFilePreview] = useState(null);
 
     const fetchScholars = async () => {
         try {
@@ -306,6 +377,28 @@ const CorrespondenceEvaluator = () => {
             ...s,
             letters: s.letters.map(l => l.rawId === submissionId ? { ...l, adminNote: note } : l)
         })));
+    };
+
+    const handleGeneratePdf = async (submissionId) => {
+        setGeneratingPdfId(submissionId);
+        try {
+            await axios.get(`${API}/submission/generate-pdf/${submissionId}`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+            await fetchScholars();
+        } catch (e) {
+            console.error('Error generating PDF:', e);
+        } finally {
+            setGeneratingPdfId(null);
+        }
+    };
+
+    const handlePreview = (path, label = 'File Preview', description = null) => {
+        if (!path) return;
+        const backendRoot = API.replace(/\/api$/, '');
+        const normalized = path.startsWith('/') ? `${backendRoot}${path}` : path;
+        const proxied = normalized.includes('res.cloudinary.com')
+            ? `${API}/submission/preview?url=${encodeURIComponent(normalized)}`
+            : normalized;
+        setFilePreview({ url: proxied, kind: fileKind(normalized), label, description });
     };
 
     const gradeOptions = [
@@ -429,8 +522,12 @@ const CorrespondenceEvaluator = () => {
                 </div>
             ) : (
                 <div className="space-y-4">
-                    {filtered.map(s => <ScholarCard key={s.scholar_id} scholar={s} onSaveNote={handleSaveNote} />)}
+                    {filtered.map(s => <ScholarCard key={s.scholar_id} scholar={s} onSaveNote={handleSaveNote} onPreview={handlePreview} onGeneratePdf={handleGeneratePdf} generatingPdfId={generatingPdfId} />)}
                 </div>
+            )}
+
+            {filePreview && (
+                <FilePreviewModal preview={filePreview} onClose={() => setFilePreview(null)} />
             )}
         </div>
     );

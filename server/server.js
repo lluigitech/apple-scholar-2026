@@ -33,7 +33,7 @@ app.use(cors({
 app.use(express.json());
 
 // Static files
-app.use('/uploads', express.static('uploads'));
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // --- Debug: log incoming requests (temporary) -----------------------------
 app.use((req, res, next) => {
@@ -120,6 +120,7 @@ const initializeDatabase = () => {
             password VARCHAR(255) NOT NULL,
             role ENUM('admin','scholar','staff','officer') NOT NULL DEFAULT 'scholar',
             year_level VARCHAR(64) DEFAULT NULL,
+            age INT DEFAULT NULL,
             phone VARCHAR(64) DEFAULT NULL,
             address VARCHAR(255) DEFAULT NULL,
             course VARCHAR(255) DEFAULT NULL,
@@ -144,6 +145,7 @@ const initializeDatabase = () => {
             console.log('Skipping users profile column auto-migration in production.');
         } else {
             const requiredProfileColumns = {
+                age: 'INT DEFAULT NULL',
                 phone: 'VARCHAR(64) DEFAULT NULL',
                 address: 'VARCHAR(255) DEFAULT NULL',
                 course: 'VARCHAR(255) DEFAULT NULL',
@@ -272,12 +274,12 @@ const initializeDatabase = () => {
         ADD COLUMN IF NOT EXISTS min_compliance DECIMAL(5,2) NOT NULL DEFAULT 70.00,
         ADD COLUMN IF NOT EXISTS allowed_missed INT NOT NULL DEFAULT 2,
         ADD COLUMN IF NOT EXISTS required_hours INT NOT NULL DEFAULT 30,
-        ADD COLUMN IF NOT EXISTS missed_submission_deduction INT NOT NULL DEFAULT 12,
-        ADD COLUMN IF NOT EXISTS service_hour_shortfall_deduction INT NOT NULL DEFAULT 2,
-        ADD COLUMN IF NOT EXISTS absent_duty_deduction INT NOT NULL DEFAULT 6,
-        ADD COLUMN IF NOT EXISTS late_submission_deduction INT NOT NULL DEFAULT 5,
-        ADD COLUMN IF NOT EXISTS negative_letter_deduction INT NOT NULL DEFAULT 8,
-        ADD COLUMN IF NOT EXISTS quality_drop_deduction INT NOT NULL DEFAULT 4,
+        ADD COLUMN IF NOT EXISTS missed_submission_deduction INT NOT NULL DEFAULT 2,
+        ADD COLUMN IF NOT EXISTS service_hour_shortfall_deduction INT NOT NULL DEFAULT 1,
+        ADD COLUMN IF NOT EXISTS absent_duty_deduction INT NOT NULL DEFAULT 2,
+        ADD COLUMN IF NOT EXISTS late_submission_deduction INT NOT NULL DEFAULT 1,
+        ADD COLUMN IF NOT EXISTS negative_letter_deduction INT NOT NULL DEFAULT 1,
+        ADD COLUMN IF NOT EXISTS quality_drop_deduction DECIMAL(4,2) NOT NULL DEFAULT 0.50,
         ADD COLUMN IF NOT EXISTS extra_service_bonus INT NOT NULL DEFAULT 2,
         ADD COLUMN IF NOT EXISTS good_maintenance_bonus INT NOT NULL DEFAULT 5,
         ADD COLUMN IF NOT EXISTS missed_submission_grace_count INT NOT NULL DEFAULT 2,
@@ -287,7 +289,7 @@ const initializeDatabase = () => {
         ADD COLUMN IF NOT EXISTS service_hours_completion_bonus DECIMAL(4,2) NOT NULL DEFAULT 2.00,
         ADD COLUMN IF NOT EXISTS consecutive_early_bonus DECIMAL(4,2) NOT NULL DEFAULT 1.00,
         ADD COLUMN IF NOT EXISTS perfect_attendance_bonus DECIMAL(4,2) NOT NULL DEFAULT 0.50,
-        ADD COLUMN IF NOT EXISTS monthly_recovery_cap DECIMAL(4,2) NOT NULL DEFAULT 3.00;
+        ADD COLUMN IF NOT EXISTS monthly_recovery_cap DECIMAL(4,2) NOT NULL DEFAULT 2.00;
     `, (alterErr) => {
         if (alterErr) console.error('Failed to add compliance_settings fields:', alterErr);
         else console.log('✅ compliance_settings fields ensured');

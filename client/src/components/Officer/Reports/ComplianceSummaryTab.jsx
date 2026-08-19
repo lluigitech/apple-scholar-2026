@@ -7,94 +7,116 @@ export default function ComplianceSummaryTab({
   onRefresh,
 }) {
   return (
-    <>
-      <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-        <h2 style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.2rem", fontWeight: 700, color: "#1a1a1a", marginBottom: 16 }}>Generate Report</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+    <div className="space-y-6">
+      {/* Generate Report Section */}
+      <div className="rounded-2xl border border-slate-200 bg-white p-6">
+        <h2 className="mb-5 text-xl font-bold text-slate-900">Generate Report</h2>
+        
+        <div className="grid grid-cols-1 gap-4 mb-5 md:grid-cols-3">
           {[
             { key: "report_type", label: "Report Type", options: ["Compliance Summary", "Duty Attendance", "Task Completion", "Scholar Performance"] },
             { key: "period", label: "Period", options: ["Current Month", "Last Month", "Current Semester", "Academic Year 2026", "Custom Range"] },
             { key: "scholar_group", label: "Scholar Group", options: ["All Scholars", "Year Level 1", "Year Level 2", "Year Level 3", "Year Level 4", "At Risk Only"] },
           ].map(({ key, label, options }) => (
             <div key={key}>
-              <label style={{ display: "block", marginBottom: 8, fontFamily: "'DM Sans',sans-serif", fontSize: "0.875rem", fontWeight: 600, color: "#374151" }}>{label}</label>
-              <select value={genOptions[key]} onChange={e => setGenOptions(o => ({ ...o, [key]: e.target.value }))}
-                className="w-full px-4 py-2.5 rounded-lg border border-gray-300 outline-none"
-                style={{ fontFamily: "'DM Sans',sans-serif", fontSize: "0.9rem" }}>
+              <label className="mb-2 block text-sm font-semibold text-slate-700">{label}</label>
+              <select 
+                value={genOptions[key]} 
+                onChange={e => setGenOptions(o => ({ ...o, [key]: e.target.value }))}
+                className="w-full px-3 py-2.5 rounded-lg border border-slate-300 bg-white text-sm outline-none transition hover:border-slate-400"
+              >
                 {options.map(o => <option key={o}>{o}</option>)}
               </select>
             </div>
           ))}
         </div>
+
         {genError && (
-          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-2 text-amber-700 text-sm mb-4">
-            <AlertCircle size={15} /> {genError}
+          <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">
+            <AlertCircle size={15} className="flex-shrink-0" /> {genError}
           </div>
         )}
-        <button onClick={onGenerate} disabled={genLoading}
-          style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", borderRadius: 8, fontFamily: "'DM Sans',sans-serif", fontSize: "0.9rem", fontWeight: 600, background: MAROON, color: "#fff", border: "none", cursor: genLoading ? "not-allowed" : "pointer", opacity: genLoading ? 0.7 : 1 }}>
-          {genLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />} {genLoading ? "Generating…" : "Download PDF Report"}
+
+        <button 
+          onClick={onGenerate} 
+          disabled={genLoading}
+          className="flex items-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60 disabled:cursor-not-allowed"
+          style={{ background: genLoading ? "#9ca3af" : MAROON }}
+        >
+          {genLoading ? (
+            <><Loader2 className="w-4 h-4 animate-spin" /> Generating…</>
+          ) : (
+            <><Download className="w-4 h-4" /> Download PDF Report</>
+          )}
         </button>
       </div>
 
-      <div className="bg-white rounded-xl border border-gray-200">
-        <div className="p-5 border-b border-gray-200 flex items-center justify-between">
-          <h2 style={{ fontFamily: "'Playfair Display',serif", fontSize: "1.15rem", fontWeight: 700, color: "#1a1a1a" }}>Scholar Compliance Summary</h2>
-          <button onClick={onRefresh}
-            style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 8, border: "1px solid #e5e7eb", background: "#fff", fontFamily: "'DM Sans',sans-serif", fontSize: "0.82rem", fontWeight: 600, color: "#374151", cursor: "pointer" }}>
+      {/* Compliance Summary Table */}
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4">
+          <h2 className="text-lg font-bold text-slate-900">Scholar Compliance Summary</h2>
+          <button 
+            onClick={onRefresh}
+            className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+          >
             <RefreshCw className="w-3.5 h-3.5" /> Refresh
           </button>
         </div>
 
         {error && (
-          <div className="bg-amber-50 border-b border-amber-200 px-5 py-3 flex items-center gap-2 text-amber-700 text-sm">
-            <AlertCircle size={15} /> {error}
+          <div className="border-b border-amber-200 bg-amber-50 px-6 py-3 flex items-center gap-2 text-sm text-amber-700">
+            <AlertCircle size={15} className="flex-shrink-0" /> {error}
           </div>
         )}
 
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full text-sm">
             <thead>
-              <tr style={{ background: MAROON_LIGHT, borderBottom: "1px solid #f3d0d4" }}>
+              <tr style={{ background: MAROON_LIGHT }}>
                 {["Name", "Student ID", "Completion Rate", "Risk Status"].map(h => (
-                  <th key={h} className="text-left px-6 py-3.5"
-                    style={{ fontFamily: "'DM Sans',sans-serif", fontSize: "0.78rem", fontWeight: 700, color: MAROON, textTransform: "uppercase", letterSpacing: "0.04em" }}>{h}</th>
+                  <th key={h} className="px-6 py-3.5 text-left font-bold uppercase tracking-wide" style={{ color: MAROON, fontSize: "0.75rem" }}>
+                    {h}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 Array(4).fill(0).map((_, i) => (
-                  <tr key={i} className="border-b border-gray-100">
+                  <tr key={i} className="border-b border-slate-100">
                     {Array(4).fill(0).map((__, j) => (
-                      <td key={j} className="px-6 py-4"><div className="h-3 bg-slate-100 rounded-full animate-pulse w-4/5" /></td>
+                      <td key={j} className="px-6 py-4">
+                        <div className="h-2.5 w-4/5 animate-pulse rounded-full bg-slate-200" />
+                      </td>
                     ))}
                   </tr>
                 ))
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={4} style={{ padding: "48px 24px", textAlign: "center" }}>
-                    <Users className="w-10 h-10 mx-auto mb-3" style={{ color: "#d1d5db" }} />
-                    <p style={{ fontFamily: "'DM Sans',sans-serif", fontSize: "0.9rem", color: "#9ca3af" }}>No compliance data yet.</p>
+                  <td colSpan={4} className="px-6 py-12 text-center">
+                    <Users className="mx-auto mb-3 h-10 w-10 text-slate-300" />
+                    <p className="text-sm text-slate-500">No compliance data yet.</p>
                   </td>
                 </tr>
               ) : (
-                rows.map(s => {
-                  const badge = riskBadge(s.riskStatus);
+                rows.map((row, idx) => {
+                  const badge = riskBadge(row.riskStatus);
                   return (
-                    <tr key={s.id} className="border-b border-gray-100 hover:bg-gray-50 transition-colors">
-                      <td className="px-6 py-4" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: "0.9rem", fontWeight: 600, color: "#1a1a1a" }}>{s.name}</td>
-                      <td className="px-6 py-4" style={{ fontFamily: "'DM Sans',sans-serif", fontSize: "0.875rem", color: "#6b7280" }}>{s.studentId}</td>
+                    <tr key={idx} className="border-b border-slate-100 transition hover:bg-slate-50">
+                      <td className="px-6 py-4 font-medium text-slate-900">{row.name}</td>
+                      <td className="px-6 py-4 text-slate-600">{row.studentId}</td>
                       <td className="px-6 py-4">
-                        <div className="flex items-center gap-3">
-                          <div style={{ width: 100, height: 6, background: "#e5e7eb", borderRadius: 99, overflow: "hidden" }}>
-                            <div style={{ height: "100%", width: `${s.completionRate}%`, background: s.completionRate >= 80 ? "#10b981" : s.completionRate >= 60 ? "#f59e0b" : "#ef4444", borderRadius: 99 }} />
+                        <div className="flex items-center gap-2">
+                          <div className="h-2 w-24 overflow-hidden rounded-full bg-slate-200">
+                            <div className="h-full bg-emerald-500" style={{ width: `${row.completionRate}%` }} />
                           </div>
-                          <span style={{ fontFamily: "'DM Sans',sans-serif", fontSize: "0.875rem", fontWeight: 700, color: "#374151" }}>{s.completionRate}%</span>
+                          <span className="text-xs font-semibold text-slate-700">{row.completionRate}%</span>
                         </div>
                       </td>
                       <td className="px-6 py-4">
-                        <span style={{ padding: "4px 12px", borderRadius: 99, fontFamily: "'DM Sans',sans-serif", fontSize: "0.75rem", fontWeight: 700, background: badge.bg, color: badge.color }}>{badge.label}</span>
+                        <span className="inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold" style={{ background: badge.bg, color: badge.color }}>
+                          {badge.label}
+                        </span>
                       </td>
                     </tr>
                   );
@@ -104,6 +126,6 @@ export default function ComplianceSummaryTab({
           </table>
         </div>
       </div>
-    </>
+    </div>
   );
 }

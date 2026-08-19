@@ -208,6 +208,11 @@ exports.submitCompliance = async (req, res) => {
     const scholar_id = req.user.scholar_id;
     const {
         letter_content,
+        name,
+        age,
+        year,
+        course,
+        school,
         sentiment_score,
         sentiment_label,
         service_activity,
@@ -234,6 +239,11 @@ exports.submitCompliance = async (req, res) => {
             scholar_id,
             submission_type: resolvedType,
             letter_content: normalizeSubmissionValue(letter_content),
+            name: normalizeSubmissionValue(name),
+            age: normalizeSubmissionValue(age),
+            year: normalizeSubmissionValue(year),
+            course: normalizeSubmissionValue(course),
+            school: normalizeSubmissionValue(school),
             sentiment_score: normalizeSubmissionValue(sentiment_score),
             sentiment_label: normalizeSubmissionValue(sentiment_label),
             report_card_path: normalizeSubmissionValue(reportCardPath),
@@ -287,6 +297,41 @@ exports.submitCompliance = async (req, res) => {
                     return res.status(500).json({ error: 'Error saving submission' });
                 }
 
+                const submissionId = result.insertId;
+
+                if (resolvedType === 'letter' && (normalizedPayload.name || normalizedPayload.year || normalizedPayload.course || normalizedPayload.school)) {
+                    const setClauses = [];
+                    const params = [];
+
+                    if (normalizedPayload.name) {
+                        setClauses.push('full_name = ?');
+                        params.push(normalizedPayload.name);
+                    }
+                    if (normalizedPayload.year) {
+                        setClauses.push('year_level = ?');
+                        params.push(normalizedPayload.year);
+                    }
+                    if (normalizedPayload.course) {
+                        setClauses.push('course = ?');
+                        params.push(normalizedPayload.course);
+                    }
+                    if (normalizedPayload.school) {
+                        setClauses.push('school = ?');
+                        params.push(normalizedPayload.school);
+                    }
+
+                    if (setClauses.length > 0) {
+                        params.push(scholar_id);
+                        db.query(
+                            `UPDATE users SET ${setClauses.join(', ')} WHERE scholar_id = ? LIMIT 1`,
+                            params,
+                            (userErr) => {
+                                if (userErr) console.error('Failed to save scholar letter profile fields:', userErr.message || userErr);
+                            }
+                        );
+                    }
+                }
+
                 calculateCurrentCompliance(scholar_id, (calcErr, currentCompliance, minCompliance, currentScore) => {
                     if (!calcErr && typeof currentCompliance === 'number') {
                         logComplianceIncident(
@@ -312,7 +357,6 @@ exports.submitCompliance = async (req, res) => {
                     }
                 });
 
-                const submissionId = result.insertId;
                 const descriptions = JSON.parse(media_descriptions || '[]');
 
                 if (mediaFiles.length > 0) {
@@ -1247,8 +1291,12 @@ exports.getOrGenerateSubmissionPdf = async (req, res) => {
             const existing = rows?.[0]?.generated_pdf_path || null;
 
             if (existing) {
-                // ensure file exists on disk
-                // Keep the 'uploads' segment — only strip a leading slash if present
+                const isRemote = existing.startsWith('http://') || existing.startsWith('https://');
+                if (isRemote || existing.includes('res.cloudinary.com')) {
+                    return res.json({ path: existing });
+                }
+
+                // ensure file exists on disk. Keep the 'uploads' segment — strip a leading slash if present.
                 const rel = existing.startsWith('/') ? existing.slice(1) : existing;
                 const abs = path.resolve(process.cwd(), rel);
                 if (fs.existsSync(abs)) {

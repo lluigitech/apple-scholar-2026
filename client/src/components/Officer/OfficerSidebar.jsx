@@ -7,7 +7,6 @@ import {
     Mail,
     Megaphone,
     MessageSquare,
-    CalendarCheck,
     FileBarChart2,
     BarChart3,
     FileText,
@@ -68,16 +67,6 @@ const OfficerSidebar = ({ isOpen, onClose }) => {
                     name: 'Task Assignment',
                     path: '/officer/task-assignment',
                     icon: <ClipboardList size={18} />
-                },
-            ]
-        },
-        {
-            group: 'Attendance',
-            items: [
-                {
-                    name: 'Duty Attendance',
-                    path: '/officer/duty-attendance',
-                    icon: <CalendarCheck size={18} />
                 },
             ]
         },

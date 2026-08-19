@@ -3,6 +3,19 @@ const crypto = require('crypto');
 const { sendDutyNotifyEmails } = require('../utils/notifyHelpers');
 const { logComplianceIncident, clampCompliance, getComplianceSettings, calculateCurrentCompliance } = require('../utils/complianceLogger');
 
+const logAttendanceNotification = (scholar_id, type, detail, cb = () => {}) => {
+    if (!scholar_id) return cb();
+    db.query('SELECT email FROM users WHERE scholar_id = ? LIMIT 1', [scholar_id], (userErr, userRows) => {
+        if (userErr || !userRows || userRows.length === 0) return cb();
+        const recipient = userRows[0].email;
+        db.query(
+            'INSERT INTO notification_logs (scholar_id, recipient, channel, type, status, detail) VALUES (?, ?, ?, ?, ?, ?)',
+            [scholar_id, recipient, 'system', type, 'generated', detail],
+            () => cb()
+        );
+    });
+};
+
 // ─── CREATE DUTY (now with QR token + group assignment) ──────
 // NOTE: na-merge na ito galing sa staffController.js version -- mas kumpleto
 // (may status default at required na created_by). Kung dating hindi
@@ -328,6 +341,7 @@ exports.markAttendance = (req, res) => {
                         if (err) return res.status(500).json({ error: 'Error updating attendance' });
 
                         if (status === 'absent') {
+                            logAttendanceNotification(scholar_id, 'attendance_absent', `Duty attendance marked absent for duty_id=${id}.`);
                             getComplianceSettings((settingsErr, settings) => {
                                 if (!settingsErr && settings) {
                                     const points = settings.absent_duty_deduction ?? 6;
@@ -347,6 +361,12 @@ exports.markAttendance = (req, res) => {
                             });
                         }
 
+                        if (status === 'late') {
+                            logAttendanceNotification(scholar_id, 'attendance_late', `Late attendance marked for duty_id=${id}.`);
+                            res.json({ message: 'Attendance updated' });
+                            return;
+                        }
+
                         res.json({ message: 'Attendance updated' });
                     }
                 );
@@ -358,6 +378,7 @@ exports.markAttendance = (req, res) => {
                         if (err) return res.status(500).json({ error: 'Error marking attendance' });
 
                         if (status === 'absent') {
+                            logAttendanceNotification(scholar_id, 'attendance_absent', `Duty attendance marked absent for duty_id=${id}.`);
                             getComplianceSettings((settingsErr, settings) => {
                                 if (!settingsErr && settings) {
                                     const points = settings.absent_duty_deduction ?? 6;
@@ -375,6 +396,12 @@ exports.markAttendance = (req, res) => {
                                     });
                                 }
                             });
+                        }
+
+                        if (status === 'late') {
+                            logAttendanceNotification(scholar_id, 'attendance_late', `Late attendance marked for duty_id=${id}.`);
+                            res.json({ message: 'Attendance marked' });
+                            return;
                         }
 
                         res.json({ message: 'Attendance marked' });
@@ -416,7 +443,15 @@ exports.bulkSaveAttendance = (req, res) => {
                         "UPDATE duty_attendance SET status=?, method=? WHERE duty_id=? AND scholar_id=?",
                         [status, method || 'manual', id, scholar_id],
                         (err) => {
-                            if (err) errors++; else completed++;
+                            if (err) errors++; else {
+                                if (status === 'late') {
+                                    logAttendanceNotification(scholar_id, 'attendance_late', `Late attendance record updated for duty_id=${id}.`);
+                                }
+                                if (status === 'absent') {
+                                    logAttendanceNotification(scholar_id, 'attendance_absent', `Duty attendance marked absent for duty_id=${id}.`);
+                                }
+                                completed++;
+                            }
                             processNext(index + 1);
                         }
                     );
@@ -425,8 +460,16 @@ exports.bulkSaveAttendance = (req, res) => {
                         "INSERT INTO duty_attendance (duty_id, scholar_id, status, method) VALUES (?, ?, ?, ?)",
                         [id, scholar_id, status, method || 'manual'],
                         (err) => {
-                            if (err) errors++; else completed++;
-                            processNext(index + 1);
+                            if (err) errors++; else {
+                                if (status === 'late') {
+                                    logAttendanceNotification(scholar_id, 'attendance_late', `Late attendance recorded for duty_id=${id}.`);
+                                }
+                                if (status === 'absent') {
+                                    logAttendanceNotification(scholar_id, 'attendance_absent', `Duty attendance marked absent for duty_id=${id}.`);
+                                }
+                                completed++;
+                                processNext(index + 1);
+                            }
                         }
                     );
                 }

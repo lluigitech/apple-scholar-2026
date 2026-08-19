@@ -88,7 +88,28 @@ function buildFeed({ announcements, duties, history }) {
 
   // Duties
   duties.forEach(d => {
-    if (d.computed_status === 'pending') {
+    const attendanceStatus = (d.attendance_status || '').toLowerCase();
+    const dutyDate = d.duty_date ? new Date(d.duty_date) : null;
+
+    if (attendanceStatus === 'late') {
+      notifications.push({
+        id: `duty-late-${d.id}`,
+        source: 'duty',
+        type: 'important',
+        title: `Late Duty Check-In: ${d.title}`,
+        message: `Your check-in for this duty was marked late. This counts toward your attendance record and may affect compliance if repeated.`,
+        date: d.marked_at || d.duty_date,
+      });
+    } else if (attendanceStatus === 'absent' || attendanceStatus === 'missed') {
+      notifications.push({
+        id: `duty-absent-${d.id}`,
+        source: 'duty',
+        type: 'critical',
+        title: `Attendance Marked Absent: ${d.title}`,
+        message: 'This absence is recorded for this duty. It remains part of your attendance history unless a valid makeup or staff update clears it.',
+        date: d.marked_at || d.duty_date,
+      });
+    } else if (d.computed_status === 'pending') {
       const daysLeft = Math.ceil((new Date(d.duty_date) - now) / 86400000);
       notifications.push({
         id: `duty-${d.id}`,
@@ -99,13 +120,13 @@ function buildFeed({ announcements, duties, history }) {
         date: d.duty_date,
       });
       deadlines.push({ task: d.title, daysLeft, urgent: daysLeft <= 7 });
-    } else if (d.computed_status === 'missed') {
+    } else if (d.computed_status === 'missed' || (!attendanceStatus && dutyDate && dutyDate < now)) {
       notifications.push({
         id: `duty-missed-${d.id}`,
         source: 'duty',
         type: 'rejected',
         title: `Missed Duty: ${d.title}`,
-        message: 'You did not check in for this duty and the makeup window has passed.',
+        message: 'You did not check in for this duty and the makeup window has passed. This missed duty is still counted in your cumulative attendance record.',
         date: d.duty_date,
       });
     }

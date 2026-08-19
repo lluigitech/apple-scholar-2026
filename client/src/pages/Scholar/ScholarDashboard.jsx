@@ -21,29 +21,15 @@ const authHeader = () => {
     return { Authorization: `Bearer ${token}` };
 };
 
-// Recolored onto the shared ledger palette — four tiers instead of five
-// arbitrary Tailwind hues, matching the badges used across Profile/Settings.
-const getComplianceLabel = (value) => {
-    if (value >= 90) return 'Excellent';
-    if (value >= 80) return 'Good Standing';
-    if (value >= 70) return 'Low Risk';
-    if (value >= 50) return 'Medium Risk';
+const getComplianceColor = (value) => value >= 70 ? '#15803d' : '#991b1b';
+const getComplianceBg = (value) => value >= 70 ? '#EAF3EC' : '#FBE9E9';
+const getRiskLabel = (complianceScore) => {
+    if (complianceScore >= 70) return 'Low Risk';
+    if (complianceScore >= 50) return 'Medium Risk';
     return 'High Risk';
 };
-const getComplianceColor = (value) => {
-    if (value >= 90) return '#15803d';
-    if (value >= 80) return '#15803d';
-    if (value >= 70) return GOLD;
-    if (value >= 50) return '#92400e';
-    return '#991b1b';
-};
-const getComplianceBg = (value) => {
-    if (value >= 90) return '#EAF3EC';
-    if (value >= 80) return '#EAF3EC';
-    if (value >= 70) return '#F6EFE1';
-    if (value >= 50) return '#FBF0DE';
-    return '#FBE9E9';
-};
+const getRiskColor = (complianceScore) => complianceScore >= 70 ? '#15803d' : complianceScore >= 50 ? '#92400e' : '#991b1b';
+const getRiskBg = (complianceScore) => complianceScore >= 70 ? '#EAF3EC' : complianceScore >= 50 ? '#FBF0DE' : '#FBE9E9';
 
 // ── Radial gauge — a semicircle arc reading the compliance score, the
 // dashboard's signature instrument. Pure SVG, no chart library needed.
@@ -150,9 +136,12 @@ const ScholarDashboard = () => {
     const progressPercent = Math.round((completedCount / requirements.length) * 100);
 
     const complianceScore = complianceData?.overall_compliance ?? null;
-    const complianceLabel = complianceScore !== null ? getComplianceLabel(complianceScore) : 'Loading...';
+    const riskScore = Number(complianceData?.risk_score || 0);
+    const riskLabel = complianceScore !== null ? getRiskLabel(Number(complianceScore)) : 'Loading...';
     const complianceColor = complianceScore !== null ? getComplianceColor(complianceScore) : '#a89890';
     const complianceBg = complianceScore !== null ? getComplianceBg(complianceScore) : '#f1ece8';
+    const riskColor = complianceScore !== null ? getRiskColor(Number(complianceScore)) : '#a89890';
+    const riskBg = complianceScore !== null ? getRiskBg(Number(complianceScore)) : '#f1ece8';
     const topFlags = complianceData?.flags?.slice(0, 2) ?? [];
 
     const serif = { fontFamily: "'Playfair Display', serif" };
@@ -218,9 +207,15 @@ const ScholarDashboard = () => {
                                         className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider mt-1"
                                         style={{ color: complianceColor, background: complianceBg }}
                                     >
-                                        {complianceLabel}
+                                        {complianceScore !== null ? `${Math.round(complianceScore)} Compliance Credits` : 'Loading...'}
                                     </span>
-                                    <p className="text-[10px] font-bold uppercase tracking-widest mt-2" style={{ color: '#a89890' }}>Compliance Standing</p>
+                                    <span
+                                        className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider mt-2"
+                                        style={{ color: riskColor, background: riskBg }}
+                                    >
+                                        {riskLabel} ({Math.round(riskScore)} Risk Points)
+                                    </span>
+                                    <p className="text-[10px] font-bold uppercase tracking-widest mt-2" style={{ color: '#a89890' }}>Compliance and Risk</p>
                                 </div>
 
                                 <div className="hidden sm:block w-px self-stretch" style={{ background: '#f0e6e0' }} />

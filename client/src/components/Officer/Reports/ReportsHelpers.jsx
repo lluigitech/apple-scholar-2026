@@ -86,8 +86,6 @@ export const exportToExcel = (data, scholarName, reportType) => {
     ws["!cols"] = Object.keys(rows[0]).map(k => ({ wch: Math.max(k.length, ...rows.map(r => String(r[k] ?? "").length)) + 2 }));
     XLSX.utils.book_append_sheet(wb, ws, name);
   };
-  if (reportType === "all" || reportType === "duty_attendance")
-    addSheet(data.duty_attendance.map(r => ({ Scholar: r.scholar, "Scholar ID": r.scholar_id, Date: r.date ? new Date(r.date).toLocaleDateString("en-PH") : "—", "Duty/Activity": r.duty, Location: fmt(r.location), Status: r.status, Method: fmt(r.method) })), "Duty Attendance");
   if (reportType === "all" || reportType === "submissions")
     addSheet(data.submissions.map(r => ({ Scholar: r.scholar, "Scholar ID": r.scholar_id, "Activity Type": fmt(r.type), "Service Date": r.service_date ? new Date(r.service_date).toLocaleDateString("en-PH") : "—", Hours: fmt(r.service_hours), Status: r.status, "Quality Status": fmt(r.quality_status), "Submitted At": r.submitted_at ? new Date(r.submitted_at).toLocaleDateString("en-PH") : "—" })), "Submissions");
   if (reportType === "all" || reportType === "requirements")

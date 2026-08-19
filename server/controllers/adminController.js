@@ -124,14 +124,15 @@ exports.updateUser = async (req, res) => {
     const { full_name, email, role, year_level, status, password } = req.body;
 
     try {
+        const finalYearLevel = (role === 'scholar' || role === 'officer') ? (year_level || null) : null;
         let sql, params;
         if (password) {
             const hashedPassword = await bcrypt.hash(password, 10);
             sql    = `UPDATE users SET full_name=?, email=?, role=?, year_level=?, status=?, password=?, must_change_password=1 WHERE id=?`;
-            params = [full_name, email, role, year_level || null, status, hashedPassword, id];
+            params = [full_name, email, role, finalYearLevel, status, hashedPassword, id];
         } else {
             sql    = `UPDATE users SET full_name=?, email=?, role=?, year_level=?, status=? WHERE id=?`;
-            params = [full_name, email, role, year_level || null, status, id];
+            params = [full_name, email, role, finalYearLevel, status, id];
         }
         db.query(sql, params, (err) => {
             if (err) return res.status(500).json({ error: 'Error updating user' });
@@ -415,12 +416,12 @@ exports.getComplianceSettings = (req, res) => {
                 min_compliance: '70.00',
                 allowed_missed: 2,
                 required_hours: 30,
-                missed_submission_deduction: 12,
-                service_hour_shortfall_deduction: 2,
-                absent_duty_deduction: 6,
-                late_submission_deduction: 5,
-                negative_letter_deduction: 8,
-                quality_drop_deduction: 4,
+                missed_submission_deduction: 2,
+                service_hour_shortfall_deduction: 1,
+                absent_duty_deduction: 2,
+                late_submission_deduction: 1,
+                negative_letter_deduction: 1,
+                quality_drop_deduction: 0.5,
                 extra_service_bonus: 2,
                 good_maintenance_bonus: 5,
                 missed_submission_grace_count: 2,
@@ -430,7 +431,7 @@ exports.getComplianceSettings = (req, res) => {
                 service_hours_completion_bonus: 2.00,
                 consecutive_early_bonus: 1.00,
                 perfect_attendance_bonus: 0.50,
-                monthly_recovery_cap: 3.00,
+                monthly_recovery_cap: 2.00,
             });
         }
         res.json(results[0]);
@@ -460,16 +461,27 @@ exports.upsertComplianceSettings = (req, res) => {
         monthly_recovery_cap,
     } = req.body;
 
-    if ([min_compliance, allowed_missed, required_hours,
-        missed_submission_deduction, service_hour_shortfall_deduction,
-        absent_duty_deduction, late_submission_deduction,
-        negative_letter_deduction, quality_drop_deduction,
-        extra_service_bonus, good_maintenance_bonus,
-        missed_submission_grace_count, late_submission_grace_count,
-        recovery_enabled, early_submission_bonus,
-        service_hours_completion_bonus, consecutive_early_bonus,
-        perfect_attendance_bonus, monthly_recovery_cap]
-        .some((value) => value === undefined)) {
+    const requiredFields = [
+        min_compliance,
+        allowed_missed,
+        required_hours,
+        missed_submission_deduction,
+        service_hour_shortfall_deduction,
+        absent_duty_deduction,
+        late_submission_deduction,
+        negative_letter_deduction,
+        quality_drop_deduction,
+        missed_submission_grace_count,
+        late_submission_grace_count,
+        recovery_enabled,
+        early_submission_bonus,
+        service_hours_completion_bonus,
+        consecutive_early_bonus,
+        perfect_attendance_bonus,
+        monthly_recovery_cap,
+    ];
+
+    if (requiredFields.some((value) => value === undefined)) {
         return res.status(400).json({
             message: 'min_compliance, allowed_missed, required_hours, and all penalty, grace, and recovery fields are required.',
         });
@@ -491,16 +503,16 @@ exports.upsertComplianceSettings = (req, res) => {
     }
 
     const parsedPenalties = {
-        missed_submission_deduction:      parseInt(missed_submission_deduction, 10),
-        service_hour_shortfall_deduction:  parseInt(service_hour_shortfall_deduction, 10),
-        absent_duty_deduction:            parseInt(absent_duty_deduction, 10),
-        late_submission_deduction:        parseInt(late_submission_deduction, 10),
-        negative_letter_deduction:        parseInt(negative_letter_deduction, 10),
-        quality_drop_deduction:           parseInt(quality_drop_deduction, 10),
-        extra_service_bonus:              parseInt(extra_service_bonus, 10),
-        good_maintenance_bonus:           parseInt(good_maintenance_bonus, 10),
-        missed_submission_grace_count:     parseInt(missed_submission_grace_count, 10),
-        late_submission_grace_count:       parseInt(late_submission_grace_count, 10),
+        missed_submission_deduction:      parseInt(missed_submission_deduction ?? 2, 10),
+        service_hour_shortfall_deduction:  parseInt(service_hour_shortfall_deduction ?? 1, 10),
+        absent_duty_deduction:            parseInt(absent_duty_deduction ?? 2, 10),
+        late_submission_deduction:        parseInt(late_submission_deduction ?? 1, 10),
+        negative_letter_deduction:        parseInt(negative_letter_deduction ?? 1, 10),
+        quality_drop_deduction:           parseFloat(quality_drop_deduction ?? 0.5),
+        extra_service_bonus:              parseInt(extra_service_bonus ?? 2, 10),
+        good_maintenance_bonus:           parseInt(good_maintenance_bonus ?? 5, 10),
+        missed_submission_grace_count:     parseInt(missed_submission_grace_count ?? 2, 10),
+        late_submission_grace_count:       parseInt(late_submission_grace_count ?? 2, 10),
     };
 
     const parsedRecovery = {

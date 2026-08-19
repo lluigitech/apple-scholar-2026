@@ -239,8 +239,12 @@ const RequirementsChecklist = () => {
     : [];
 
   const pendingTasks = [
-    ...dutyTasks.filter((task) => task.status !== 'completed'),
+    ...dutyTasks.filter((task) => task.status !== 'completed' && task.status !== 'missed'),
     ...mappedPortalTasks.filter((task) => !task.done),
+  ];
+
+  const missedTasks = [
+    ...dutyTasks.filter((task) => task.status === 'missed'),
   ];
 
   const completedTasks = [
@@ -248,7 +252,7 @@ const RequirementsChecklist = () => {
     ...mappedPortalTasks.filter((task) => task.done),
   ];
 
-  const showNoTasks = !pendingTasks.length && !completedTasks.length;
+  const showNoTasks = !pendingTasks.length && !missedTasks.length && !completedTasks.length;
 
   const pendingDutyCount = duties.filter((d) => d.computed_status === 'pending').length;
   const missedDutyCount = duties.filter((d) => d.computed_status === 'missed').length;
@@ -340,6 +344,7 @@ const RequirementsChecklist = () => {
                 <div className="flex items-center gap-5 border-b" style={{ borderColor: '#f0e6e0' }}>
                   {[
                     { key: 'pending', label: `Pending (${pendingTasks.length})` },
+                    { key: 'missed', label: `Missed (${missedTasks.length})` },
                     { key: 'completed', label: `Completed (${completedTasks.length})` },
                   ].map((tab) => (
                     <button
@@ -364,7 +369,7 @@ const RequirementsChecklist = () => {
                 </div>
               ) : (
                 <div className="divide-y" style={{ borderColor: '#f5eee9' }}>
-                  {(activeTab === 'pending' ? pendingTasks : completedTasks).map((task) => {
+                  {(activeTab === 'pending' ? pendingTasks : activeTab === 'missed' ? missedTasks : completedTasks).map((task) => {
                     const badge = badgeForStatus(task.status);
                     return (
                       <div key={task.id} className="flex items-start gap-4 py-4 sm:py-5 first:pt-0 last:pb-0">
