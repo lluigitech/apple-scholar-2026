@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const { calculateComplianceScore } = require('../utils/complianceLogger');
+const { applyOfficerYearLevelFilter } = require('../utils/officerAssignments');
 
 const normalizeAcademicGrade = (gradeScale, rawGrade) => {
     const gradeValue = Number(rawGrade);
@@ -74,13 +75,16 @@ const getComplianceRiskTier = (overallCompliance) => {
 // Walang duplicate scoring, walang double-counting, at bawat flag ay
 // may kaakibat na malinaw na plain-English description.
 exports.getFlaggedScholars = (req, res) => {
+    const conditions = ["role = 'scholar'", "status = 'active'"];
+    const values = [];
+    applyOfficerYearLevelFilter(req, conditions, values).then(() => {
     const scholarSql = `
         SELECT id, scholar_id, full_name, email, year_level, status, created_at
-        FROM users
-        WHERE role = 'scholar' AND status = 'active'
+        FROM users u
+        WHERE ${conditions.join(' AND ')}
     `;
 
-    db.query(scholarSql, (err, scholars) => {
+    db.query(scholarSql, values, (err, scholars) => {
         if (err) return res.status(500).json({ message: 'Failed to fetch scholars.' });
         if (scholars.length === 0) return res.json([]);
 
@@ -325,6 +329,7 @@ exports.getFlaggedScholars = (req, res) => {
             });
         });
     });
+    }).catch(() => res.status(500).json({ message: 'Failed to resolve officer assignments.' }));
 };
 
 // ─── LOG HOME VISIT REQUEST ─────────────────────────────────────────

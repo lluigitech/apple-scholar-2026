@@ -151,9 +151,10 @@ const getAcademicTier = (normalizedScore) => {
 const calculateComplianceScore = ({
     sub = null,
     att = null,
-    settings = defaults,
+    settings = null,
     today = new Date(),
 }) => {
+    settings = settings || defaults;
     const requiredHoursNum = parseInt(settings.required_hours || defaults.required_hours, 10);
     const allowedMissedNum = parseInt(settings.allowed_missed || defaults.allowed_missed, 10);
     const missedGraceCount = parseInt(settings.missed_submission_grace_count ?? defaults.missed_submission_grace_count, 10);

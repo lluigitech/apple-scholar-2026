@@ -81,10 +81,13 @@ const FilePreviewModal = ({ preview, onClose }) => {
     // inside the iframe's document - it's not part of our DOM, so it can't
     // be styled away with CSS. Appending these hash params is the one thing
     // Chromium's viewer respects to hide toolbar/sidebar/scrollbar on load.
+    // Works for both the public Cloudinary URL and the blob: URL we create
+    // for auth-proxied files - Chromium reads the fragment either way, so
+    // we always append it now instead of only for the non-proxied case.
     // (Firefox/Safari mostly ignore this and show their own minimal chrome -
     // there is no fully cross-browser way to strip it from a raw iframe.)
     const pdfSrc = preview.kind === 'pdf' && effectiveUrl
-        ? `${effectiveUrl}${requiresAuth ? '' : '#toolbar=0&navpanes=0&scrollbar=0&view=FitH'}`
+        ? `${effectiveUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`
         : effectiveUrl;
 
     // Escape closes, and lock background scroll while open.

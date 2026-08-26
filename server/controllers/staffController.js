@@ -1,17 +1,22 @@
 const db = require('../config/db');
 const dutyController = require('./dutyController');
 const { sendAnnouncementNotifyEmails } = require('../utils/notifyHelpers');
+const { applyOfficerYearLevelFilter } = require('../utils/officerAssignments');
 
 // ─── SCHOLARS ─────────────────────────────────────────────────
 exports.getPendingScholars = (req, res) => {
+    const conditions = ["u.role = 'scholar'"];
+    const values = [];
+    applyOfficerYearLevelFilter(req, conditions, values).then(() => {
     const sql = `
         SELECT id, scholar_id, full_name, email, role, year_level, status, created_at
-        FROM users WHERE role = 'scholar' ORDER BY created_at DESC
+        FROM users u WHERE ${conditions.join(' AND ')} ORDER BY created_at DESC
     `;
-    db.query(sql, (err, data) => {
+    db.query(sql, values, (err, data) => {
         if (err) return res.status(500).json({ error: 'Database error sa staff route' });
         res.json(data);
     });
+    }).catch(() => res.status(500).json({ error: 'Failed to resolve officer assignments.' }));
 };
 
 // ─── ANNOUNCEMENTS ────────────────────────────────────────────
@@ -278,6 +283,7 @@ exports.reportDutyAttendance = (req, res) => {
     if (date_to)    { conditions.push('DATE(da.marked_at) <= ?');    values.push(date_to); }
     if (status)     { conditions.push('da.status = ?');               values.push(status); }
 
+    applyOfficerYearLevelFilter(req, conditions, values).then(() => {
     const sql = `
         SELECT u.full_name AS scholar, u.scholar_id, u.year_level,
             d.title AS duty, d.duty_date AS date, d.location,
@@ -293,6 +299,7 @@ exports.reportDutyAttendance = (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(data);
     });
+    }).catch(() => res.status(500).json({ error: 'Failed to resolve officer assignments.' }));
 };
 
 exports.reportSubmissions = (req, res) => {
@@ -304,9 +311,10 @@ exports.reportSubmissions = (req, res) => {
     if (date_from)  { conditions.push('DATE(s.submitted_at) >= ?');  values.push(date_from); }
     if (date_to)    { conditions.push('DATE(s.submitted_at) <= ?');  values.push(date_to); }
 
+    applyOfficerYearLevelFilter(req, conditions, values).then(() => {
     const sql = `
         SELECT u.full_name AS scholar, u.scholar_id,
-            s.service_activity AS type, s.service_date, s.service_hours,
+            s.submission_type AS type,
             s.status, s.quality_status, s.submitted_at
         FROM submissions s
         JOIN users u ON u.scholar_id = s.scholar_id
@@ -317,6 +325,7 @@ exports.reportSubmissions = (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(data);
     });
+    }).catch(() => res.status(500).json({ error: 'Failed to resolve officer assignments.' }));
 };
 
 exports.reportRequirements = (req, res) => {
@@ -328,6 +337,7 @@ exports.reportRequirements = (req, res) => {
     if (date_from)  { conditions.push('DATE(s.submitted_at) >= ?');  values.push(date_from); }
     if (date_to)    { conditions.push('DATE(s.submitted_at) <= ?');  values.push(date_to); }
 
+    applyOfficerYearLevelFilter(req, conditions, values).then(() => {
     const sql = `
         SELECT u.full_name AS scholar, u.scholar_id,
             CASE
@@ -345,6 +355,7 @@ exports.reportRequirements = (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(data);
     });
+    }).catch(() => res.status(500).json({ error: 'Failed to resolve officer assignments.' }));
 };
 
 exports.reportActivities = (req, res) => {
@@ -356,6 +367,7 @@ exports.reportActivities = (req, res) => {
     if (date_from)  { conditions.push('DATE(d.duty_date) >= ?');     values.push(date_from); }
     if (date_to)    { conditions.push('DATE(d.duty_date) <= ?');     values.push(date_to); }
 
+    applyOfficerYearLevelFilter(req, conditions, values).then(() => {
     const sql = `
         SELECT u.full_name AS scholar, u.scholar_id,
             d.title AS activity, d.duty_date AS date, d.location,
@@ -370,6 +382,7 @@ exports.reportActivities = (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(data);
     });
+    }).catch(() => res.status(500).json({ error: 'Failed to resolve officer assignments.' }));
 };
 
 // ─── SCHOLAR GROUPS ──────────────────────────────────────────
@@ -387,15 +400,17 @@ exports.createGroup = (req, res) => {
 };
 
 exports.getGroups = (req, res) => {
+    const isAdmin = String(req.user?.role || '').toLowerCase() === 'admin';
     const sql = `
         SELECT g.id, g.group_name, g.description, g.created_at,
             COUNT(m.id) AS member_count
         FROM scholar_groups g
         LEFT JOIN scholar_group_members m ON m.group_id = g.id
+        ${isAdmin ? '' : 'WHERE g.assigned_staff_id = ? OR g.created_by = ?'}
         GROUP BY g.id
         ORDER BY g.created_at DESC
     `;
-    db.query(sql, (err, data) => {
+    db.query(sql, isAdmin ? [] : [req.user.id, req.user.id], (err, data) => {
         if (err) return res.status(500).json({ error: 'Error fetching groups' });
         res.json(data);
     });

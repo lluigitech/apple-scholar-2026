@@ -2,6 +2,7 @@ const db = require('../config/db');
 const exportController = require('./exportcontroller');
 const { sendAnnouncementNotifyEmails } = require('../utils/notifyHelpers');
 const { logComplianceIncident, clampCompliance } = require('../utils/complianceLogger');
+const { applyOfficerYearLevelFilter } = require('../utils/officerAssignments');
 
 const formatDate = (value) => {
     if (!value) return null;
@@ -15,6 +16,13 @@ const formatDate = (value) => {
 const buildPeriodRange = (period, dateFrom, dateTo) => {
     const today = new Date();
     const year = today.getFullYear();
+
+    if (/^\d{4}-\d{2}$/.test(period || '')) {
+        const [selectedYear, selectedMonth] = period.split('-').map(Number);
+        const start = new Date(selectedYear, selectedMonth - 1, 1);
+        const end = new Date(selectedYear, selectedMonth, 0);
+        return { start: formatDate(start), end: formatDate(end) };
+    }
 
     if (period === 'Current Month') {
         const start = new Date(year, today.getMonth(), 1);
@@ -46,6 +54,15 @@ const buildPeriodRange = (period, dateFrom, dateTo) => {
     }
 
     return null;
+};
+
+exports.getAssignedYearLevels = async (req, res) => {
+    try {
+        res.json(await require('../utils/officerAssignments').getAssignedYearLevels(req.user.id));
+    } catch (error) {
+        console.error('Failed to fetch officer year levels:', error);
+        res.status(500).json({ error: 'Failed to fetch assigned year levels.' });
+    }
 };
 
 // ─── GET ANNOUNCEMENTS ────────────────────────────────────────
@@ -257,13 +274,16 @@ exports.getComplianceSummary = (req, res) => {
     const { period, scholar_group, date_from, date_to } = req.query;
     const range = buildPeriodRange(period, date_from, date_to);
 
+    const scholarConditions = ["role = 'scholar'", "status = 'active'"];
+    const scholarValues = [];
+    applyOfficerYearLevelFilter(req, scholarConditions, scholarValues).then(() => {
     const scholarSql = `
         SELECT id, scholar_id, full_name, email, year_level, status
-        FROM users
-        WHERE role = 'scholar' AND status = 'active'
+        FROM users u
+        WHERE ${scholarConditions.join(' AND ')}
     `;
 
-    db.query(scholarSql, (err, scholars) => {
+    db.query(scholarSql, scholarValues, (err, scholars) => {
         if (err) return res.status(500).json({ error: 'Failed to fetch scholars.' });
         if (scholars.length === 0) return res.json([]);
 
@@ -385,6 +405,7 @@ exports.getComplianceSummary = (req, res) => {
             });
         });
     });
+    }).catch(() => res.status(500).json({ error: 'Failed to resolve officer assignments.' }));
 };
 
 // ─── GET MONTHLY REPORT SUBMISSIONS (for Officer review table) ────────
@@ -392,9 +413,10 @@ exports.getComplianceSummary = (req, res) => {
 // Kung wala 'to sa schema mo, alisin mo muna 'yung mga linyang 'yun sa SELECT
 // at sa mapping sa baba, o baguhin sa tamang column name.
 exports.getMonthlySubmissions = (req, res) => {
-    const { year_level, month } = req.query;
+    const { year_level, month, date_from, date_to } = req.query;
     const conditions = ['s.submission_type = \'letter\''];
     const values = [];
+    applyOfficerYearLevelFilter(req, conditions, values).then(() => {
 
     if (year_level) {
         conditions.push('u.year_level = ?');
@@ -404,10 +426,18 @@ exports.getMonthlySubmissions = (req, res) => {
         conditions.push("DATE_FORMAT(COALESCE(s.service_date, s.submitted_at), '%Y-%m') = ?");
         values.push(month);
     }
+    if (date_from) {
+        conditions.push('DATE(COALESCE(s.service_date, s.submitted_at)) >= ?');
+        values.push(date_from);
+    }
+    if (date_to) {
+        conditions.push('DATE(COALESCE(s.service_date, s.submitted_at)) <= ?');
+        values.push(date_to);
+    }
 
     const sql = `
         SELECT s.id, s.scholar_id, s.letter_content, s.sentiment_label, s.quality_score, s.quality_status,
-               s.status, s.officer_comment AS staff_comment, s.submitted_at, s.service_date,
+               s.status, s.officer_comment AS staff_comment, s.submitted_at, s.reviewed_at, s.service_date,
                u.full_name, u.year_level,
                GROUP_CONCAT(
                    CONCAT_WS('||', IFNULL(sm.file_path, ''), IFNULL(sm.description, ''))
@@ -418,7 +448,7 @@ exports.getMonthlySubmissions = (req, res) => {
         LEFT JOIN submission_media sm ON s.id = sm.submission_id
         WHERE ${conditions.join(' AND ')}
         GROUP BY s.id, s.scholar_id, s.letter_content, s.sentiment_label, s.quality_score, s.quality_status,
-                 s.status, s.officer_comment, s.submitted_at, s.service_date,
+                 s.status, s.officer_comment, s.submitted_at, s.reviewed_at, s.service_date,
                  u.full_name, u.year_level
         ORDER BY s.submitted_at DESC
     `;
@@ -462,11 +492,11 @@ exports.getMonthlySubmissions = (req, res) => {
                 age: '—',
                 date: row.service_date || row.submitted_at,
                 submittedAt: row.submitted_at,
+                reviewedAt: row.reviewed_at,
                 sentimentLabel: row.sentiment_label || 'Neutral',
-                status: qualityStatusMap[row.quality_status] || 'high-risk',
+                status: qualityStatusMap[row.quality_status] || 'pending',
                 qualityScore: row.quality_score || 0,
                 reportScore: row.quality_score || 0,
-                mediaScore: row.quality_score || 0,
                 body: row.letter_content,
                 checklistResults,
                 photos,
@@ -477,6 +507,7 @@ exports.getMonthlySubmissions = (req, res) => {
 
         res.json(results);
     });
+    }).catch(() => res.status(500).json({ error: 'Failed to resolve officer assignments.' }));
 };
 // ─── REVIEW A MONTHLY SUBMISSION (Approve / Reject / Needs Revision) ───
 // IMPORTANT: kung ENUM ang `submissions.status` column mo sa MySQL at
@@ -495,7 +526,7 @@ exports.reviewMonthlySubmission = (req, res) => {
         return res.status(400).json({ error: "Invalid action. Must be 'approved', 'rejected', or 'needs-revision'." });
     }
 
-    const sql = `UPDATE submissions SET status = ?, officer_comment = ? WHERE id = ?`;
+    const sql = `UPDATE submissions SET status = ?, officer_comment = ?, reviewed_at = NOW() WHERE id = ?`;
     db.query(sql, [dbStatus, feedback || null, id], (err, result) => {
         if (err) {
             console.error('Error reviewing monthly submission:', err);
@@ -506,4 +537,153 @@ exports.reviewMonthlySubmission = (req, res) => {
         }
         res.json({ message: 'Submission reviewed successfully' });
     });
+};
+
+// ─── GET TASK COMPLETION SUMMARY ───────────────────────────────
+// A task is assigned through tasks.target_year_levels and completed only
+// when the matching submission or grade created after that task is approved.
+exports.getTaskCompletionSummary = (req, res) => {
+    const { period, scholar_group, date_from, date_to } = req.query;
+    const range = buildPeriodRange(period, date_from, date_to);
+    const scholarConditions = ["role = 'scholar'", "status = 'active'"];
+    const scholarValues = [];
+
+    applyOfficerYearLevelFilter(req, scholarConditions, scholarValues).then(() => {
+        db.query(`SELECT u.id, u.scholar_id, u.full_name, u.year_level FROM users u WHERE ${scholarConditions.join(' AND ')}`, scholarValues, (err, scholars) => {
+            if (err) {
+                console.error('Task completion summary scholars query failed:', err);
+                return res.status(500).json({ error: 'Failed to fetch scholars.' });
+            }
+            if (!scholars.length) return res.json([]);
+
+            const taskValues = [];
+            let taskSql = 'SELECT id, title, type, due_date, created_at, target_year_levels FROM tasks WHERE is_active = 1';
+            if (range) {
+                taskSql += ' AND DATE(COALESCE(due_date, created_at)) BETWEEN ? AND ?';
+                taskValues.push(range.start, range.end);
+            }
+
+            db.query(taskSql, taskValues, (taskErr, tasks) => {
+                if (taskErr) return res.status(500).json({ error: 'Failed to fetch assigned tasks.' });
+                const scholarIds = scholars.map(s => s.scholar_id);
+                const placeholders = scholarIds.map(() => '?').join(', ');
+                const parseLevels = value => {
+                    if (Array.isArray(value)) return value;
+                    try { return value ? JSON.parse(value) : []; } catch { return []; }
+                };
+                const typeMap = { 'Monthly Report': 'letter', 'Report Card': 'report_card', 'COR Upload': 'cor' };
+
+                const approvedSubmissionsSql = `SELECT scholar_id, submission_type, submitted_at FROM submissions WHERE scholar_id IN (${placeholders}) AND status = 'approved'`;
+                db.query(approvedSubmissionsSql, scholarIds, (submissionErr, submissions) => {
+                    if (submissionErr) return res.status(500).json({ error: 'Failed to fetch task completion records.' });
+                    const approvedGradesSql = `SELECT scholar_id, created_at AS submitted_at FROM grades WHERE scholar_id IN (${placeholders}) AND verification_status = 'approved'`;
+                    db.query(approvedGradesSql, scholarIds, (gradeErr, grades) => {
+                        if (gradeErr) return res.status(500).json({ error: 'Failed to fetch task completion records.' });
+                        const approved = [...submissions, ...grades];
+                        const results = scholars.map(scholar => {
+                            const assigned = tasks.filter(task => {
+                                const levels = parseLevels(task.target_year_levels);
+                                return !levels.length || levels.includes(scholar.year_level);
+                            });
+                            const completed = assigned.filter(task => {
+                                const submissionType = typeMap[task.type];
+                                if (!submissionType) return false;
+                                const taskTime = new Date(task.created_at || 0).getTime();
+                                return approved.some(record => record.scholar_id === scholar.scholar_id && (!record.submission_type || record.submission_type === submissionType) && new Date(record.submitted_at || 0).getTime() >= taskTime);
+                            }).length;
+                            const completionRate = assigned.length ? Math.round((completed / assigned.length) * 100) : 0;
+                            return { id: scholar.id, name: scholar.full_name, studentId: scholar.scholar_id, year_level: scholar.year_level || 'N/A', assignedTasks: assigned.length, completedTasks: completed, pendingTasks: assigned.length - completed, completionRate, riskStatus: completionRate >= 80 ? 'excellent' : completionRate >= 50 ? 'good' : 'at-risk' };
+                        });
+                        const filtered = results.filter(row => scholar_group !== 'At Risk Only' || row.riskStatus === 'at-risk');
+                        res.json(filtered.sort((a, b) => a.completionRate - b.completionRate));
+                    });
+                });
+            });
+        });
+    }).catch(() => res.status(500).json({ error: 'Failed to resolve officer assignments.' }));
+};
+
+// ─── GET SCHOLAR SUBMISSION SUMMARY ───────────────────────────
+exports.getScholarSubmissionSummary = (req, res) => {
+    const { report_type, period, date_from, date_to, scholar_group, scholar_id } = req.query;
+    const submissionTypeMap = { 'Monthly Letter': 'letter', 'Report Cards': 'report_card', 'Grades': null, 'COR': 'cor', 'Other Documents': 'other' };
+    const selectedType = submissionTypeMap[report_type];
+    const includesGrades = report_type === 'Grades' || report_type === 'Report Cards & Grades';
+    const range = buildPeriodRange(period, date_from, date_to);
+    const scholarConditions = ["role = 'scholar'", "status = 'active'"];
+    const scholarValues = [];
+
+    applyOfficerYearLevelFilter(req, scholarConditions, scholarValues).then(() => {
+        if (scholar_group && scholar_group !== 'All Scholars') {
+            scholarConditions.push('u.year_level = ?');
+            scholarValues.push(scholar_group);
+        }
+        if (scholar_id) {
+            scholarConditions.push('u.scholar_id = ?');
+            scholarValues.push(scholar_id);
+        }
+        db.query(`SELECT u.id, u.scholar_id, u.full_name, u.year_level FROM users u WHERE ${scholarConditions.join(' AND ')}`, scholarValues, (err, scholars) => {
+            if (err) return res.status(500).json({ error: 'Failed to fetch scholars.' });
+            if (!scholars.length) return res.json([]);
+            const scholarIds = scholars.map(s => s.scholar_id);
+            const placeholders = scholarIds.map(() => '?').join(', ');
+            const values = [...scholarIds];
+            const taskType = { 'Monthly Letter': 'Monthly Report', 'Report Cards': 'Report Card', 'Grades': 'Report Card', 'COR': 'COR Upload', 'Other Documents': 'Other Documents' }[report_type];
+            let sql = `SELECT scholar_id, status, submitted_at, reviewed_at, quality_status FROM submissions WHERE scholar_id IN (${placeholders})`;
+            if (selectedType) { sql += ' AND submission_type = ?'; values.push(selectedType); }
+            if (report_type === 'Grades') sql += " AND 1 = 0";
+            if (range) { sql += ' AND DATE(submitted_at) BETWEEN ? AND ?'; values.push(range.start, range.end); }
+
+            const deadlineSql = taskType
+                ? 'SELECT MIN(due_date) AS deadline FROM tasks WHERE is_active = 1 AND type = ? AND due_date IS NOT NULL'
+                : null;
+            const fetchSubmissions = deadline => db.query(sql, values, (submissionErr, submissions) => {
+                if (submissionErr) {
+                    console.error('Scholar submission summary submissions query failed:', submissionErr);
+                    return res.status(500).json({ error: 'Failed to fetch scholar submissions.' });
+                }
+                const gradeValues = [...scholarIds];
+                let gradeSql = `SELECT scholar_id, verification_status AS status, created_at AS submitted_at FROM grades WHERE scholar_id IN (${placeholders})`;
+                if (includesGrades && range) { gradeSql += ' AND DATE(created_at) BETWEEN ? AND ?'; gradeValues.push(range.start, range.end); }
+                if (!includesGrades) return res.json(buildRows(scholars, submissions, [], deadline));
+                db.query(gradeSql, gradeValues, (gradeErr, grades) => {
+                    if (gradeErr) {
+                        console.error('Scholar submission summary grades query failed:', gradeErr);
+                        return res.status(500).json({ error: 'Failed to fetch scholar grades.' });
+                    }
+                    const combined = report_type === 'Report Cards & Grades' ? submissions.concat(grades) : grades;
+                    return res.json(buildRows(scholars, combined, [], deadline));
+                });
+            });
+            if (deadlineSql) {
+                db.query(deadlineSql, [taskType], (deadlineErr, deadlineRows) => {
+                    if (deadlineErr) return fetchSubmissions(null);
+                    fetchSubmissions(deadlineRows[0]?.deadline || null);
+                });
+            } else {
+                fetchSubmissions(null);
+            }
+        });
+    }).catch(error => {
+        console.error('Scholar submission summary assignment filter failed:', error);
+        res.status(500).json({ error: 'Failed to resolve officer assignments.' });
+    });
+
+    function buildRows(scholars, submissions, grades, deadline) {
+        return scholars.map(scholar => {
+            const records = [...submissions, ...grades].filter(row => row.scholar_id === scholar.scholar_id);
+            const approved = records.filter(row => row.status === 'approved').length;
+            const submitted = records.length;
+            const pending = Math.max(0, submitted - approved);
+            const completionRate = submitted ? Math.round((approved / submitted) * 100) : 0;
+            const latest = records.slice().sort((a, b) => new Date(b.submitted_at || 0) - new Date(a.submitted_at || 0))[0];
+            const latestApproved = records.filter(row => row.status === 'approved').sort((a, b) => new Date(b.reviewed_at || 0) - new Date(a.reviewed_at || 0))[0];
+            return { id: scholar.id, name: scholar.full_name, studentId: scholar.scholar_id, year_level: scholar.year_level || 'N/A', submitted, approved, pending, completionRate, latestSubmittedAt: latest?.submitted_at || null, reviewedAt: latestApproved?.reviewed_at || null, deadline, qualityStatus: latest?.quality_status || null, riskStatus: completionRate >= 80 ? 'excellent' : completionRate >= 50 ? 'good' : 'at-risk' };
+        }).sort((a, b) => {
+            const aSubmitted = a.submitted > 0 ? 1 : 0;
+            const bSubmitted = b.submitted > 0 ? 1 : 0;
+            if (aSubmitted !== bSubmitted) return bSubmitted - aSubmitted;
+            return a.name.localeCompare(b.name);
+        });
+    }
 };

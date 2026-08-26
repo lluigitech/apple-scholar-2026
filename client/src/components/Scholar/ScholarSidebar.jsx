@@ -1,4 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom';
+import axios from 'axios';
 import {
   LayoutDashboard,
   Upload,
@@ -182,7 +183,11 @@ const ScholarSidebar = ({ isOpen, onClose }) => {
           </div>
 
           <button
-            onClick={() => { localStorage.clear(); navigate('/'); }}
+            onClick={async () => {
+              await axios.post('http://localhost:5000/api/logout', {}, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }).catch(() => {});
+              localStorage.clear();
+              navigate('/');
+            }}
             className="w-full py-2.5 rounded-xl text-white font-bold text-[11px] transition-all duration-300 tracking-[0.15em] flex items-center justify-center gap-2 uppercase"
             style={{ background: `linear-gradient(120deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)`, boxShadow: `0 4px 12px -4px ${MAROON}66` }}
           >

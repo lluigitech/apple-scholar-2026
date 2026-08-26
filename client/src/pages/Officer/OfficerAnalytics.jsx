@@ -1,23 +1,48 @@
 import axios from 'axios';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  BarChart, Bar, LineChart, Line, AreaChart, Area,
+  LineChart, Line, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell
 } from 'recharts';
-import { Download, TrendingUp, Users, FileText, AlertTriangle } from 'lucide-react';
+import { Download, TrendingUp, Users, FileText, AlertTriangle, BarChart3 } from 'lucide-react';
 import { API_BASE, authHeaders } from '../../components/Officer/Reports/ReportsHelpers';
+
+// ── Token system — shared across the whole portal ──
+const MAROON = '#7f2d3a';
+const MAROON_DEEP = '#4f1620';
+const GOLD = '#b98b4e';
+const GOLD_LIGHT = '#d4af7a';
+const IVORY = '#FBF7F2';
+const INK = '#241512';
+const SAGE = '#6b8f71';
+const CLAY = '#c1666b';
+const AMBER = '#b8863f';
+const PAPER = '#F6EFE4';
+const RULE = '#e8dccb';
+
+const serif = { fontFamily: "'Playfair Display', serif" };
+const sans = { fontFamily: "'DM Sans', sans-serif" };
+const mono = { fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, monospace" };
+const chartStyle = { ...sans, fontSize: '0.72rem' };
+
+const getPeriodRange = (period) => {
+  const end = new Date();
+  const start = new Date(end.getFullYear(), end.getMonth() - (period === '1m' ? 0 : period === '3m' ? 2 : 5), 1);
+  return {
+    date_from: start.toISOString().slice(0, 10),
+    date_to: end.toISOString().slice(0, 10),
+  };
+};
 
 function StatCard({ label, value, sub, color, icon: Icon }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center gap-3">
-      <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: color + '15' }}>
-        <Icon className="w-5 h-5" style={{ color }} />
+    <div className="rounded-xl p-4" style={{ background: '#fff', border: `1px solid ${RULE}`, boxShadow: '0 8px 24px -16px rgba(36,21,18,0.2)' }}>
+      <div className="flex items-center justify-between mb-2">
+        <p style={{ ...sans, fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#a89890' }}>{label}</p>
+        <Icon size={14} style={{ color }} />
       </div>
-      <div>
-        <p className="text-xs mb-0.5" style={{ fontFamily: "'DM Sans', sans-serif", color: '#6b7280' }}>{label}</p>
-        <p className="text-xl font-bold" style={{ fontFamily: "'DM Sans', sans-serif", color: '#1a1a1a' }}>{value}</p>
-        {sub && <p className="text-xs" style={{ fontFamily: "'DM Sans', sans-serif", color }}>{sub}</p>}
-      </div>
+      <p style={{ ...serif, fontSize: '1.7rem', fontWeight: 700, color: INK, lineHeight: 1 }}>{value}</p>
+      {sub && <p style={{ ...sans, fontSize: '0.68rem', color, marginTop: 5 }}>{sub}</p>}
     </div>
   );
 }
@@ -36,9 +61,12 @@ const OfficerAnalytics = () => {
       setError(null);
 
       try {
+        const range = getPeriodRange(period);
+        const params = { ...range };
+        if (selectedYearLevel !== 'all') params.year_level = selectedYearLevel;
         const [summaryRes, monthlyRes] = await Promise.all([
-          axios.get(`${API_BASE}/officer/reports/compliance-summary`, authHeaders()),
-          axios.get(`${API_BASE}/officer/reports/monthly-submissions`, authHeaders()),
+          axios.get(`${API_BASE}/officer/reports/compliance-summary`, { ...authHeaders(), params }),
+          axios.get(`${API_BASE}/officer/reports/monthly-submissions`, { ...authHeaders(), params }),
         ]);
 
         setComplianceSummary(summaryRes.data || []);
@@ -52,7 +80,7 @@ const OfficerAnalytics = () => {
     };
 
     fetchData();
-  }, []);
+  }, [period, selectedYearLevel]);
 
   const yearLevelOptions = useMemo(() => {
     const levels = Array.from(new Set(complianceSummary
@@ -61,15 +89,18 @@ const OfficerAnalytics = () => {
     return ['all', ...levels];
   }, [complianceSummary]);
 
-  const totalScholars = complianceSummary.length;
+  const visibleSummary = selectedYearLevel === 'all'
+    ? complianceSummary
+    : complianceSummary.filter(item => item.year_level === selectedYearLevel);
+  const totalScholars = visibleSummary.length;
   const avgCompliance = totalScholars > 0
-    ? Math.round(complianceSummary.reduce((sum, item) => sum + (item.completionRate || 0), 0) / totalScholars)
+    ? Math.round(visibleSummary.reduce((sum, item) => sum + (item.completionRate || 0), 0) / totalScholars)
     : 0;
-  const lettersReviewed = monthlySubs.length;
-  const atRiskScholars = complianceSummary.filter(item => item.completionRate < 50).length;
+  const lettersReviewed = monthlySubs.filter(sub => sub.staffAction === 'approved').length;
+  const atRiskScholars = visibleSummary.filter(item => item.completionRate < 50).length;
 
   const yearLevelCompliance = useMemo(() => {
-    const grouped = monthlySubs.length ? {} : {};
+    const grouped = {};
     const source = selectedYearLevel === 'all'
       ? complianceSummary
       : complianceSummary.filter(item => item.year_level === selectedYearLevel);
@@ -98,9 +129,9 @@ const OfficerAnalytics = () => {
     });
     const total = monthlySubs.length || 1;
     return [
-      { name: 'Positive', value: counts.Positive, color: '#22c55e' },
-      { name: 'Neutral', value: counts.Neutral, color: '#f59e0b' },
-      { name: 'Negative', value: counts.Negative, color: '#ef4444' },
+      { name: 'Positive', value: counts.Positive, color: SAGE },
+      { name: 'Neutral', value: counts.Neutral, color: AMBER },
+      { name: 'Negative', value: counts.Negative, color: CLAY },
     ].map(item => ({ ...item, pct: Math.round((item.value / total) * 100) }));
   }, [monthlySubs]);
 
@@ -143,7 +174,6 @@ const OfficerAnalytics = () => {
 
     const sorted = Object.values(groups).sort((a, b) => a.month.localeCompare(b.month));
     return sorted.map((item) => {
-      const [year, month] = item.month.split('-');
       const date = new Date(`${item.month}-01`);
       return {
         month: date.toLocaleString('en-US', { month: 'short', year: 'numeric' }),
@@ -197,169 +227,172 @@ const OfficerAnalytics = () => {
     axios.post(`${API_BASE}/export/google-sheets`, { log_only: true, module: 'Officer Analytics', report_resource: 'Analytics', spreadsheet_title: 'Officer Analytics Export', details: 'officer_analytics.csv' }, authHeaders()).catch(() => {});
   };
 
-  const chartStyle = { fontFamily: "'DM Sans', sans-serif", fontSize: '0.75rem' };
-
   if (loading) {
     return (
-      <div className="p-4 sm:p-6 lg:p-8">
-        <p className="text-sm text-gray-500">Loading analytics...</p>
+      <div className="min-h-screen flex items-center justify-center" style={{ background: IVORY }}>
+        <p style={{ ...sans, fontSize: '0.85rem', color: '#a89890' }}>Loading analytics...</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="p-4 sm:p-6 lg:p-8">
-        <p className="text-sm text-red-600">{error}</p>
+      <div className="min-h-screen flex items-center justify-center" style={{ background: IVORY }}>
+        <p style={{ ...sans, fontSize: '0.85rem', color: CLAY }}>{error}</p>
       </div>
     );
   }
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
-        <div>
-          <h1 className="mb-1" style={{ fontFamily: "'Playfair Display', serif", fontSize: '1.75rem', fontWeight: 700, color: '#1a1a1a' }}>
-            Analytics Dashboard
-          </h1>
-          <p style={{ fontFamily: "'DM Sans', sans-serif", fontSize: '0.9rem', color: '#6b7280' }}>
-            Scholar compliance, sentiment trends, and submission metrics
-          </p>
-        </div>
-        <div className="flex gap-2 flex-wrap">
-          <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-            {['1m', '3m', '6m'].map(p => (
-              <button key={p} onClick={() => setPeriod(p)}
-                className="text-xs px-3 py-1.5 transition-all"
-                style={{ fontFamily: "'DM Sans', sans-serif", backgroundColor: period === p ? '#802B36' : '#fff', color: period === p ? '#fff' : '#374151', border: 'none', cursor: 'pointer' }}>
-                {p}
-              </button>
-            ))}
+    <div className="min-h-screen" style={{ background: IVORY, ...sans }}>
+
+      {/* ── Ledger header band — same family as the rest of the portal ── */}
+      <div className="relative overflow-hidden px-5 sm:px-8 pt-8 pb-11" style={{ background: `linear-gradient(135deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)` }}>
+        <svg className="absolute -right-6 -top-10 w-56 h-56 opacity-[0.12] pointer-events-none" viewBox="0 0 200 200" fill="none">
+          <polyline points="30,150 75,110 115,130 170,60" stroke={GOLD} strokeWidth="7" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="170" cy="60" r="7" fill={GOLD} />
+        </svg>
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ border: `1.5px solid ${GOLD}` }}>
+            <BarChart3 size={12} style={{ color: GOLD }} />
           </div>
-          <select
-            value={selectedYearLevel}
-            onChange={(e) => setSelectedYearLevel(e.target.value)}
-            className="px-3 py-1.5 border border-gray-200 rounded-lg outline-none text-sm"
-            style={{ fontFamily: "'DM Sans', sans-serif", color: '#374151' }}
-          >
-            {yearLevelOptions.map(level => (
-              <option key={level} value={level}>{level === 'all' ? 'All Year Levels' : level}</option>
-            ))}
-          </select>
-          <button onClick={exportCSV} className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-gray-200 hover:bg-gray-50" style={{ fontFamily: "'DM Sans', sans-serif", color: '#374151' }}>
-            <Download className="w-4 h-4" /> Export
-          </button>
+          <span style={{ ...sans, fontSize: '0.66rem', fontWeight: 800, letterSpacing: '0.28em', textTransform: 'uppercase', color: GOLD_LIGHT }}>Officer Portal</span>
+        </div>
+        <div className="flex items-end justify-between gap-4 flex-wrap">
+          <div>
+            <h1 style={{ ...serif, fontSize: '2rem', fontWeight: 700, color: '#fff', letterSpacing: '-0.01em' }}>Analytics Dashboard</h1>
+            <p style={{ ...sans, fontSize: '0.82rem', color: '#e9c9a8', marginTop: 4 }}>Scholar compliance, sentiment trends, and submission metrics.</p>
+          </div>
+          <div className="flex gap-2 flex-wrap items-center">
+            <div className="flex rounded-full overflow-hidden" style={{ border: `1.5px solid ${GOLD}55` }}>
+              {['1m', '3m', '6m'].map(p => (
+                <button key={p} onClick={() => setPeriod(p)}
+                  className="px-3.5 py-1.5 transition-colors"
+                  style={{ ...sans, fontSize: '0.72rem', fontWeight: 700, background: period === p ? GOLD : 'transparent', color: period === p ? MAROON_DEEP : GOLD_LIGHT, border: 'none', cursor: 'pointer' }}>
+                  {p}
+                </button>
+              ))}
+            </div>
+            <select
+              value={selectedYearLevel}
+              onChange={(e) => setSelectedYearLevel(e.target.value)}
+              className="px-3.5 py-1.5 rounded-full outline-none"
+              style={{ ...sans, fontSize: '0.76rem', fontWeight: 700, background: 'rgba(255,255,255,0.08)', border: `1.5px solid ${GOLD}55`, color: GOLD_LIGHT, cursor: 'pointer' }}
+            >
+              {yearLevelOptions.map(level => (
+                <option key={level} value={level} style={{ color: INK }}>{level === 'all' ? 'All Year Levels' : level}</option>
+              ))}
+            </select>
+            <button onClick={exportCSV}
+              className="flex items-center gap-1.5 rounded-full transition-colors hover:opacity-90"
+              style={{ ...sans, fontSize: '0.76rem', fontWeight: 700, background: GOLD, color: MAROON_DEEP, border: 'none', padding: '7px 16px', cursor: 'pointer' }}>
+              <Download size={13} /> Export
+            </button>
+          </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
-        <StatCard label="Total Scholars" value={totalScholars} sub="Active scholars" color="#802B36" icon={Users} />
-        <StatCard label="Avg Compliance" value={`${avgCompliance}%`} sub="Average completion rate" color="#22c55e" icon={TrendingUp} />
-        <StatCard label="Letters Reviewed" value={lettersReviewed} sub="Total letters" color="#3b82f6" icon={FileText} />
-        <StatCard label="At-Risk Scholars" value={atRiskScholars} sub="Completion below 50%" color="#ef4444" icon={AlertTriangle} />
-      </div>
+      <div className="relative z-10 px-5 sm:px-8 -mt-6 pb-10">
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-          <h3 className="mb-4" style={{ fontFamily: "'Playfair Display', serif", fontSize: '1rem', fontWeight: 700, color: '#802B36' }}>
-            Compliance & Sentiment Trend
-          </h3>
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={displayTrend}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-              <XAxis dataKey="month" stroke="#9ca3af" style={chartStyle} />
-              <YAxis stroke="#9ca3af" style={chartStyle} />
-              <Tooltip contentStyle={{ fontFamily: "'DM Sans', sans-serif", fontSize: '0.8rem', borderRadius: '8px' }} />
-              <Legend wrapperStyle={{ fontFamily: "'DM Sans', sans-serif", fontSize: '0.75rem' }} />
-              <Line type="monotone" dataKey="compliance" stroke="#802B36" strokeWidth={2} name="Compliance %" dot={{ r: 3 }} />
-              <Line type="monotone" dataKey="sentimentPos" stroke="#22c55e" strokeWidth={2} name="Positive %" dot={{ r: 3 }} />
-              <Line type="monotone" dataKey="sentimentNeg" stroke="#ef4444" strokeWidth={2} name="Negative %" dot={{ r: 3 }} />
-            </LineChart>
-          </ResponsiveContainer>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-6">
+          <StatCard label="Total Scholars" value={totalScholars} sub="Active scholars" color={MAROON} icon={Users} />
+          <StatCard label="Avg Compliance" value={`${avgCompliance}%`} sub="Average completion rate" color={SAGE} icon={TrendingUp} />
+          <StatCard label="Letters Reviewed" value={lettersReviewed} sub="Total letters" color={GOLD} icon={FileText} />
+          <StatCard label="At-Risk Scholars" value={atRiskScholars} sub="Completion below 50%" color={CLAY} icon={AlertTriangle} />
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-          <h3 className="mb-4" style={{ fontFamily: "'Playfair Display', serif", fontSize: '1rem', fontWeight: 700, color: '#802B36' }}>
-            Letter Sentiment Distribution
-          </h3>
-          <div className="flex items-center gap-4">
-            <ResponsiveContainer width="60%" height={200}>
-              <PieChart>
-                <Pie data={sentimentDist} cx="50%" cy="50%" outerRadius={80} dataKey="pct" label={({ value }) => `${value}%`} labelLine={false}>
-                  {sentimentDist.map((e, i) => <Cell key={i} fill={e.color} />)}
-                </Pie>
-                <Tooltip contentStyle={{ fontFamily: "'DM Sans', sans-serif", fontSize: '0.8rem', borderRadius: '8px' }} />
-              </PieChart>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          <div className="rounded-xl p-5" style={{ background: '#fff', border: `1px solid ${RULE}` }}>
+            <h3 style={{ ...serif, fontSize: '1rem', fontWeight: 700, color: MAROON, marginBottom: 14 }}>Compliance &amp; Sentiment Trend</h3>
+            <ResponsiveContainer width="100%" height={220}>
+              <LineChart data={displayTrend}>
+                <CartesianGrid strokeDasharray="3 3" stroke={RULE} />
+                <XAxis dataKey="month" stroke="#a89890" style={chartStyle} />
+                <YAxis stroke="#a89890" style={chartStyle} />
+                <Tooltip contentStyle={{ ...sans, fontSize: '0.8rem', borderRadius: 8, border: `1px solid ${RULE}` }} />
+                <Legend wrapperStyle={{ ...sans, fontSize: '0.75rem' }} />
+                <Line type="monotone" dataKey="compliance" stroke={MAROON} strokeWidth={2} name="Compliance %" dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="sentimentPos" stroke={SAGE} strokeWidth={2} name="Positive %" dot={{ r: 3 }} />
+                <Line type="monotone" dataKey="sentimentNeg" stroke={CLAY} strokeWidth={2} name="Negative %" dot={{ r: 3 }} />
+              </LineChart>
             </ResponsiveContainer>
-            <div className="flex-1 space-y-3">
-              {sentimentDist.map((item, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: item.color }} />
-                  <div>
-                    <p className="text-xs font-medium" style={{ fontFamily: "'DM Sans', sans-serif", color: '#1a1a1a' }}>{item.name}</p>
-                    <p className="text-lg font-bold" style={{ fontFamily: "'DM Sans', sans-serif", color: item.color }}>{item.pct}%</p>
+          </div>
+
+          <div className="rounded-xl p-5" style={{ background: '#fff', border: `1px solid ${RULE}` }}>
+            <h3 style={{ ...serif, fontSize: '1rem', fontWeight: 700, color: MAROON, marginBottom: 14 }}>Letter Sentiment Distribution</h3>
+            <div className="flex items-center gap-4">
+              <ResponsiveContainer width="60%" height={200}>
+                <PieChart>
+                  <Pie data={sentimentDist} cx="50%" cy="50%" outerRadius={80} dataKey="pct" label={({ value }) => `${value}%`} labelLine={false}>
+                    {sentimentDist.map((e, i) => <Cell key={i} fill={e.color} />)}
+                  </Pie>
+                  <Tooltip contentStyle={{ ...sans, fontSize: '0.8rem', borderRadius: 8, border: `1px solid ${RULE}` }} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex-1 space-y-3">
+                {sentimentDist.map((item, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: item.color }} />
+                    <div>
+                      <p style={{ ...sans, fontSize: '0.72rem', fontWeight: 700, color: INK }}>{item.name}</p>
+                      <p style={{ ...serif, fontSize: '1.15rem', fontWeight: 700, color: item.color }}>{item.pct}%</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+          <div className="rounded-xl p-5" style={{ background: '#fff', border: `1px solid ${RULE}` }}>
+            <h3 style={{ ...serif, fontSize: '1rem', fontWeight: 700, color: MAROON, marginBottom: 14 }}>Letter Completeness by Metric</h3>
+            <div className="space-y-3.5">
+              {completenessData.map((item, i) => (
+                <div key={i}>
+                  <div className="flex justify-between mb-1.5" style={{ ...sans, fontSize: '0.74rem', color: '#6b6058' }}>
+                    <span>{item.category}</span>
+                    <span style={{ fontWeight: 700 }}>{item.pct}%</span>
+                  </div>
+                  <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: RULE }}>
+                    <div className="h-full rounded-full transition-all" style={{ width: `${item.pct}%`, backgroundColor: item.pct >= 85 ? SAGE : item.pct >= 70 ? AMBER : CLAY }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-xl p-5" style={{ background: '#fff', border: `1px solid ${RULE}` }}>
+            <h3 style={{ ...serif, fontSize: '1rem', fontWeight: 700, color: MAROON, marginBottom: 10 }}>Top Compliance Issues</h3>
+            <div>
+              {topIssues.map((item, i) => (
+                <div key={i} className="flex items-center justify-between py-2.5" style={{ borderTop: i > 0 ? `1px solid ${RULE}` : 'none' }}>
+                  <div className="flex items-center gap-2.5">
+                    <span className="flex-shrink-0 flex items-center justify-center rounded-full" style={{ width: 20, height: 20, background: MAROON, color: '#fff', ...sans, fontSize: '0.62rem', fontWeight: 800 }}>{i + 1}</span>
+                    <span style={{ ...sans, fontSize: '0.8rem', color: '#4b3f38' }}>{item.issue}</span>
+                  </div>
+                  <div className="text-right flex-shrink-0 ml-2">
+                    <span style={{ ...serif, fontSize: '0.92rem', fontWeight: 700, color: MAROON }}>{item.count}</span>
+                    <span style={{ ...mono, fontSize: '0.68rem', color: '#a89890', marginLeft: 4 }}>({item.pct}%)</span>
                   </div>
                 </div>
               ))}
             </div>
           </div>
         </div>
-      </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 mb-5">
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-          <h3 className="mb-4" style={{ fontFamily: "'Playfair Display', serif", fontSize: '1rem', fontWeight: 700, color: '#802B36' }}>
-            Letter Completeness by Metric
-          </h3>
-          <div className="space-y-3">
-            {completenessData.map((item, i) => (
-              <div key={i}>
-                <div className="flex justify-between text-xs mb-1" style={{ fontFamily: "'DM Sans', sans-serif", color: '#374151' }}>
-                  <span>{item.category}</span>
-                  <span className="font-semibold">{item.pct}%</span>
-                </div>
-                <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                  <div className="h-full rounded-full transition-all" style={{ width: `${item.pct}%`, backgroundColor: item.pct >= 85 ? '#22c55e' : item.pct >= 70 ? '#f59e0b' : '#ef4444' }} />
-                </div>
-              </div>
-            ))}
-          </div>
+        <div className="rounded-xl p-5" style={{ background: '#fff', border: `1px solid ${RULE}` }}>
+          <h3 style={{ ...serif, fontSize: '1rem', fontWeight: 700, color: MAROON, marginBottom: 14 }}>Compliance Rate by Year Level</h3>
+          <ResponsiveContainer width="100%" height={240}>
+            <AreaChart data={yearLevelCompliance}>
+              <CartesianGrid strokeDasharray="3 3" stroke={RULE} />
+              <XAxis dataKey="level" stroke="#a89890" style={chartStyle} />
+              <YAxis domain={[0, 100]} stroke="#a89890" style={chartStyle} />
+              <Tooltip contentStyle={{ ...sans, fontSize: '0.8rem', borderRadius: 8, border: `1px solid ${RULE}` }} />
+              <Area type="monotone" dataKey="compliance" stroke={MAROON} fill={PAPER} strokeWidth={2} name="Compliance %" />
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
-
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-          <h3 className="mb-4" style={{ fontFamily: "'Playfair Display', serif", fontSize: '1rem', fontWeight: 700, color: '#802B36' }}>
-            Top Compliance Issues
-          </h3>
-          <div className="space-y-3">
-            {topIssues.map((item, i) => (
-              <div key={i} className="flex items-center justify-between py-2 border-b border-gray-50 last:border-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs font-bold w-5 h-5 rounded-full flex items-center justify-center text-white" style={{ backgroundColor: '#802B36', fontSize: '0.65rem' }}>{i + 1}</span>
-                  <span className="text-sm" style={{ fontFamily: "'DM Sans', sans-serif", color: '#374151' }}>{item.issue}</span>
-                </div>
-                <div className="text-right flex-shrink-0 ml-2">
-                  <span className="text-sm font-bold" style={{ fontFamily: "'DM Sans', sans-serif", color: '#802B36' }}>{item.count}</span>
-                  <span className="text-xs ml-1" style={{ fontFamily: "'DM Sans', sans-serif", color: '#9ca3af' }}>({item.pct}%)</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-        <h3 className="mb-4" style={{ fontFamily: "'Playfair Display', serif", fontSize: '1rem', fontWeight: 700, color: '#802B36' }}>
-          Compliance Rate by Year Level
-        </h3>
-        <ResponsiveContainer width="100%" height={240}>
-          <AreaChart data={yearLevelCompliance}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-            <XAxis dataKey="level" stroke="#9ca3af" style={chartStyle} />
-            <YAxis domain={[0, 100]} stroke="#9ca3af" style={chartStyle} />
-            <Tooltip contentStyle={{ fontFamily: "'DM Sans', sans-serif", fontSize: '0.8rem', borderRadius: '8px' }} />
-            <Area type="monotone" dataKey="compliance" stroke="#802B36" fill="#F5E8EA" strokeWidth={2} name="Compliance %" />
-          </AreaChart>
-        </ResponsiveContainer>
       </div>
     </div>
   );

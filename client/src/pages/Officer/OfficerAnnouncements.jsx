@@ -8,6 +8,24 @@ import {
 
 const API = 'http://localhost:5000/api';
 
+// ── Token system — shared across the whole portal ──
+const MAROON = '#7f2d3a';
+const MAROON_DEEP = '#4f1620';
+const GOLD = '#b98b4e';
+const GOLD_LIGHT = '#d4af7a';
+const IVORY = '#FBF7F2';
+const INK = '#241512';
+const SAGE = '#6b8f71';
+const CLAY = '#c1666b';
+const AMBER = '#b8863f';
+const PAPER = '#F6EFE4';
+const RULE = '#e8dccb';
+const ROSE = '#F5E8EA';
+
+const serif = { fontFamily: "'Playfair Display', serif" };
+const sans = { fontFamily: "'DM Sans', sans-serif" };
+const mono = { fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, monospace" };
+
 // ─── Year Level Config (para lang sa Scholar narrowing) ─────────────────────
 const AUDIENCE_GROUPS = [
     { label: 'Junior High School', options: [
@@ -47,11 +65,11 @@ const SOURCE_TABS = [
     { key: 'officer', label: 'Officer'     },
 ];
 
-// ─── Priority Config ────────────────────────────────────────────────────────
+// ─── Priority Config — recolored onto the shared ledger palette ────────────
 const PRIORITY_CONFIG = {
-    critical:  { bg: '#fee2e2', text: '#991b1b', border: '#fca5a5', label: 'Critical'  },
-    important: { bg: '#fef3c7', text: '#92400e', border: '#fcd34d', label: 'Important' },
-    info:      { bg: '#dbeafe', text: '#1e40af', border: '#93c5fd', label: 'Info'      },
+    critical:  { color: CLAY,  bg: `${CLAY}16`,  label: 'Critical'  },
+    important: { color: AMBER, bg: `${AMBER}16`, label: 'Important' },
+    info:      { color: SAGE,  bg: `${SAGE}16`,  label: 'Info'      },
 };
 
 function PriorityIcon({ priority, size = 14 }) {
@@ -79,18 +97,19 @@ function LevelSelector({ value, onChange }) {
             <button
                 type="button"
                 onClick={() => setOpen(v => !v)}
-                className="w-full flex items-center justify-between px-3 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm outline-none focus:border-[#7f2d3a] transition-all"
+                className="w-full flex items-center justify-between px-3.5 py-2.5 rounded-lg outline-none transition-colors"
+                style={{ ...sans, fontSize: '0.85rem', border: `1px solid ${RULE}`, background: PAPER, cursor: 'pointer' }}
             >
-                <span className={value.length ? 'text-slate-800' : 'text-slate-400'}>{displayLabel()}</span>
-                <ChevronDown size={14} className="text-slate-400 flex-shrink-0 ml-2" />
+                <span style={{ color: value.length ? INK : '#c9b9b0' }}>{displayLabel()}</span>
+                <ChevronDown size={14} style={{ color: '#a89890', flexShrink: 0, marginLeft: 8 }} />
             </button>
 
             {open && (
                 <>
-                    <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-2xl shadow-xl overflow-auto" style={{ maxHeight: 260 }}>
+                    <div className="absolute z-50 top-full left-0 right-0 mt-1.5 overflow-auto rounded-xl" style={{ maxHeight: 260, background: '#fff', border: `1px solid ${RULE}`, boxShadow: '0 16px 40px -20px rgba(36,21,18,0.35)' }}>
                         {AUDIENCE_GROUPS.map(group => (
                             <div key={group.label}>
-                                <p className="px-3 pt-2.5 pb-1 text-[10px] font-black uppercase tracking-widest text-slate-400">{group.label}</p>
+                                <p style={{ ...sans, fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#a89890', padding: '10px 12px 4px' }}>{group.label}</p>
                                 {group.options.map(opt => {
                                     const selected = value.includes(opt.value);
                                     return (
@@ -98,11 +117,12 @@ function LevelSelector({ value, onChange }) {
                                             key={opt.value}
                                             type="button"
                                             onClick={() => toggle(opt.value)}
-                                            className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-slate-50 transition-colors text-sm text-slate-700"
+                                            className="w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-[#f6efe4]"
+                                            style={{ ...sans, fontSize: '0.82rem', color: INK, background: 'none', border: 'none', cursor: 'pointer' }}
                                         >
                                             <span
-                                                className="w-4 h-4 rounded border flex-shrink-0 flex items-center justify-center"
-                                                style={{ borderColor: selected ? '#7f2d3a' : '#d1d5db', backgroundColor: selected ? '#7f2d3a' : '#fff' }}
+                                                className="w-4 h-4 rounded flex-shrink-0 flex items-center justify-center"
+                                                style={{ border: `1.5px solid ${selected ? MAROON : RULE}`, backgroundColor: selected ? MAROON : '#fff' }}
                                             >
                                                 {selected && (
                                                     <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
@@ -167,15 +187,16 @@ function CreateModal({ authorName, onClose, onCreated }) {
     };
 
     return (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
-            <div className="bg-white w-full max-w-lg rounded-[2rem] shadow-xl overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-4" style={{ background: 'rgba(20,10,12,0.5)', backdropFilter: 'blur(4px)' }}>
+            <div className="w-full max-w-lg rounded-xl overflow-hidden" style={{ background: '#fff', boxShadow: '0 20px 60px -20px rgba(36,21,18,0.4)' }}>
 
-                <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-slate-100" style={{ background: '#F5E8EA' }}>
+                <div style={{ height: 4, background: `linear-gradient(90deg, ${MAROON} 0%, ${GOLD} 100%)` }} />
+                <div className="flex items-center justify-between px-6 pt-5 pb-4" style={{ background: ROSE, borderBottom: `1px solid ${RULE}` }}>
                     <div>
-                        <h2 className="font-black text-[#7f2d3a] text-base font-serif">New Announcement</h2>
-                        <p className="text-[11px] text-slate-500 mt-0.5">Post to scholars and/or staff</p>
+                        <h2 style={{ ...serif, fontSize: '1.1rem', fontWeight: 700, color: MAROON }}>New Announcement</h2>
+                        <p style={{ ...sans, fontSize: '0.72rem', color: '#a56475', marginTop: 2 }}>Post to scholars and/or staff</p>
                     </div>
-                    <button onClick={onClose} className="p-2 rounded-xl text-slate-400 hover:bg-white/60 transition-all">
+                    <button onClick={onClose} className="p-2 rounded-lg transition-colors hover:bg-white/60" style={{ color: '#a56475', border: 'none', background: 'none', cursor: 'pointer' }}>
                         <X size={16} />
                     </button>
                 </div>
@@ -183,18 +204,19 @@ function CreateModal({ authorName, onClose, onCreated }) {
                 <div className="px-6 py-5 space-y-4 max-h-[70vh] overflow-y-auto">
 
                     <div>
-                        <label className="text-[10px] font-black text-[#7f2d3a] uppercase tracking-widest block mb-1.5">Title *</label>
+                        <label style={{ ...sans, fontSize: '0.62rem', fontWeight: 800, color: MAROON, textTransform: 'uppercase', letterSpacing: '0.12em', display: 'block', marginBottom: 6 }}>Title *</label>
                         <input
                             type="text"
                             value={title}
                             onChange={e => setTitle(e.target.value)}
                             placeholder="e.g. Deadline Reminder for Grade Submission"
-                            className="w-full bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl text-sm outline-none focus:border-[#7f2d3a] transition-all"
+                            className="w-full outline-none transition-colors"
+                            style={{ ...sans, fontSize: '0.85rem', background: PAPER, border: `1px solid ${RULE}`, padding: '11px 14px', borderRadius: 10, color: INK }}
                         />
                     </div>
 
                     <div>
-                        <label className="text-[10px] font-black text-[#7f2d3a] uppercase tracking-widest block mb-1.5">Priority *</label>
+                        <label style={{ ...sans, fontSize: '0.62rem', fontWeight: 800, color: MAROON, textTransform: 'uppercase', letterSpacing: '0.12em', display: 'block', marginBottom: 6 }}>Priority *</label>
                         <div className="flex gap-2">
                             {['info', 'important', 'critical'].map(p => {
                                 const cfg    = PRIORITY_CONFIG[p];
@@ -204,8 +226,8 @@ function CreateModal({ authorName, onClose, onCreated }) {
                                         key={p}
                                         type="button"
                                         onClick={() => setPriority(p)}
-                                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-xl border text-xs font-bold transition-all capitalize"
-                                        style={{ background: active ? cfg.bg : '#f8fafc', color: active ? cfg.text : '#94a3b8', borderColor: active ? cfg.border : '#e2e8f0' }}
+                                        className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg transition-colors capitalize"
+                                        style={{ ...sans, fontSize: '0.76rem', fontWeight: 700, background: active ? cfg.bg : '#fff', color: active ? cfg.color : '#a89890', border: `1px solid ${active ? cfg.color + '66' : RULE}`, cursor: 'pointer' }}
                                     >
                                         <PriorityIcon priority={p} size={13} />
                                         {cfg.label}
@@ -217,7 +239,7 @@ function CreateModal({ authorName, onClose, onCreated }) {
 
                     {/* Audience — role checkboxes */}
                     <div>
-                        <label className="text-[10px] font-black text-[#7f2d3a] uppercase tracking-widest block mb-1.5">Audience *</label>
+                        <label style={{ ...sans, fontSize: '0.62rem', fontWeight: 800, color: MAROON, textTransform: 'uppercase', letterSpacing: '0.12em', display: 'block', marginBottom: 6 }}>Audience *</label>
                         <div className="flex gap-2">
                             {ROLE_OPTIONS.map(opt => {
                                 const active = targetRoles.includes(opt.value);
@@ -226,11 +248,12 @@ function CreateModal({ authorName, onClose, onCreated }) {
                                         key={opt.value}
                                         type="button"
                                         onClick={() => toggleRole(opt.value)}
-                                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl border text-xs font-bold transition-all"
+                                        className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg transition-colors"
                                         style={{
-                                            background:  active ? '#7f2d3a' : '#f8fafc',
-                                            color:       active ? '#fff'    : '#94a3b8',
-                                            borderColor: active ? '#7f2d3a' : '#e2e8f0',
+                                            ...sans, fontSize: '0.76rem', fontWeight: 700, cursor: 'pointer',
+                                            background:  active ? MAROON : '#fff',
+                                            color:       active ? '#fff' : '#a89890',
+                                            border: `1px solid ${active ? MAROON : RULE}`,
                                         }}
                                     >
                                         <Users size={13} />
@@ -244,17 +267,17 @@ function CreateModal({ authorName, onClose, onCreated }) {
                     {/* Year level narrowing — lalabas lang kung kasama ang Scholars */}
                     {targetRoles.includes('scholar') && (
                         <div>
-                            <label className="text-[10px] font-black text-[#7f2d3a] uppercase tracking-widest block mb-1.5">
-                                Scholar Year Level <span className="text-slate-400 normal-case font-medium">(optional — leave blank for all)</span>
+                            <label style={{ ...sans, fontSize: '0.62rem', fontWeight: 800, color: MAROON, textTransform: 'uppercase', letterSpacing: '0.12em', display: 'block', marginBottom: 6 }}>
+                                Scholar Year Level <span style={{ color: '#c9b9b0', fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>(optional — leave blank for all)</span>
                             </label>
                             <LevelSelector value={levels} onChange={setLevels} />
                             {levels.length > 0 && (
                                 <div className="flex flex-wrap gap-1.5 mt-2">
                                     {levels.map(a => (
-                                        <span key={a} className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-bold" style={{ background: '#F5E8EA', color: '#7f2d3a' }}>
+                                        <span key={a} className="flex items-center gap-1 rounded-full" style={{ ...sans, fontSize: '0.62rem', fontWeight: 700, padding: '3px 9px', background: ROSE, color: MAROON }}>
                                             {getLevelLabel(a)}
                                             <button type="button" onClick={() => setLevels(levels.filter(v => v !== a))}
-                                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: '#7f2d3a' }}>
+                                                style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0, color: MAROON, display: 'flex' }}>
                                                 <X size={10} />
                                             </button>
                                         </span>
@@ -265,34 +288,37 @@ function CreateModal({ authorName, onClose, onCreated }) {
                     )}
 
                     <div>
-                        <label className="text-[10px] font-black text-[#7f2d3a] uppercase tracking-widest block mb-1.5">Message *</label>
+                        <label style={{ ...sans, fontSize: '0.62rem', fontWeight: 800, color: MAROON, textTransform: 'uppercase', letterSpacing: '0.12em', display: 'block', marginBottom: 6 }}>Message *</label>
                         <textarea
                             value={content}
                             onChange={e => setContent(e.target.value)}
                             placeholder="Write your announcement here..."
                             rows={4}
-                            className="w-full bg-slate-50 border border-slate-200 px-4 py-3 rounded-xl text-sm outline-none focus:border-[#7f2d3a] transition-all resize-none"
+                            className="w-full outline-none resize-none transition-colors"
+                            style={{ ...sans, fontSize: '0.85rem', background: PAPER, border: `1px solid ${RULE}`, padding: '11px 14px', borderRadius: 10, color: INK }}
                         />
                     </div>
 
-                    <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-50 px-4 py-2.5 rounded-xl">
+                    <div className="flex items-center gap-2 rounded-lg" style={{ background: PAPER, padding: '10px 14px', ...sans, fontSize: '0.76rem', color: '#a89890' }}>
                         <User size={12} />
-                        <span>Posting as <span className="font-bold text-[#7f2d3a]">{authorName}</span></span>
+                        <span>Posting as <span style={{ fontWeight: 700, color: MAROON }}>{authorName}</span></span>
                     </div>
 
                     {error && (
-                        <p className="text-xs text-red-500 font-bold bg-red-50 px-4 py-2.5 rounded-xl">{error}</p>
+                        <p className="rounded-lg" style={{ ...sans, fontSize: '0.76rem', fontWeight: 700, color: CLAY, background: `${CLAY}12`, padding: '10px 14px' }}>{error}</p>
                     )}
                 </div>
 
-                <div className="px-6 pb-6 pt-4 border-t border-slate-100 flex gap-3">
-                    <button onClick={onClose} className="flex-1 py-3 rounded-2xl border border-slate-200 text-slate-500 text-xs font-black uppercase tracking-widest hover:bg-slate-50 transition-all">
+                <div className="px-6 pb-6 pt-4 flex gap-3" style={{ borderTop: `1px solid ${RULE}` }}>
+                    <button onClick={onClose} className="flex-1 py-3 rounded-full transition-colors hover:bg-[#f6efe4]"
+                        style={{ ...sans, fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', border: `1.5px solid ${RULE}`, color: '#8a7a70', background: '#fff', cursor: 'pointer' }}>
                         Cancel
                     </button>
                     <button
                         onClick={handleSubmit}
                         disabled={submitting}
-                        className="flex-1 py-3 rounded-2xl bg-[#7f2d3a] text-white text-xs font-black uppercase tracking-widest hover:bg-[#63232d] transition-all flex items-center justify-center gap-2 disabled:opacity-60"
+                        className="flex-1 py-3 rounded-full transition-opacity hover:opacity-90 flex items-center justify-center gap-2 disabled:opacity-60"
+                        style={{ ...sans, fontSize: '0.7rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', background: MAROON, color: '#fff', border: 'none', cursor: submitting ? 'default' : 'pointer' }}
                     >
                         <Send size={12} />
                         {submitting ? 'Posting...' : 'Post Announcement'}
@@ -303,7 +329,7 @@ function CreateModal({ authorName, onClose, onCreated }) {
     );
 }
 
-// ─── Announcement Card ──────────────────────────────────────────────────────
+// ─── Announcement Card — a pinned notice, corkboard style ───────────────────
 
 function AnnouncementCard({ ann, isLatest, onNotify, notifyingId }) {
     const cfg    = PRIORITY_CONFIG[ann.priority] || PRIORITY_CONFIG.info;
@@ -312,57 +338,65 @@ function AnnouncementCard({ ann, isLatest, onNotify, notifyingId }) {
     const src    = SOURCE_CONFIG[ann.created_by_role];
 
     return (
-        <div className="bg-white p-5 rounded-2xl border border-slate-100 shadow-sm" style={{ borderLeft: `4px solid ${cfg.border}` }}>
-            <div className="flex items-start gap-3">
-                <div className="p-2 rounded-xl mt-0.5 flex-shrink-0" style={{ background: cfg.bg, color: cfg.text }}>
-                    <PriorityIcon priority={ann.priority} size={14} />
-                </div>
+        <div className="relative rounded-xl overflow-hidden" style={{ background: '#fff', border: `1px solid ${RULE}`, marginTop: 6 }}>
+            {/* corkboard pin — this card's signature touch */}
+            <div className="absolute rounded-full" style={{ top: -6, left: 22, width: 12, height: 12, background: `radial-gradient(circle at 35% 30%, ${GOLD_LIGHT}, ${GOLD})`, boxShadow: '0 2px 4px rgba(36,21,18,0.3)', border: '1px solid #fff' }} />
+            {/* priority ribbon */}
+            <div className="absolute left-0 top-0 bottom-0" style={{ width: 4, background: cfg.color }} />
 
-                <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap mb-1">
-                        {isLatest && (
-                            <span className="text-[10px] bg-[#7f2d3a] text-white font-black uppercase tracking-wider px-2 py-0.5 rounded-lg">Latest</span>
-                        )}
-                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg capitalize" style={{ background: cfg.bg, color: cfg.text }}>
-                            {cfg.label}
-                        </span>
-                        {src && (
-                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-lg bg-slate-100 text-slate-500 uppercase tracking-wider">
-                                {src.label}
-                            </span>
-                        )}
+            <div className="pl-6 pr-5 py-4">
+                <div className="flex items-start gap-3">
+                    <div className="p-2 rounded-lg mt-0.5 flex-shrink-0" style={{ background: cfg.bg, color: cfg.color }}>
+                        <PriorityIcon priority={ann.priority} size={14} />
                     </div>
 
-                    <h4 className="font-black text-slate-800 text-sm mb-1">{ann.title}</h4>
-                    <p className="text-xs text-slate-500 leading-relaxed">{ann.content}</p>
-
-                    <div className="flex flex-wrap gap-1.5 mt-3">
-                        {roles.map(r => (
-                            <span key={r} className="text-[10px] bg-blue-50 text-blue-600 border border-blue-100 font-bold px-2 py-0.5 rounded-lg flex items-center gap-1 capitalize">
-                                <Users size={9} /> {r}
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 flex-wrap mb-1.5">
+                            {isLatest && (
+                                <span className="rounded-full" style={{ ...sans, fontSize: '0.58rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', background: MAROON, color: '#fff', padding: '2px 8px' }}>Latest</span>
+                            )}
+                            <span className="rounded-full capitalize" style={{ ...sans, fontSize: '0.6rem', fontWeight: 800, background: cfg.bg, color: cfg.color, padding: '2px 8px' }}>
+                                {cfg.label}
                             </span>
-                        ))}
-                        {roles.includes('scholar') && levels.length > 0 && levels.map(lv => (
-                            <span key={lv} className="text-[10px] bg-slate-100 text-slate-500 font-bold px-2 py-0.5 rounded-lg">
-                                {getLevelLabel(lv)}
-                            </span>
-                        ))}
-                    </div>
+                            {src && (
+                                <span className="rounded-full uppercase" style={{ ...sans, fontSize: '0.58rem', fontWeight: 800, letterSpacing: '0.06em', background: PAPER, color: '#a89890', padding: '2px 8px' }}>
+                                    {src.label}
+                                </span>
+                            )}
+                        </div>
 
-                    <div className="flex flex-wrap items-center gap-2 mt-3 pt-3 border-t border-slate-50">
-                        <Clock size={10} className="text-slate-300" />
-                        <span className="text-[10px] text-slate-300">
-                            {new Date(ann.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}
-                        </span>
-                        <span className="text-[10px] text-slate-300">•</span>
-                        <span className="text-[10px] font-bold text-[#7f2d3a] uppercase tracking-wider">{ann.created_by}</span>
-                        <button
-                            onClick={() => onNotify(ann.id)}
-                            disabled={notifyingId === ann.id}
-                            className="ml-auto px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-all disabled:opacity-50"
-                        >
-                            {notifyingId === ann.id ? 'Sending...' : 'Notify'}
-                        </button>
+                        <h4 style={{ ...serif, fontSize: '0.98rem', fontWeight: 700, color: INK, marginBottom: 4 }}>{ann.title}</h4>
+                        <p style={{ ...sans, fontSize: '0.8rem', color: '#6b6058', lineHeight: 1.6 }}>{ann.content}</p>
+
+                        <div className="flex flex-wrap gap-1.5 mt-3">
+                            {roles.map(r => (
+                                <span key={r} className="rounded-full flex items-center gap-1 capitalize" style={{ ...sans, fontSize: '0.6rem', fontWeight: 700, background: ROSE, color: MAROON, padding: '2px 8px' }}>
+                                    <Users size={9} /> {r}
+                                </span>
+                            ))}
+                            {roles.includes('scholar') && levels.length > 0 && levels.map(lv => (
+                                <span key={lv} className="rounded-full" style={{ ...sans, fontSize: '0.6rem', fontWeight: 700, background: PAPER, color: '#a89890', padding: '2px 8px' }}>
+                                    {getLevelLabel(lv)}
+                                </span>
+                            ))}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 mt-3 pt-3" style={{ borderTop: `1px solid ${RULE}` }}>
+                            <Clock size={10} style={{ color: '#c9b9b0' }} />
+                            <span style={{ ...mono, fontSize: '0.62rem', color: '#c9b9b0' }}>
+                                {new Date(ann.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}
+                            </span>
+                            <span style={{ color: '#e8dccb' }}>•</span>
+                            <span style={{ ...sans, fontSize: '0.62rem', fontWeight: 800, color: MAROON, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Announced by {ann.created_by_name || ann.created_by || 'Unknown'}{ann.created_by_role ? ` (${ann.created_by_role})` : ''}</span>
+                            <button
+                                onClick={() => onNotify(ann.id)}
+                                disabled={notifyingId === ann.id}
+                                className="ml-auto rounded-full transition-opacity hover:opacity-85 disabled:opacity-50"
+                                style={{ ...sans, fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.06em', textTransform: 'uppercase', background: `${SAGE}18`, color: SAGE, padding: '4px 10px', border: 'none', cursor: notifyingId === ann.id ? 'default' : 'pointer' }}
+                            >
+                                {notifyingId === ann.id ? 'Sending...' : 'Notify'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -430,126 +464,136 @@ const OfficerAnnouncement = () => {
     };
 
     return (
-        <div className="min-h-screen bg-slate-50/50 p-4 sm:p-6 font-sans">
+        <div className="min-h-screen" style={{ background: IVORY, ...sans }}>
 
-            <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm mb-6">
-                <span className="text-[10px] bg-blue-100 text-blue-700 font-black uppercase tracking-[0.2em] px-3 py-1 rounded-full">
-                    Officer Portal
-                </span>
-                <div className="flex items-start justify-between mt-2 gap-4">
-                    <div>
-                        <h1 className="text-2xl sm:text-3xl font-black text-slate-800 tracking-tight font-serif">Communication</h1>
-                        <p className="text-xs text-slate-400 mt-1">Post to scholars & staff, and view announcements sent to you.</p>
+            {/* ── Ledger header band — same family as the rest of the portal ── */}
+            <div className="relative overflow-hidden px-5 sm:px-8 pt-8 pb-11" style={{ background: `linear-gradient(135deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)` }}>
+                <svg className="absolute -right-6 -top-10 w-56 h-56 opacity-[0.12] pointer-events-none" viewBox="0 0 200 200" fill="none">
+                    <path d="M40 90 Q40 60 80 55 L155 45 Q165 44 165 54 L165 130 Q165 140 155 139 L80 129 Q40 124 40 94 Z" fill={GOLD} />
+                    <circle cx="165" cy="92" r="10" fill={GOLD} />
+                </svg>
+                <div className="flex items-center gap-2 mb-3">
+                    <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ border: `1.5px solid ${GOLD}` }}>
+                        <Megaphone size={12} style={{ color: GOLD }} />
                     </div>
-                    <button
-                        onClick={() => setShowModal(true)}
-                        className="shrink-0 flex items-center gap-2 px-4 py-2.5 bg-[#7f2d3a] text-white text-xs font-black uppercase tracking-widest rounded-2xl hover:bg-[#63232d] transition-all"
-                    >
-                        <Plus size={13} /> New
+                    <span style={{ ...sans, fontSize: '0.66rem', fontWeight: 800, letterSpacing: '0.28em', textTransform: 'uppercase', color: GOLD_LIGHT }}>Officer Portal</span>
+                </div>
+                <div className="flex items-end justify-between gap-4 flex-wrap">
+                    <div>
+                        <h1 style={{ ...serif, fontSize: '2rem', fontWeight: 700, color: '#fff', letterSpacing: '-0.01em' }}>Communication</h1>
+                        <p style={{ ...sans, fontSize: '0.82rem', color: '#e9c9a8', marginTop: 4 }}>Post to scholars &amp; staff, and view announcements sent to you.</p>
+                    </div>
+                    <button onClick={() => setShowModal(true)}
+                        className="flex items-center gap-2 px-5 py-2.5 rounded-full transition-colors hover:opacity-90 flex-shrink-0"
+                        style={{ ...sans, fontSize: '0.78rem', fontWeight: 800, letterSpacing: '0.04em', background: GOLD, color: MAROON_DEEP, border: 'none', cursor: 'pointer' }}>
+                        <Plus size={15} /> New
                     </button>
                 </div>
             </div>
 
-            {/* Summary Cards */}
-            <div className="grid grid-cols-3 gap-3 mb-5">
-                <div className="rounded-2xl p-4 text-center" style={{ background: '#fee2e2' }}>
-                    <p className="text-2xl font-black font-serif" style={{ color: '#991b1b' }}>{counts.critical}</p>
-                    <p className="text-[10px] font-bold uppercase tracking-wider mt-0.5" style={{ color: '#991b1b' }}>Critical</p>
-                </div>
-                <div className="rounded-2xl p-4 text-center" style={{ background: '#fef3c7' }}>
-                    <p className="text-2xl font-black font-serif" style={{ color: '#92400e' }}>{counts.important}</p>
-                    <p className="text-[10px] font-bold uppercase tracking-wider mt-0.5" style={{ color: '#92400e' }}>Important</p>
-                </div>
-                <div className="bg-white border border-slate-100 rounded-2xl p-4 text-center">
-                    <p className="text-2xl font-black font-serif text-slate-700">{counts.total}</p>
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mt-0.5">Total</p>
-                </div>
-            </div>
+            <div className="relative z-10 px-5 sm:px-8 -mt-6 pb-10">
 
-            {/* Search + Priority Dropdown */}
-            <div className="flex flex-col sm:flex-row gap-3 mb-4">
-                <div className="relative flex-1">
-                    <Search className="absolute left-4 top-3.5 text-slate-300" size={16} />
-                    <input
-                        type="text"
-                        placeholder="Search announcements..."
-                        value={search}
-                        onChange={e => setSearch(e.target.value)}
-                        className="w-full bg-white border border-slate-200 pl-11 pr-4 py-3 text-sm rounded-2xl outline-none focus:border-[#7f2d3a] focus:ring-2 focus:ring-[#7f2d3a]/10 transition-all placeholder:text-slate-300 shadow-sm"
+                {/* Summary Cards */}
+                <div className="grid grid-cols-3 gap-3.5 mb-6">
+                    {[
+                        { label: 'Critical', value: counts.critical, color: CLAY },
+                        { label: 'Important', value: counts.important, color: AMBER },
+                        { label: 'Total', value: counts.total, color: MAROON },
+                    ].map(({ label, value, color }) => (
+                        <div key={label} className="rounded-xl p-4 text-center" style={{ background: '#fff', border: `1px solid ${RULE}`, boxShadow: '0 8px 24px -16px rgba(36,21,18,0.25)' }}>
+                            <p style={{ ...serif, fontSize: '1.7rem', fontWeight: 700, color, lineHeight: 1 }}>{value}</p>
+                            <p style={{ ...sans, fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#a89890', marginTop: 6 }}>{label}</p>
+                        </div>
+                    ))}
+                </div>
+
+                {/* Search + Priority Dropdown */}
+                <div className="flex flex-col sm:flex-row gap-3 mb-4">
+                    <div className="relative flex-1">
+                        <Search size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: '#c9b9b0' }} />
+                        <input
+                            type="text"
+                            placeholder="Search announcements..."
+                            value={search}
+                            onChange={e => setSearch(e.target.value)}
+                            className="w-full pl-9 pr-4 py-2.5 rounded-full outline-none bg-white"
+                            style={{ ...sans, fontSize: '0.82rem', border: `1px solid ${RULE}`, color: INK }}
+                        />
+                    </div>
+
+                    <div className="relative sm:w-52 shrink-0">
+                        <select
+                            value={priorityFilter}
+                            onChange={e => setPriorityFilter(e.target.value)}
+                            className="w-full appearance-none pl-4 pr-9 py-2.5 rounded-full outline-none bg-white"
+                            style={{ ...sans, fontSize: '0.82rem', fontWeight: 700, border: `1px solid ${RULE}`, color: priorityFilter === 'all' ? INK : PRIORITY_CONFIG[priorityFilter]?.color, cursor: 'pointer' }}
+                        >
+                            <option value="all">All Priorities</option>
+                            <option value="critical">Critical</option>
+                            <option value="important">Important</option>
+                            <option value="info">Info</option>
+                        </select>
+                        <ChevronDown size={15} className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: '#a89890' }} />
+                    </div>
+                </div>
+
+                {notifyMessage && (
+                    <div className="mb-4 rounded-lg px-4 py-2.5" style={{ background: `${SAGE}14`, border: `1px solid ${SAGE}45`, ...sans, fontSize: '0.78rem', fontWeight: 700, color: SAGE }}>
+                        {notifyMessage}
+                    </div>
+                )}
+                {notifyError && (
+                    <div className="mb-4 rounded-lg px-4 py-2.5" style={{ background: `${CLAY}12`, border: `1px solid ${CLAY}45`, ...sans, fontSize: '0.78rem', fontWeight: 700, color: CLAY }}>
+                        {notifyError}
+                    </div>
+                )}
+
+                {/* Sender Filter */}
+                <div className="flex gap-2 mb-6 flex-wrap">
+                    {SOURCE_TABS.map(f => (
+                        <button
+                            key={f.key}
+                            onClick={() => setSourceFilter(f.key)}
+                            className="rounded-full transition-colors capitalize"
+                            style={{
+                                ...sans, fontSize: '0.72rem', fontWeight: 700, padding: '7px 16px', cursor: 'pointer',
+                                background:  sourceFilter === f.key ? MAROON : '#fff',
+                                color:       sourceFilter === f.key ? '#fff' : '#8a7a70',
+                                border: `1px solid ${sourceFilter === f.key ? MAROON : RULE}`,
+                            }}
+                        >
+                            {f.label}
+                        </button>
+                    ))}
+                </div>
+
+                {loading ? (
+                    <div className="space-y-4">
+                        {Array(3).fill(0).map((_, i) => (
+                            <div key={i} className="animate-pulse rounded-xl h-28" style={{ background: '#EFE7E2' }} />
+                        ))}
+                    </div>
+                ) : filtered.length === 0 ? (
+                    <div className="rounded-xl p-16 text-center" style={{ background: '#fff', border: `1px dashed ${RULE}` }}>
+                        <Megaphone size={40} className="mx-auto mb-3" style={{ color: '#e9d9dc' }} />
+                        <p style={{ ...sans, fontSize: '0.85rem', fontWeight: 700, color: '#c9b3b8' }}>No announcements found.</p>
+                    </div>
+                ) : (
+                    <div className="space-y-4">
+                        {filtered.map((ann, idx) => (
+                            <AnnouncementCard key={ann.id} ann={ann} isLatest={idx === 0} onNotify={handleNotifyAnnouncement} notifyingId={notifyingId} />
+                        ))}
+                    </div>
+                )}
+
+                {showModal && (
+                    <CreateModal
+                        authorName={officerName}
+                        onClose={() => setShowModal(false)}
+                        onCreated={fetchAnnouncements}
                     />
-                </div>
-
-                <div className="relative sm:w-52 shrink-0">
-                    <select
-                        value={priorityFilter}
-                        onChange={e => setPriorityFilter(e.target.value)}
-                        className="w-full appearance-none bg-white border border-slate-200 pl-4 pr-9 py-3 text-sm font-bold rounded-2xl outline-none focus:border-[#7f2d3a] focus:ring-2 focus:ring-[#7f2d3a]/10 transition-all shadow-sm cursor-pointer"
-                        style={{ color: priorityFilter === 'all' ? '#334155' : PRIORITY_CONFIG[priorityFilter]?.text }}
-                    >
-                        <option value="all">All Priorities</option>
-                        <option value="critical">Critical</option>
-                        <option value="important">Important</option>
-                        <option value="info">Info</option>
-                    </select>
-                    <ChevronDown size={15} className="absolute right-3.5 top-3.5 text-slate-400 pointer-events-none" />
-                </div>
+                )}
             </div>
-
-            {notifyMessage && (
-                <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">
-                    {notifyMessage}
-                </div>
-            )}
-            {notifyError && (
-                <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600">
-                    {notifyError}
-                </div>
-            )}
-
-            {/* Sender Filter */}
-            <div className="flex gap-2 mb-5 flex-wrap">
-                {SOURCE_TABS.map(f => (
-                    <button
-                        key={f.key}
-                        onClick={() => setSourceFilter(f.key)}
-                        className="text-xs px-4 py-1.5 rounded-xl border font-bold capitalize transition-all"
-                        style={{
-                            background:  sourceFilter === f.key ? '#7f2d3a' : '#fff',
-                            color:       sourceFilter === f.key ? '#fff'    : '#64748b',
-                            borderColor: sourceFilter === f.key ? '#7f2d3a' : '#e2e8f0',
-                        }}
-                    >
-                        {f.label}
-                    </button>
-                ))}
-            </div>
-
-            {loading ? (
-                <div className="space-y-4">
-                    {Array(3).fill(0).map((_, i) => (
-                        <div key={i} className="animate-pulse bg-slate-100 rounded-2xl h-28" />
-                    ))}
-                </div>
-            ) : filtered.length === 0 ? (
-                <div className="bg-white rounded-[2rem] border border-slate-100 shadow-sm p-16 text-center">
-                    <Megaphone size={40} className="mx-auto mb-3 text-slate-200" />
-                    <p className="text-sm font-bold text-slate-300">No announcements found.</p>
-                </div>
-            ) : (
-                <div className="space-y-4">
-                    {filtered.map((ann, idx) => (
-                        <AnnouncementCard key={ann.id} ann={ann} isLatest={idx === 0} onNotify={handleNotifyAnnouncement} notifyingId={notifyingId} />
-                    ))}
-                </div>
-            )}
-
-            {showModal && (
-                <CreateModal
-                    authorName={officerName}
-                    onClose={() => setShowModal(false)}
-                    onCreated={fetchAnnouncements}
-                />
-            )}
         </div>
     );
 };

@@ -11,10 +11,13 @@ import ComplianceManager from './pages/Admin/ComplianceManager';
 import CorrespondenceEvaluator from './pages/Admin/CorrespondenceEvaluator';
 import NotificationManager from './pages/Admin/AdminNotification';
 import SecurityAuditLogs from './pages/Admin/SecurityAuditLogs';
+import AdminPrivacyRequests from './pages/Admin/AdminPrivacyRequests';
 import UserManagement from './pages/Admin/UserManagement';
 import DutyManagement from './pages/Admin/DutyManagement';
 import AdminAnalytics from './pages/Admin/AdminAnalytics';
 import AdminTaskAssignment from './pages/Admin/AdminTaskAssignment';
+import OfficerAssignments from './pages/Admin/OfficerAssignments';
+import StaffAssignments from './pages/Admin/StaffAssignments';
 import ScholarProfileView from './pages/Admin/ScholarProfileView';
 import AdminLayout from './components/Admin/AdminLayout';
 import SharedFlaggedScholars from './pages/SharedPages/FlaggedScholars';
@@ -131,6 +134,11 @@ function App() {
               <AdminLayout><SecurityAuditLogs /></AdminLayout>
             </ProtectedRoute>
           } />
+          <Route path="/admin/privacy-requests" element={
+            <ProtectedRoute allowedRoles="admin">
+              <AdminLayout><AdminPrivacyRequests /></AdminLayout>
+            </ProtectedRoute>
+          } />
           <Route path="/admin/duties" element={
             <ProtectedRoute allowedRoles="admin">
               <AdminLayout><DutyManagement /></AdminLayout>
@@ -144,6 +152,16 @@ function App() {
           <Route path="/admin/task-assignment" element={
             <ProtectedRoute allowedRoles="admin">
               <AdminLayout><AdminTaskAssignment /></AdminLayout>
+            </ProtectedRoute>
+          } />
+          <Route path="/admin/officer-assignments" element={
+            <ProtectedRoute allowedRoles="admin">
+              <AdminLayout><OfficerAssignments /></AdminLayout>
+            </ProtectedRoute>
+          } />
+          <Route path="/admin/staff-assignments" element={
+            <ProtectedRoute allowedRoles="admin">
+              <AdminLayout><StaffAssignments /></AdminLayout>
             </ProtectedRoute>
           } />
 

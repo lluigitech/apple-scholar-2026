@@ -1,4 +1,5 @@
 import { useNavigate, useLocation } from 'react-router-dom';
+import axios from 'axios';
 import {
     LayoutDashboard,
     ClipboardList,
@@ -20,7 +21,8 @@ const StaffSidebar = ({ isOpen, onClose }) => {
         if (window.innerWidth < 1024 && onClose) onClose();
     };
 
-    const handleLogout = () => {
+    const handleLogout = async () => {
+        await axios.post('http://localhost:5000/api/logout', {}, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }).catch(() => {});
         localStorage.clear();
         navigate('/');
     };

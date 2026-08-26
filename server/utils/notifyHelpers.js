@@ -312,3 +312,142 @@ exports.sendAnnouncementNotifyEmails = (announcementId, cb) => {
         });
     })().catch((err) => cb(err));
 };
+
+// ─── AUTOMATED TASK DEADLINE REMINDERS ─────────────────────────────────────
+exports.sendTaskDeadlineReminders = async () => {
+    const transporter = getTransporter();
+    if (!transporter) return { ok: false, skipped: true, reason: 'SMTP not configured' };
+
+    const tasks = await queryDb(`
+        SELECT id, title, type, DATE_FORMAT(due_date, '%Y-%m-%d') AS due_date, target_year_levels
+        FROM tasks
+        WHERE is_active = 1 AND due_date BETWEEN CURDATE() AND DATE_ADD(CURDATE(), INTERVAL 3 DAY)
+        ORDER BY due_date ASC
+    `);
+    if (!tasks.length) return { ok: true, sent_count: 0, message: 'No deadlines need reminders' };
+
+    const scholars = await queryDb(`
+        SELECT scholar_id, full_name, email, year_level
+        FROM users WHERE role = 'scholar' AND status = 'active' AND email IS NOT NULL AND email <> ''
+    `);
+    let sentCount = 0;
+
+    const parseLevels = value => normalizeTargetLevels(value);
+
+    for (const task of tasks) {
+        const targetLevels = parseLevels(task.target_year_levels);
+        const recipients = scholars.filter(scholar => !targetLevels.length || targetLevels.includes(String(scholar.year_level)));
+        const daysLeft = Math.ceil((new Date(`${task.due_date}T00:00:00`) - new Date()) / 86400000);
+        if (daysLeft !== 3 && daysLeft !== 0) continue;
+        const reminderStage = daysLeft === 0 ? 'due-today' : 'due-3-days';
+        const dueDate = new Date(`${task.due_date}T00:00:00`).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' });
+
+        for (const recipient of recipients) {
+            const detail = `task:${task.id}:due:${task.due_date}:stage:${reminderStage}`;
+            const existing = await queryDb(
+                `SELECT id FROM notification_logs WHERE scholar_id = ? AND type = 'deadline_reminder' AND detail = ? LIMIT 1`,
+                [recipient.scholar_id, detail]
+            );
+            if (existing.length) continue;
+
+            try {
+                const info = await transporter.sendMail({
+                    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+                    to: recipient.email,
+                    subject: `Kalinga Scholar — Deadline Reminder: ${task.title}`,
+                    text: `Hello ${recipient.full_name || 'Scholar'},\n\nYour task is due ${daysLeft === 0 ? 'today' : 'in 3 days'}.\n\nTask: ${task.title}\nType: ${task.type}\nDeadline: ${dueDate}\n\nPlease submit the requirement through your Scholar Portal.`,
+                });
+                await logNotification({ scholar_id: recipient.scholar_id, recipient: recipient.email, channel: 'email', type: 'deadline_reminder', status: 'sent', detail });
+                sentCount += 1;
+                if (info?.messageId) console.log(`[deadline-reminder] sent to ${recipient.email} for task ${task.id}`);
+            } catch (sendErr) {
+                await logNotification({ scholar_id: recipient.scholar_id, recipient: recipient.email, channel: 'email', type: 'deadline_reminder', status: 'failed', detail: `${detail}:${String(sendErr)}` });
+            }
+        }
+    }
+
+    return { ok: true, sent_count: sentCount };
+};
+
+exports.sendComplianceAlerts = async () => {
+    const transporter = getTransporter();
+    if (!transporter) return { ok: false, skipped: true, reason: 'SMTP not configured' };
+
+    const [tasks, scholars, staff] = await Promise.all([
+        queryDb(`
+            SELECT id, title, type, DATE_FORMAT(due_date, '%Y-%m-%d') AS due_date, created_at, target_year_levels
+            FROM tasks WHERE is_active = 1 AND due_date < CURDATE()
+        `),
+        queryDb(`
+            SELECT scholar_id, full_name, email, year_level FROM users
+            WHERE role = 'scholar' AND status = 'active' AND email IS NOT NULL AND email <> ''
+        `),
+        queryDb(`
+            SELECT id, email, full_name FROM users
+            WHERE role IN ('admin', 'staff', 'officer') AND status = 'active' AND email IS NOT NULL AND email <> ''
+        `),
+    ]);
+
+    const typeMap = { 'Monthly Report': 'letter', 'Report Card': 'report_card', 'COR Upload': 'cor' };
+    const today = new Date().toISOString().slice(0, 10);
+    let sentCount = 0;
+
+    for (const task of tasks) {
+        const targetLevels = normalizeTargetLevels(task.target_year_levels);
+        const taskType = typeMap[task.type];
+        if (!taskType) continue;
+        const recipients = scholars.filter(scholar => !targetLevels.length || targetLevels.includes(String(scholar.year_level)));
+
+        for (const scholar of recipients) {
+            const records = taskType === 'report_card'
+                ? await queryDb(`SELECT created_at AS submitted_at FROM grades WHERE scholar_id = ? AND verification_status = 'approved' AND created_at >= ? LIMIT 1`, [scholar.scholar_id, task.created_at])
+                : await queryDb(`SELECT submitted_at FROM submissions WHERE scholar_id = ? AND submission_type = ? AND status = 'approved' AND submitted_at >= ? LIMIT 1`, [scholar.scholar_id, taskType, task.created_at]);
+            if (records.length) continue;
+
+            const detail = `overdue-task:${task.id}:scholar:${scholar.scholar_id}:date:${today}`;
+            const existing = await queryDb(`SELECT id FROM notification_logs WHERE type = 'overdue_requirement' AND detail = ? LIMIT 1`, [detail]);
+            if (existing.length) continue;
+            const text = `Scholar ${scholar.full_name || scholar.scholar_id} has not completed the overdue requirement "${task.title}" (deadline: ${task.due_date}).`;
+            try {
+                await transporter.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to: scholar.email, subject: `Overdue requirement: ${task.title}`, text: `Hello ${scholar.full_name || 'Scholar'},\n\n${text}\nPlease submit the requirement through your Scholar Portal.` });
+                await logNotification({ scholar_id: scholar.scholar_id, recipient: scholar.email, channel: 'email', type: 'overdue_requirement', status: 'sent', detail });
+                sentCount += 1;
+                for (const recipient of staff) {
+                    try {
+                        await transporter.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to: recipient.email, subject: `Scholar overdue requirement: ${task.title}`, text });
+                        await logNotification({ scholar_id: scholar.scholar_id, recipient: recipient.email, channel: 'email', type: 'overdue_requirement', status: 'sent', detail });
+                    } catch (staffErr) {
+                        await logNotification({ scholar_id: scholar.scholar_id, recipient: recipient.email, channel: 'email', type: 'overdue_requirement', status: 'failed', detail: `${detail}:${String(staffErr)}` });
+                    }
+                }
+            } catch (sendErr) {
+                await logNotification({ scholar_id: scholar.scholar_id, recipient: scholar.email, channel: 'email', type: 'overdue_requirement', status: 'failed', detail: `${detail}:${String(sendErr)}` });
+            }
+        }
+    }
+
+    const risks = await queryDb(`
+        SELECT u.scholar_id, u.full_name, COUNT(s.id) AS negative_letters
+        FROM users u JOIN submissions s ON s.scholar_id = u.scholar_id
+        WHERE u.role = 'scholar' AND u.status = 'active' AND s.submission_type = 'letter'
+          AND s.sentiment_label LIKE '%Negative%' AND s.submitted_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)
+        GROUP BY u.scholar_id, u.full_name HAVING COUNT(s.id) >= 2
+    `);
+    for (const risk of risks) {
+        const detail = `repeated-risk:${risk.scholar_id}:date:${today}`;
+        const existing = await queryDb(`SELECT id FROM notification_logs WHERE type = 'repeated_risk_flag' AND detail = ? LIMIT 1`, [detail]);
+        if (existing.length) continue;
+        const recipient = staff[0];
+        if (!recipient) continue;
+        const text = `${risk.full_name || risk.scholar_id} has ${risk.negative_letters} negative correspondence flags in the last 90 days and needs follow-up.`;
+        try {
+            await transporter.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to: recipient.email, subject: `Repeated risk flag: ${risk.full_name || risk.scholar_id}`, text });
+            await logNotification({ scholar_id: risk.scholar_id, recipient: recipient.email, channel: 'email', type: 'repeated_risk_flag', status: 'sent', detail });
+            sentCount += 1;
+        } catch (sendErr) {
+            await logNotification({ scholar_id: risk.scholar_id, recipient: recipient.email, channel: 'email', type: 'repeated_risk_flag', status: 'failed', detail: `${detail}:${String(sendErr)}` });
+        }
+    }
+
+    return { ok: true, sent_count: sentCount };
+};

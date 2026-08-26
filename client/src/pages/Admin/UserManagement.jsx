@@ -14,20 +14,43 @@ const YEAR_LEVELS = [
     '3rd Year College', '4th Year College', '5th Year College',
 ];
 
-const MAROON       = '#7f2d3a';
-const MAROON_LIGHT = '#fdf2f3';
+// ── Brand tokens — shared across Scholar / Officer / Staff / Admin portals ──
+const MAROON      = '#7A2E3A';
+const MAROON_DEEP = '#3D1219';
+const GOLD        = '#B08D4F';
+const IVORY       = '#FAF7F2';
+const INK         = '#241512';
+const LINE        = '#E8DFD6';
+const TINT        = '#F6E9EA'; // light maroon tint — replaces old flat ROSE
+const SAGE  = '#15803d';
+const CLAY  = '#991b1b';
+const AMBER = '#92400e';
+
+const display = { fontFamily: "'Fraunces', serif" };
+const body    = { fontFamily: "'Inter', sans-serif" };
+const mono    = { fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, monospace" };
+
+// ── Woven rule — signature motif, reused across the portal. Color carries
+// meaning here: gold for standard actions, clay for destructive ones —
+// so the one recurring pattern also encodes what kind of screen you're on.
+const weavePattern = (color, opacity = 1) => ({
+    height: 4,
+    opacity,
+    backgroundImage: `repeating-linear-gradient(45deg, ${color} 0 2px, transparent 2px 7px),
+                       repeating-linear-gradient(-45deg, ${color} 0 2px, transparent 2px 7px)`,
+});
+const WeaveRule = ({ color = GOLD, opacity = 0.85 }) => <div style={weavePattern(color, opacity)} />;
 
 const inputCls =
-    'w-full bg-white border border-slate-200 hover:border-slate-300 ' +
-    'focus:border-[#7f2d3a] focus:ring-4 focus:ring-[#7f2d3a]/8 ' +
-    'rounded-xl px-3.5 py-2.5 text-sm text-slate-700 ' +
-    'placeholder:text-slate-300 outline-none transition-all duration-150';
+    'w-full bg-white hover:border-[#d8c9c2] ' +
+    'focus:ring-4 ' +
+    'rounded-lg px-3.5 py-2.5 text-sm ' +
+    'outline-none transition-all duration-150';
+const inputStyle = { ...body, color: INK, border: `1px solid ${LINE}` };
 
 const selectCls = inputCls + ' appearance-none cursor-pointer pr-9';
 
 // ── Helpers ────────────────────────────────────────────────────
-const isNonScholar = (role) => ['staff', 'officer', 'admin'].includes(role);
-
 const ID_HINT = {
     scholar: 'Auto-generated (AS-YYYY-XXXXXX)',
     staff:   'Auto-generated (AK-YYYY-XXX)',
@@ -71,24 +94,24 @@ const formatYearLevelLabel = (value) => {
 // ── Atoms ──────────────────────────────────────────────────────
 const FieldLabel = ({ label, required, hint }) => (
     <div className="flex items-center justify-between mb-1.5">
-        <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest">
-            {label}{required && <span className="text-rose-400 ml-0.5">*</span>}
+        <label style={{ ...body, fontSize: '0.66rem', fontWeight: 700, color: '#A15E6B', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+            {label}{required && <span style={{ color: CLAY, marginLeft: 2 }}>*</span>}
         </label>
-        {hint && <span className="text-[10px] text-slate-400 normal-case font-normal">{hint}</span>}
+        {hint && <span style={{ ...body, fontSize: '0.64rem', color: '#c9b9b0' }}>{hint}</span>}
     </div>
 );
 
 const SelectWrap = ({ children }) => (
     <div className="relative">
         {children}
-        <ChevronDown size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+        <ChevronDown size={13} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: '#a89890' }} />
     </div>
 );
 
 const ErrBox = ({ msg }) => msg ? (
-    <div className="flex items-center gap-2 bg-red-50 border border-red-100 px-3.5 py-2.5 rounded-xl">
-        <AlertTriangle size={13} className="text-red-400 shrink-0" />
-        <p className="text-xs text-red-600 font-medium">{msg}</p>
+    <div className="flex items-center gap-2 rounded-lg" style={{ background: `${CLAY}12`, border: `1px solid ${CLAY}40`, padding: '10px 14px' }}>
+        <AlertTriangle size={13} style={{ color: CLAY, flexShrink: 0 }} />
+        <p style={{ ...body, fontSize: '0.76rem', color: CLAY, fontWeight: 600 }}>{msg}</p>
     </div>
 ) : null;
 
@@ -101,43 +124,44 @@ const Spinner = () => (
 
 const PrimaryBtn = ({ onClick, disabled, loading, children, full }) => (
     <button onClick={onClick} disabled={disabled || loading}
-        className={`${full ? 'w-full' : ''} flex items-center justify-center gap-2 py-2.5 px-5 rounded-xl text-white text-sm font-semibold transition-all active:scale-[0.98] disabled:opacity-60`}
-        style={{ background: `linear-gradient(135deg, ${MAROON}, #a63d4d)`, boxShadow: `0 4px 14px ${MAROON}35` }}>
+        className={`${full ? 'w-full' : ''} flex items-center justify-center gap-2 py-2.5 px-5 rounded-full transition-all active:scale-[0.98] disabled:opacity-60`}
+        style={{ ...body, fontSize: '0.85rem', fontWeight: 600, color: '#fff', border: 'none', background: MAROON, cursor: loading ? 'default' : 'pointer' }}>
         {loading ? <><Spinner /> Processing...</> : children}
     </button>
 );
 
 const GhostBtn = ({ onClick, children, full }) => (
     <button onClick={onClick}
-        className={`${full ? 'w-full' : ''} py-2.5 px-5 rounded-xl border border-slate-200 text-slate-600 text-sm font-medium hover:bg-slate-50 transition-all`}>
+        className={`${full ? 'w-full' : ''} py-2.5 px-5 rounded-full transition-colors hover:bg-[#faf7f2]`}
+        style={{ ...body, fontSize: '0.85rem', fontWeight: 600, color: '#6b6058', border: `1px solid ${LINE}`, background: '#fff', cursor: 'pointer' }}>
         {children}
     </button>
 );
 
 // ── Modal Shell ────────────────────────────────────────────────
-const ModalShell = ({ icon, title, subtitle, onClose, children }) => (
+const ModalShell = ({ icon, title, subtitle, onClose, children, ruleColor = GOLD }) => (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
-        style={{ backgroundColor: 'rgba(10,10,20,0.55)', backdropFilter: 'blur(8px)' }}>
-        <div className="bg-white w-full sm:max-w-md rounded-t-3xl sm:rounded-2xl overflow-hidden"
-            style={{ boxShadow: '0 40px 80px -20px rgba(0,0,0,0.35)' }}>
-            <div className="h-[3px]" style={{ background: `linear-gradient(90deg, ${MAROON}, #c97080, ${MAROON}44)` }} />
+        style={{ backgroundColor: 'rgba(20,10,12,0.55)', backdropFilter: 'blur(6px)' }}>
+        <div className="w-full sm:max-w-md rounded-t-3xl sm:rounded-xl overflow-hidden"
+            style={{ background: '#fff', boxShadow: '0 30px 60px -20px rgba(36,21,18,0.4)' }}>
+            <WeaveRule color={ruleColor} />
             <div className="flex items-center justify-between px-6 pt-5 pb-4">
                 <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0"
-                        style={{ background: `linear-gradient(135deg, ${MAROON_LIGHT}, #f5e6e8)` }}>
+                    <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: TINT }}>
                         <span style={{ color: MAROON }}>{icon}</span>
                     </div>
                     <div>
-                        <h3 className="text-[15px] font-bold text-slate-800 leading-tight">{title}</h3>
-                        {subtitle && <p className="text-[11px] text-slate-400 mt-0.5">{subtitle}</p>}
+                        <h3 style={{ ...display, fontSize: '1.05rem', fontWeight: 600, color: INK, lineHeight: 1.2 }}>{title}</h3>
+                        {subtitle && <p style={{ ...body, fontSize: '0.72rem', color: '#a89890', marginTop: 2 }}>{subtitle}</p>}
                     </div>
                 </div>
                 <button onClick={onClose}
-                    className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all">
+                    className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors hover:bg-[#faf7f2]"
+                    style={{ color: '#a89890', border: 'none', background: 'none', cursor: 'pointer' }}>
                     <X size={14} />
                 </button>
             </div>
-            <div className="h-px bg-slate-100 mx-6" />
+            <div style={{ height: 1, background: LINE, margin: '0 24px' }} />
             {children}
         </div>
     </div>
@@ -164,7 +188,10 @@ const CreateModal = ({ onClose, onSuccess }) => {
         }
         try {
             setLoading(true);
-            const res = await axios.post('http://localhost:5000/api/admin/users', form);
+            const token = localStorage.getItem('token');
+            const res = await axios.post('http://localhost:5000/api/admin/users', form, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
             onSuccess({
                 qrCode:     res.data.qrCode,
                 full_name:  form.full_name,
@@ -187,11 +214,10 @@ const CreateModal = ({ onClose, onSuccess }) => {
         >
             <div className="px-6 py-5 space-y-4 max-h-[65vh] overflow-y-auto">
 
-                {/* Role selector */}
                 <div>
                     <FieldLabel label="Role" required />
                     <SelectWrap>
-                        <select className={selectCls} value={form.role}
+                        <select className={selectCls} style={inputStyle} value={form.role}
                             onChange={e => set('role', e.target.value)}>
                             <option value="scholar">Scholar</option>
                             <option value="staff">Staff</option>
@@ -201,27 +227,23 @@ const CreateModal = ({ onClose, onSuccess }) => {
                     </SelectWrap>
                 </div>
 
-                {/* ID field — auto-generated for ALL roles */}
                 <div>
-                    <FieldLabel
-                        label={ID_LABEL[form.role] || 'ID'}
-                        hint={ID_HINT[form.role]}
-                    />
-                    <div className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm text-slate-400 font-mono">
+                    <FieldLabel label={ID_LABEL[form.role] || 'ID'} hint={ID_HINT[form.role]} />
+                    <div className="rounded-lg px-3.5 py-2.5" style={{ background: IVORY, border: `1px solid ${LINE}`, ...mono, fontSize: '0.82rem', color: '#a89890' }}>
                         Will be assigned automatically
                     </div>
                 </div>
 
                 <div>
                     <FieldLabel label="Full Name" required />
-                    <input className={inputCls} placeholder="Juan dela Cruz"
+                    <input className={inputCls} style={inputStyle} placeholder="Juan dela Cruz"
                         value={form.full_name}
                         onChange={e => set('full_name', e.target.value)} />
                 </div>
 
                 <div>
                     <FieldLabel label="Email Address" required />
-                    <input className={inputCls} type="email" placeholder="juan@school.edu.ph"
+                    <input className={inputCls} style={inputStyle} type="email" placeholder="juan@school.edu.ph"
                         value={form.email}
                         onChange={e => set('email', e.target.value)} />
                 </div>
@@ -229,24 +251,24 @@ const CreateModal = ({ onClose, onSuccess }) => {
                 <div>
                     <FieldLabel label="Initial Password" required />
                     <div className="relative">
-                        <input className={inputCls + ' pr-10'}
+                        <input className={inputCls + ' pr-10'} style={inputStyle}
                             type={showPw ? 'text' : 'password'}
                             placeholder="Set a strong password"
                             value={form.password}
                             onChange={e => set('password', e.target.value)} />
                         <button type="button" onClick={() => setShowPw(p => !p)}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors">
+                            className="absolute right-3 top-1/2 -translate-y-1/2 transition-colors"
+                            style={{ color: '#a89890', background: 'none', border: 'none', cursor: 'pointer' }}>
                             {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
                         </button>
                     </div>
                 </div>
 
-                {/* Assign year level to scholars and officers */}
                 {(form.role === 'scholar' || form.role === 'officer') && (
                     <div>
                         <FieldLabel label={getLevelLabel(form.role)} />
                         <SelectWrap>
-                            <select className={selectCls} value={form.year_level}
+                            <select className={selectCls} style={inputStyle} value={form.year_level}
                                 onChange={e => set('year_level', e.target.value)}>
                                 <option value="">Select year level</option>
                                 {YEAR_LEVELS.map(y => <option key={y} value={y}>{y}</option>)}
@@ -258,7 +280,7 @@ const CreateModal = ({ onClose, onSuccess }) => {
                 <ErrBox msg={error} />
             </div>
 
-            <div className="px-6 pb-6 pt-3 border-t border-slate-100 flex gap-2.5">
+            <div className="px-6 pb-6 pt-3 flex gap-2.5" style={{ borderTop: `1px solid ${LINE}` }}>
                 <GhostBtn onClick={onClose} full>Cancel</GhostBtn>
                 <PrimaryBtn onClick={handleSubmit} loading={loading} full>
                     Create &amp; Generate QR
@@ -288,7 +310,10 @@ const EditModal = ({ user, onClose, onSuccess }) => {
         setError('');
         try {
             setLoading(true);
-            await axios.put(`http://localhost:5000/api/admin/users/${user.id}`, form);
+            const token = localStorage.getItem('token');
+            await axios.put(`http://localhost:5000/api/admin/users/${user.id}`, form, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
             onSuccess();
         } catch (err) {
             setError(err.response?.data?.error || 'Error updating user.');
@@ -308,38 +333,35 @@ const EditModal = ({ user, onClose, onSuccess }) => {
 
                 <div>
                     <FieldLabel label="Full Name" />
-                    <input className={inputCls} value={form.full_name}
+                    <input className={inputCls} style={inputStyle} value={form.full_name}
                         onChange={e => set('full_name', e.target.value)} />
                 </div>
 
                 <div>
                     <FieldLabel label="Email Address" />
-                    <input className={inputCls} type="email" value={form.email}
+                    <input className={inputCls} style={inputStyle} type="email" value={form.email}
                         onChange={e => set('email', e.target.value)} />
                 </div>
 
                 <div>
                     <FieldLabel label="New Password" hint="Leave blank to keep" />
                     <div className="relative">
-                        <input className={inputCls + ' pr-10'}
+                        <input className={inputCls + ' pr-10'} style={inputStyle}
                             type={showPw ? 'text' : 'password'}
                             placeholder="Enter new password"
                             value={form.password}
                             onChange={e => set('password', e.target.value)} />
                         <button type="button" onClick={() => setShowPw(p => !p)}
-                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors">
+                            className="absolute right-3 top-1/2 -translate-y-1/2 transition-colors"
+                            style={{ color: '#a89890', background: 'none', border: 'none', cursor: 'pointer' }}>
                             {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
                         </button>
                     </div>
                 </div>
 
-                {/* ID — read-only, label per role */}
                 <div>
-                    <FieldLabel
-                        label={ID_LABEL[form.role] || 'ID'}
-                        hint="Cannot be changed"
-                    />
-                    <div className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm text-slate-500 font-mono">
+                    <FieldLabel label={ID_LABEL[form.role] || 'ID'} hint="Cannot be changed" />
+                    <div className="rounded-lg px-3.5 py-2.5" style={{ background: IVORY, border: `1px solid ${LINE}`, ...mono, fontSize: '0.82rem', color: '#6b6058' }}>
                         {form.scholar_id || '—'}
                     </div>
                 </div>
@@ -348,7 +370,7 @@ const EditModal = ({ user, onClose, onSuccess }) => {
                     <div>
                         <FieldLabel label="Role" />
                         <SelectWrap>
-                            <select className={selectCls} value={form.role}
+                            <select className={selectCls} style={inputStyle} value={form.role}
                                 onChange={e => set('role', e.target.value)}>
                                 <option value="scholar">Scholar</option>
                                 <option value="staff">Staff</option>
@@ -360,7 +382,7 @@ const EditModal = ({ user, onClose, onSuccess }) => {
                     <div>
                         <FieldLabel label="Status" />
                         <SelectWrap>
-                            <select className={selectCls} value={form.status}
+                            <select className={selectCls} style={inputStyle} value={form.status}
                                 onChange={e => set('status', e.target.value)}>
                                 <option value="active">Active</option>
                                 <option value="inactive">Inactive</option>
@@ -374,7 +396,7 @@ const EditModal = ({ user, onClose, onSuccess }) => {
                     <div>
                         <FieldLabel label={getLevelLabel(form.role)} />
                         <SelectWrap>
-                            <select className={selectCls} value={form.year_level}
+                            <select className={selectCls} style={inputStyle} value={form.year_level}
                                 onChange={e => set('year_level', e.target.value)}>
                                 <option value="">Select year level</option>
                                 {YEAR_LEVELS.map(y => <option key={y} value={y}>{y}</option>)}
@@ -386,7 +408,7 @@ const EditModal = ({ user, onClose, onSuccess }) => {
                 <ErrBox msg={error} />
             </div>
 
-            <div className="px-6 pb-6 pt-3 border-t border-slate-100 flex gap-2.5">
+            <div className="px-6 pb-6 pt-3 flex gap-2.5" style={{ borderTop: `1px solid ${LINE}` }}>
                 <GhostBtn onClick={onClose} full>Cancel</GhostBtn>
                 <PrimaryBtn onClick={handleSubmit} loading={loading} full>Save Changes</PrimaryBtn>
             </div>
@@ -397,9 +419,9 @@ const EditModal = ({ user, onClose, onSuccess }) => {
 // ── QR Modal ───────────────────────────────────────────────────
 const QR_BADGE = {
     scholar: null,
-    staff:   { cls: 'bg-amber-50 text-amber-600 border-amber-200',     label: 'Staff QR'   },
-    officer: { cls: 'bg-emerald-50 text-emerald-600 border-emerald-200', label: 'Officer QR' },
-    admin:   { cls: 'bg-violet-50 text-violet-600 border-violet-200',   label: 'Admin QR'   },
+    staff:   { color: AMBER,  label: 'Staff QR'   },
+    officer: { color: SAGE,   label: 'Officer QR' },
+    admin:   { color: MAROON, label: 'Admin QR'   },
 };
 
 const QRModal = ({ qrData, onClose }) => {
@@ -414,22 +436,21 @@ const QRModal = ({ qrData, onClose }) => {
         >
             <div className="px-6 py-6 flex flex-col items-center gap-5">
                 <div className="text-center">
-                    <p className="font-bold text-slate-800 text-base">{qrData.full_name}</p>
-                    <p className="text-xs text-slate-400 font-mono mt-1">
+                    <p style={{ ...display, fontSize: '1.05rem', fontWeight: 600, color: INK }}>{qrData.full_name}</p>
+                    <p style={{ ...mono, fontSize: '0.74rem', color: '#a89890', marginTop: 4 }}>
                         {ID_LABEL[qrData.role] || 'ID'}: {qrData.scholar_id || '—'}
                     </p>
                     {badge && (
-                        <span className={`inline-block mt-2 text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full border ${badge.cls}`}>
+                        <span className="inline-block rounded-full" style={{ marginTop: 8, ...body, fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', padding: '4px 12px', background: `${badge.color}16`, color: badge.color, border: `1px solid ${badge.color}45` }}>
                             {badge.label}
                         </span>
                     )}
                 </div>
 
-                <div className="p-3 rounded-2xl bg-white border border-slate-150"
-                    style={{ boxShadow: '0 8px 30px rgba(127,45,58,0.10)' }}>
+                <div className="p-3 rounded-xl" style={{ background: '#fff', border: `1px solid ${LINE}` }}>
                     {qrData.qr_code || qrData.qrCode
-                        ? <img src={qrData.qr_code || qrData.qrCode} alt="QR Code" className="w-48 h-48 rounded-xl" />
-                        : <div className="w-48 h-48 flex items-center justify-center text-slate-300 text-xs rounded-xl bg-slate-50">
+                        ? <img src={qrData.qr_code || qrData.qrCode} alt="QR Code" className="w-48 h-48 rounded-lg" />
+                        : <div className="w-48 h-48 flex items-center justify-center rounded-lg" style={{ color: '#c9b9b0', ...body, fontSize: '0.78rem', background: IVORY }}>
                             No QR available
                           </div>
                     }
@@ -439,8 +460,8 @@ const QRModal = ({ qrData, onClose }) => {
                     <GhostBtn onClick={onClose} full>Close</GhostBtn>
                     <a href={qrData.qr_code || qrData.qrCode}
                         download={`${qrData.scholar_id || 'user'}_event_qr.png`}
-                        className="flex-1 py-2.5 rounded-xl text-white text-sm font-semibold text-center flex items-center justify-center gap-1.5 transition-all active:scale-[0.98]"
-                        style={{ background: `linear-gradient(135deg, ${MAROON}, #a63d4d)`, boxShadow: `0 4px 14px ${MAROON}35` }}>
+                        className="flex-1 py-2.5 rounded-full flex items-center justify-center gap-1.5 transition-opacity hover:opacity-90 active:scale-[0.98]"
+                        style={{ ...body, fontSize: '0.85rem', fontWeight: 600, color: '#fff', background: MAROON }}>
                         <Download size={14} /> Download
                     </a>
                 </div>
@@ -449,54 +470,53 @@ const QRModal = ({ qrData, onClose }) => {
     );
 };
 
-// ── Delete Modal ───────────────────────────────────────────────
+// ── Delete Modal ── uses the same ModalShell, ruleColor=CLAY marks it as
+// the destructive action — the pattern stays consistent, only the color
+// of the pattern changes to signal severity.
 const DeleteModal = ({ user, onClose, onConfirm }) => (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
-        style={{ backgroundColor: 'rgba(10,10,20,0.55)', backdropFilter: 'blur(8px)' }}>
-        <div className="bg-white w-full sm:max-w-sm rounded-t-3xl sm:rounded-2xl overflow-hidden"
-            style={{ boxShadow: '0 40px 80px -20px rgba(0,0,0,0.35)' }}>
-            <div className="h-[3px] bg-gradient-to-r from-red-500 via-red-400 to-red-300" />
-            <div className="p-6 text-center">
-                <div className="w-12 h-12 bg-red-50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-red-100">
-                    <Trash2 size={20} className="text-red-400" />
-                </div>
-                <h3 className="text-base font-bold text-slate-800">Delete this user?</h3>
-                <p className="text-xs text-slate-400 mt-2 leading-relaxed">
-                    You're about to permanently delete{' '}
-                    <span className="font-semibold text-slate-700">{user.full_name}</span>.
-                    This action cannot be undone.
-                </p>
-                <div className="flex gap-2.5 mt-6">
-                    <GhostBtn onClick={onClose} full>Cancel</GhostBtn>
-                    <button onClick={onConfirm}
-                        className="flex-1 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition-all active:scale-[0.98]">
-                        Delete
-                    </button>
-                </div>
+    <ModalShell
+        icon={<Trash2 size={17} />}
+        title="Delete this user?"
+        onClose={onClose}
+        ruleColor={CLAY}
+    >
+        <div className="px-6 pb-6 pt-2 text-center">
+            <p style={{ ...body, fontSize: '0.78rem', color: '#a89890', lineHeight: 1.6 }}>
+                You're about to permanently delete{' '}
+                <span style={{ fontWeight: 700, color: '#6b6058' }}>{user.full_name}</span>.
+                This action cannot be undone.
+            </p>
+            <div className="flex gap-2.5 mt-5">
+                <GhostBtn onClick={onClose} full>Cancel</GhostBtn>
+                <button onClick={onConfirm}
+                    className="flex-1 py-2.5 rounded-full transition-opacity hover:opacity-90"
+                    style={{ ...body, fontSize: '0.85rem', fontWeight: 600, background: CLAY, color: '#fff', border: 'none', cursor: 'pointer' }}>
+                    Delete
+                </button>
             </div>
         </div>
-    </div>
+    </ModalShell>
 );
 
 // ── Role pill config ───────────────────────────────────────────
 const ROLE_CFG = {
-    admin:   { cls: 'bg-violet-50 text-violet-600 border border-violet-200',    icon: <UserCog size={10} />,     label: 'Admin'   },
-    staff:   { cls: 'bg-amber-50 text-amber-600 border border-amber-200',        icon: <ShieldCheck size={10} />, label: 'Staff'   },
-    officer: { cls: 'bg-emerald-50 text-emerald-600 border border-emerald-200',  icon: <Briefcase size={10} />,   label: 'Officer' },
-    scholar: { cls: 'bg-sky-50 text-sky-600 border border-sky-200',              icon: <Users size={10} />,       label: 'Scholar' },
+    admin:   { color: MAROON, icon: <UserCog size={10} />,     label: 'Admin'   },
+    staff:   { color: AMBER,  icon: <ShieldCheck size={10} />, label: 'Staff'   },
+    officer: { color: SAGE,   icon: <Briefcase size={10} />,   label: 'Officer' },
+    scholar: { color: GOLD,   icon: <Users size={10} />,       label: 'Scholar' },
 };
 
 const STATUS_DOT = {
-    active:   'bg-emerald-400',
-    flagged:  'bg-red-400 animate-pulse',
-    inactive: 'bg-slate-300',
+    active:   SAGE,
+    flagged:  CLAY,
+    inactive: '#c9b9b0',
 };
 
 const SkeletonRow = () => (
-    <tr className="border-b border-slate-50">
+    <tr style={{ borderTop: `1px solid ${LINE}` }}>
         {[40, 52, 64, 28, 24, 20, 30].map((w, i) => (
             <td key={i} className="px-5 py-4">
-                <div className="h-3 bg-slate-100 rounded-full animate-pulse" style={{ width: `${w}%` }} />
+                <div className="h-3 rounded-full animate-pulse" style={{ width: `${w}%`, background: IVORY }} />
             </td>
         ))}
     </tr>
@@ -515,7 +535,10 @@ const UserManagement = () => {
     const fetchUsers = async () => {
         try {
             setLoading(true);
-            const res = await axios.get('http://localhost:5000/api/admin/users');
+            const token = localStorage.getItem('token');
+            const res = await axios.get('http://localhost:5000/api/admin/users', {
+                headers: { Authorization: `Bearer ${token}` }
+            });
             setUsersList(res.data);
         } catch (err) {
             console.error('Error fetching users:', err);
@@ -530,7 +553,10 @@ const UserManagement = () => {
 
     const handleDelete = async () => {
         try {
-            await axios.delete(`http://localhost:5000/api/admin/users/${selectedUser.id}`);
+            const token = localStorage.getItem('token');
+            await axios.delete(`http://localhost:5000/api/admin/users/${selectedUser.id}`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
             closeModal();
             fetchUsers();
         } catch (err) {
@@ -540,7 +566,10 @@ const UserManagement = () => {
 
     const handleViewQR = async (user) => {
         try {
-            const res = await axios.get(`http://localhost:5000/api/admin/users/${user.id}/qr`);
+            const token = localStorage.getItem('token');
+            const res = await axios.get(`http://localhost:5000/api/admin/users/${user.id}/qr`, {
+                headers: { Authorization: `Bearer ${token}` }
+            });
             setQrData({ ...res.data, role: user.role });
             setModal('qr');
         } catch (err) {
@@ -556,58 +585,53 @@ const UserManagement = () => {
 
     return (
         <>
-            <div className="bg-white rounded-3xl overflow-hidden"
-                style={{ boxShadow: '0 2px 20px rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.04)' }}>
+            <div className="rounded-xl overflow-hidden bg-white" style={{ border: `1px solid ${LINE}` }}>
 
                 {/* Top bar */}
-                <div className="relative overflow-hidden">
-                    <div className="absolute inset-0 pointer-events-none"
-                        style={{ background: `linear-gradient(135deg, ${MAROON_LIGHT} 0%, white 60%)` }} />
-                    <div className="relative px-6 py-5 flex flex-col sm:flex-row sm:items-center gap-4">
+                <div>
+                    <div className="px-6 py-5 flex flex-col sm:flex-row sm:items-center gap-4" style={{ background: TINT }}>
                         <div className="flex-1 flex items-center gap-3 min-w-0">
-                            <div className="w-10 h-10 rounded-2xl flex items-center justify-center flex-shrink-0"
-                                style={{ background: `linear-gradient(135deg, ${MAROON}, #a63d4d)`, boxShadow: `0 4px 12px ${MAROON}40` }}>
-                                <Users size={18} className="text-white" />
+                            <div className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: MAROON }}>
+                                <Users size={18} style={{ color: '#fff' }} />
                             </div>
                             <div className="min-w-0">
-                                <h2 className="text-base font-bold text-slate-800 truncate">User Account Registry</h2>
-                                <p className="text-[11px] text-slate-400 mt-0.5">Manage credentials, roles &amp; account status</p>
+                                <h2 style={{ ...display, fontSize: '1.1rem', fontWeight: 600, color: INK }} className="truncate">User Account Registry</h2>
+                                <p style={{ ...body, fontSize: '0.72rem', color: '#A15E6B', marginTop: 2 }}>Manage credentials, roles &amp; account status</p>
                             </div>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
-                            <div className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-100 border border-slate-200">
-                                <span className="text-[11px] font-bold text-slate-500">{usersList.length}</span>
-                                <span className="text-[11px] text-slate-400">users</span>
+                            <div className="hidden sm:flex items-center gap-1.5 rounded-full px-3 py-1.5" style={{ background: '#fff', border: `1px solid ${LINE}` }}>
+                                <span style={{ ...body, fontSize: '0.72rem', fontWeight: 700, color: MAROON }}>{usersList.length}</span>
+                                <span style={{ ...body, fontSize: '0.72rem', color: '#a89890' }}>users</span>
                             </div>
                             <div className="relative">
-                                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+                                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: '#a89890' }} />
                                 <input type="text" placeholder="Search…"
                                     value={searchTerm} onChange={e => setSearchTerm(e.target.value)}
-                                    className="w-36 sm:w-48 pl-8 pr-3 py-2 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-[#7f2d3a] focus:ring-2 focus:ring-[#7f2d3a]/10 transition-all placeholder:text-slate-300 shadow-sm" />
+                                    className="w-36 sm:w-48 pl-8 pr-3 py-2 rounded-full outline-none"
+                                    style={{ ...body, fontSize: '0.78rem', background: '#fff', border: `1px solid ${LINE}`, color: INK }} />
                             </div>
                             <button onClick={() => setModal('create')}
-                                className="flex items-center gap-1.5 text-white text-xs font-semibold px-3.5 py-2 rounded-xl transition-all active:scale-95 flex-shrink-0"
-                                style={{ background: `linear-gradient(135deg, ${MAROON}, #a63d4d)`, boxShadow: `0 4px 12px ${MAROON}35` }}>
+                                className="flex items-center gap-1.5 rounded-full transition-opacity hover:opacity-90 active:scale-95 flex-shrink-0"
+                                style={{ ...body, fontSize: '0.76rem', fontWeight: 600, color: '#fff', padding: '9px 14px', border: 'none', background: MAROON, cursor: 'pointer' }}>
                                 <UserPlus size={13} />
                                 <span className="hidden sm:inline">New User</span>
                                 <span className="sm:hidden">New</span>
                             </button>
                         </div>
                     </div>
+                    <WeaveRule color={GOLD} opacity={0.7} />
                 </div>
-
-                <div className="h-px" style={{ background: `linear-gradient(90deg, ${MAROON}30, transparent)` }} />
 
                 {/* Table */}
                 <div className="overflow-x-auto">
                     <table className="w-full text-left min-w-[580px]">
                         <thead>
-                            <tr style={{ background: 'linear-gradient(180deg, #fafafa, #f5f5f7)' }}
-                                className="border-b border-slate-100">
+                            <tr style={{ background: IVORY, borderBottom: `1px solid ${LINE}` }}>
                                 {['ID', 'Full Name', 'Email', 'Role', 'Assigned Level', 'Status', 'Actions'].map((h, i) => (
                                     <th key={h}
-                                        className={`px-5 py-3 text-[10px] font-bold uppercase tracking-widest ${i === 6 ? 'text-center' : ''}`}
-                                        style={{ color: i === 0 ? MAROON : '#94a3b8' }}>
+                                        className={`px-5 py-3 ${i === 6 ? 'text-center' : 'text-left'}`}
+                                        style={{ ...body, fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: i === 0 ? MAROON : '#a89890' }}>
                                         {h}
                                     </th>
                                 ))}
@@ -620,68 +644,78 @@ const UserManagement = () => {
                                     ? filtered.map((user) => {
                                         const badge = ROLE_CFG[user.role] || ROLE_CFG.scholar;
                                         return (
-                                            <tr key={user.id}
-                                                className="border-b border-slate-50 hover:bg-[#fdf2f3]/40 transition-colors group">
+                                            <tr key={user.id} className="transition-colors hover:bg-[#faf7f2]" style={{ borderTop: `1px solid ${LINE}` }}>
                                                 <td className="px-5 py-3.5">
                                                     <div>
-                                                        <span className="font-mono text-xs font-bold" style={{ color: MAROON }}>
-                                                            {user.scholar_id || <span className="text-slate-300 font-normal">—</span>}
+                                                        <span style={{ ...mono, fontSize: '0.76rem', fontWeight: 700, color: MAROON }}>
+                                                            {user.scholar_id || <span style={{ color: '#c9b9b0', fontWeight: 400 }}>—</span>}
                                                         </span>
-                                                        <p className="text-[10px] text-slate-400 mt-0.5">
-                                                            {ID_LABEL[user.role] || 'ID'}
-                                                        </p>
+                                                        <p style={{ ...body, fontSize: '0.64rem', color: '#a89890', marginTop: 2 }}>{ID_LABEL[user.role] || 'ID'}</p>
                                                     </div>
                                                 </td>
                                                 <td className="px-5 py-3.5">
                                                     <div className="flex items-center gap-2.5">
-                                                        <div className="w-7 h-7 rounded-lg flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0"
-                                                            style={{ background: `linear-gradient(135deg, ${MAROON}bb, #a63d4d)` }}>
+                                                        <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: MAROON, color: '#fff', ...body, fontSize: '0.66rem', fontWeight: 700 }}>
                                                             {user.full_name?.charAt(0).toUpperCase()}
                                                         </div>
-                                                        <span className="text-sm font-semibold text-slate-700">{user.full_name}</span>
+                                                        <span style={{ ...body, fontSize: '0.82rem', fontWeight: 600, color: INK }}>{user.full_name}</span>
                                                     </div>
                                                 </td>
-                                                <td className="px-5 py-3.5 text-xs text-slate-400">{user.email}</td>
+                                                <td className="px-5 py-3.5" style={{ ...body, fontSize: '0.76rem', color: '#a89890' }}>{user.email}</td>
                                                 <td className="px-5 py-3.5">
-                                                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wide ${badge.cls}`}>
+                                                    <span className="inline-flex items-center gap-1 rounded-full" style={{ ...body, fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', padding: '4px 9px', background: `${badge.color}16`, color: badge.color, border: `1px solid ${badge.color}40` }}>
                                                         {badge.icon}{badge.label}
                                                     </span>
                                                 </td>
-                                                <td className="px-5 py-3.5 text-xs text-slate-500">
+                                                <td className="px-5 py-3.5" style={{ ...body, fontSize: '0.76rem', color: '#6b6058' }}>
                                                     {formatYearLevelLabel(user.year_level)}
                                                 </td>
                                                 <td className="px-5 py-3.5">
+                                                    <span className="inline-flex items-center gap-1.5" style={{ ...body, fontSize: '0.72rem', fontWeight: 600, color: '#6b6058', textTransform: 'capitalize' }}>
+                                                        <span className={user.status === 'flagged' ? 'animate-pulse' : ''} style={{ width: 6, height: 6, borderRadius: '50%', background: STATUS_DOT[user.status] || STATUS_DOT.inactive, flexShrink: 0 }} />
+                                                        {user.status || 'active'}
+                                                    </span>
+                                                </td>
+                                                <td className="px-5 py-3.5">
                                                     <div className="flex items-center justify-center gap-0.5">
-                                                        {/* View Profile — scholars only */}
                                                         {user.role === 'scholar' && (
                                                             <button
                                                                 onClick={() => navigate(`/admin/scholars/${user.id}`)}
                                                                 title="View Profile"
-                                                                className="p-1.5 rounded-lg text-slate-300 transition-all"
-                                                                onMouseEnter={e => { e.currentTarget.style.background = '#F5E8EA'; e.currentTarget.style.color = MAROON; }}
-                                                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#cbd5e1'; }}>
+                                                                className="p-1.5 rounded-lg transition-colors"
+                                                                style={{ color: '#c9b9b0', background: 'none', border: 'none', cursor: 'pointer' }}
+                                                                onMouseEnter={e => { e.currentTarget.style.background = TINT; e.currentTarget.style.color = MAROON; }}
+                                                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#c9b9b0'; }}>
                                                                 <Eye size={13} />
                                                             </button>
                                                         )}
-                                                        {/* QR — scholars only */}
                                                         {user.role === 'scholar' && (
                                                             <button
                                                                 onClick={() => handleViewQR(user)}
                                                                 title="View Event QR (for events/participation only)"
-                                                                className="p-1.5 rounded-lg text-slate-300 hover:bg-blue-50 hover:text-blue-500 transition-all">
+                                                                className="p-1.5 rounded-lg transition-colors"
+                                                                style={{ color: '#c9b9b0', background: 'none', border: 'none', cursor: 'pointer' }}
+                                                                onMouseEnter={e => { e.currentTarget.style.background = `${SAGE}16`; e.currentTarget.style.color = SAGE; }}
+                                                                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#c9b9b0'; }}>
                                                                 <QrCode size={13} />
                                                             </button>
                                                         )}
                                                         <button
                                                             onClick={() => { setSelectedUser(user); setModal('edit'); }}
                                                             title="Edit"
-                                                            className="p-1.5 rounded-lg text-slate-300 hover:bg-amber-50 hover:text-amber-500 transition-all">
+                                                            className="p-1.5 rounded-lg transition-colors"
+                                                            style={{ color: '#c9b9b0', background: 'none', border: 'none', cursor: 'pointer' }}
+                                                            onMouseEnter={e => { e.currentTarget.style.background = `${AMBER}16`; e.currentTarget.style.color = AMBER; }}
+                                                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#c9b9b0'; }}>
                                                             <Edit3 size={13} />
                                                         </button>
                                                         <button
                                                             onClick={() => { setSelectedUser(user); setModal('delete'); }}
                                                             title="Delete"
-                                                            className="p-1.5 rounded-lg text-slate-300 hover:bg-red-50 hover:text-red-500 transition-all">
+                                                            className="p-1.5 rounded-lg transition-colors"
+                                                            style={{ color: '#c9b9b0', background: 'none', border: 'none', cursor: 'pointer' }}
+                                                            onMouseEnter={e => { e.currentTarget.style.background = `${CLAY}16`; e.currentTarget.style.color = CLAY; }}
+                                                            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = '#c9b9b0'; }}>
                                                             <Trash2 size={13} />
                                                         </button>
                                                     </div>
@@ -693,12 +727,11 @@ const UserManagement = () => {
                                         <tr>
                                             <td colSpan="7" className="py-16 text-center">
                                                 <div className="flex flex-col items-center gap-2">
-                                                    <div className="w-12 h-12 rounded-2xl flex items-center justify-center mx-auto mb-1"
-                                                        style={{ background: MAROON_LIGHT }}>
+                                                    <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto mb-1" style={{ background: TINT }}>
                                                         <Users size={22} style={{ color: MAROON }} strokeWidth={1.5} />
                                                     </div>
-                                                    <p className="text-sm font-semibold text-slate-400">No users found</p>
-                                                    <p className="text-xs text-slate-300">Try adjusting your search query</p>
+                                                    <p style={{ ...body, fontSize: '0.85rem', fontWeight: 600, color: '#a89890' }}>No users found</p>
+                                                    <p style={{ ...body, fontSize: '0.76rem', color: '#c9b9b0' }}>Try adjusting your search query</p>
                                                 </div>
                                             </td>
                                         </tr>
@@ -709,13 +742,12 @@ const UserManagement = () => {
                 </div>
 
                 {/* Footer */}
-                <div className="px-6 py-3.5 border-t border-slate-100 flex items-center justify-between"
-                    style={{ background: 'linear-gradient(180deg, #fafafa, white)' }}>
-                    <span className="text-[11px] text-slate-400">
-                        Showing <span className="font-semibold text-slate-600">{filtered.length}</span> of{' '}
-                        <span className="font-semibold text-slate-600">{usersList.length}</span> users
+                <div className="px-6 py-3.5 flex items-center justify-between" style={{ borderTop: `1px solid ${LINE}`, background: IVORY }}>
+                    <span style={{ ...body, fontSize: '0.72rem', color: '#a89890' }}>
+                        Showing <span style={{ fontWeight: 700, color: '#6b6058' }}>{filtered.length}</span> of{' '}
+                        <span style={{ fontWeight: 700, color: '#6b6058' }}>{usersList.length}</span> users
                     </span>
-                    <span className="text-[10px] text-slate-300 font-mono uppercase tracking-widest hidden sm:block">
+                    <span className="hidden sm:block" style={{ ...mono, fontSize: '0.62rem', color: '#c9b9b0', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
                         Data Privacy Certified
                     </span>
                 </div>

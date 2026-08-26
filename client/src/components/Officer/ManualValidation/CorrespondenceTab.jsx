@@ -6,7 +6,28 @@ import { Badge, Skeleton, Empty } from './CommonUI';
 import { statusBadge, sentimentBadge, qualityColor, getMediaItems, fileKind } from '../../../utils/submissionHelpers';
 import { groupByScholarMonth } from '../../../utils/groupSubmissions';
 
+// ── Registrar's Dossier token system — shared visual language with
+// OfficerManualValidation.jsx, so the letter looks the same wherever it's opened.
 const MAROON = '#7f2d3a';
+const GOLD = '#b98b4e';
+const INK = '#241512';
+const PAPER = '#F6EFE4';
+const RULE = '#e8dccb';
+
+const serif = { fontFamily: "'Playfair Display', serif" };
+const sans = { fontFamily: "'DM Sans', sans-serif" };
+
+// Scholar letters sometimes come in with markdown-style bold/heading
+// syntax from copy-pasted text; this is a plain letter view, not a
+// markdown renderer, so we strip the symbols instead of showing raw "**".
+const stripMarkdown = (text) => {
+    if (!text) return text;
+    return text
+        .replace(/\*\*(.*?)\*\*/g, '$1')
+        .replace(/\*(.*?)\*/g, '$1')
+        .replace(/^#{1,6}\s*/gm, '')
+        .replace(/`{1,3}([^`]*)`{1,3}/g, '$1');
+};
 
 const getLetterMedia = (sub) => {
     if (Array.isArray(sub.media) && sub.media.length > 0) {
@@ -36,75 +57,87 @@ export const LetterDocumentCard = ({ sub }) => {
     ].filter((item) => item.url);
 
     return (
-        <div className="bg-white rounded-[2rem] border border-slate-200 shadow-[0_18px_45px_rgba(15,23,42,0.08)] overflow-hidden">
-            <div className="p-8" style={{ fontFamily: "'DM Sans', sans-serif" }}>
-                <div className="mb-8">
-                    <p className="text-[10px] uppercase tracking-[0.35em] text-slate-400 mb-2">Kalinga at Pag-ibig Foundation Inc.</p>
-                    <h2 className="text-3xl font-black leading-tight" style={{ fontFamily: "'Playfair Display', serif", color: '#3f2c27' }}>
-                        Apple Scholars
-                    </h2>
-                    <p className="text-sm text-slate-500">Rodriguez, Rizal</p>
+        <div className="rounded-xl overflow-hidden" style={{ background: '#fff', border: `1px solid ${RULE}` }}>
+            <div className="p-6 sm:p-8" style={sans}>
+
+                {/* letterhead */}
+                <div className="mb-7 pb-5" style={{ borderBottom: `2px solid ${GOLD}40` }}>
+                    <p style={{ ...sans, fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.3em', textTransform: 'uppercase', color: GOLD }}>
+                        Kalinga at Pag-ibig Foundation Inc.
+                    </p>
+                    <h2 style={{ ...serif, fontSize: '1.7rem', fontWeight: 700, color: INK, marginTop: 4 }}>Apple Scholars</h2>
+                    <p style={{ ...sans, fontSize: '0.78rem', color: '#a89890' }}>Rodriguez, Rizal</p>
                 </div>
 
-                <div className="grid gap-4 sm:grid-cols-2 mb-8 text-sm text-slate-700">
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400 mb-2">Name</p>
-                        <p className="font-semibold text-slate-800">{scholarName}</p>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400 mb-2">Year</p>
-                        <p className="font-semibold text-slate-800">{year}</p>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400 mb-2">Course</p>
-                        <p className="font-semibold text-slate-800">{course}</p>
-                    </div>
-                    <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-                        <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400 mb-2">School</p>
-                        <p className="font-semibold text-slate-800">{school}</p>
-                    </div>
+                {/* scholar info grid */}
+                <div className="grid gap-3 sm:grid-cols-2 mb-7">
+                    {[
+                        { label: 'Name', value: scholarName },
+                        { label: 'Year', value: year },
+                        { label: 'Course', value: course },
+                        { label: 'School', value: school },
+                    ].map((f) => (
+                        <div key={f.label} className="rounded-lg px-4 py-3" style={{ background: PAPER, border: `1px solid ${RULE}` }}>
+                            <p style={{ ...sans, fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#b3a89a', marginBottom: 4 }}>
+                                {f.label}
+                            </p>
+                            <p style={{ ...sans, fontSize: '0.85rem', fontWeight: 700, color: INK, wordBreak: 'break-word' }}>
+                                {f.value}
+                            </p>
+                        </div>
+                    ))}
                 </div>
 
-                <div className="space-y-4 mb-8 text-sm text-slate-700 leading-relaxed">
-                    <p className="text-slate-500">{dateLabel}</p>
-                    <p className="font-semibold">Dear Kalinga,</p>
-                    <div className="whitespace-pre-line text-slate-700">
-                        {sub.letter_content || <span className="italic text-slate-400">No letter content submitted.</span>}
+                {/* letter body */}
+                <div className="mb-7" style={{ ...sans, fontSize: '0.85rem', lineHeight: 1.75, color: '#4b3f38' }}>
+                    <p style={{ color: '#a89890', marginBottom: 12 }}>{dateLabel}</p>
+                    <p style={{ fontWeight: 700, color: INK, marginBottom: 12 }}>Dear Kalinga,</p>
+                    <div className="whitespace-pre-line" style={{ marginBottom: 16 }}>
+                        {sub.letter_content
+                            ? stripMarkdown(sub.letter_content)
+                            : <span style={{ fontStyle: 'italic', color: '#c9b9b0' }}>No letter content submitted.</span>}
                     </div>
-                    <p className="font-semibold">Your scholar,</p>
-                    <p className="text-lg font-black" style={{ fontFamily: "'Playfair Display', serif" }}>{scholarName}</p>
+                    <p style={{ fontWeight: 700, color: INK, marginBottom: 2 }}>Your scholar,</p>
+                    <p style={{ ...serif, fontSize: '1.15rem', fontWeight: 700, color: MAROON }}>{scholarName}</p>
                 </div>
 
                 {(media.length > 0 || attachments.length > 0) && (
-                    <div className="space-y-6 mb-6">
-                        <div>
-                            <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400 mb-4 font-black">Documentation</p>
-                            <div className="grid gap-4 sm:grid-cols-2">
-                                {media.map((item, index) => (
-                                    <div key={index} className="rounded-3xl overflow-hidden border border-slate-200 bg-slate-50">
-                                        {fileKind(item.path) === 'image' ? (
-                                            <img src={item.path} alt={item.description || `Documentation ${index + 1}`}
-                                                className="w-full h-40 object-cover" />
-                                        ) : (
-                                            <div className="flex h-40 items-center justify-center bg-slate-100 text-slate-500">
-                                                <span className="text-sm font-semibold">View file</span>
+                    <div className="space-y-5">
+                        {media.length > 0 && (
+                            <div>
+                                <p style={{ ...sans, fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.2em', textTransform: 'uppercase', color: GOLD, marginBottom: 10 }}>
+                                    Documentation
+                                </p>
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    {media.map((item, index) => (
+                                        <div key={index} className="rounded-lg overflow-hidden" style={{ border: `1px solid ${RULE}`, background: PAPER }}>
+                                            {fileKind(item.path) === 'image' ? (
+                                                <img src={item.path} alt={item.description || `Documentation ${index + 1}`}
+                                                    className="w-full h-36 object-cover" />
+                                            ) : (
+                                                <div className="flex h-36 items-center justify-center" style={{ color: '#a89890' }}>
+                                                    <span style={{ ...sans, fontSize: '0.78rem', fontWeight: 700 }}>View file</span>
+                                                </div>
+                                            )}
+                                            <div className="px-3 py-2" style={{ ...sans, fontSize: '0.68rem', color: '#a89890', borderTop: `1px solid ${RULE}` }}>
+                                                {item.description || `Documentation ${index + 1}`}
                                             </div>
-                                        )}
-                                        <div className="p-3 text-xs text-slate-500">
-                                            {item.description || `Documentation ${index + 1}`}
                                         </div>
-                                    </div>
-                                ))}
+                                    ))}
+                                </div>
                             </div>
-                        </div>
+                        )}
 
                         {attachments.length > 0 && (
-                            <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                                <p className="text-[10px] uppercase tracking-[0.25em] text-slate-400 mb-3 font-black">Additional attachments</p>
-                                <div className="space-y-3">
+                            <div className="rounded-lg px-4 py-4" style={{ background: PAPER, border: `1px solid ${RULE}` }}>
+                                <p style={{ ...sans, fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.2em', textTransform: 'uppercase', color: GOLD, marginBottom: 10 }}>
+                                    Additional Attachments
+                                </p>
+                                <div className="space-y-2">
                                     {attachments.map((item, index) => (
                                         <a key={index} href={item.url} target="_blank" rel="noreferrer"
-                                            className="block rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 hover:bg-slate-50 transition-colors">
+                                            className="flex items-center gap-2 rounded-md px-3.5 py-2.5 transition-opacity hover:opacity-80"
+                                            style={{ ...sans, fontSize: '0.78rem', fontWeight: 700, color: MAROON, background: '#fff', border: `1px solid ${RULE}` }}>
                                             {item.label}
                                         </a>
                                     ))}
@@ -114,9 +147,10 @@ export const LetterDocumentCard = ({ sub }) => {
                     </div>
                 )}
             </div>
-            <div className="border-t border-slate-200 bg-slate-50 px-6 py-4 text-[10px] uppercase tracking-[0.25em] text-slate-500 flex items-center justify-between">
-                <span>Page 1</span>
-                <span>Kalinga at Pag-ibig Foundation</span>
+
+            <div className="px-6 sm:px-8 py-3.5 flex items-center justify-between" style={{ borderTop: `1px solid ${RULE}`, background: PAPER }}>
+                <span style={{ ...sans, fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#b3a89a' }}>Page 1</span>
+                <span style={{ ...sans, fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.2em', textTransform: 'uppercase', color: '#b3a89a' }}>Kalinga at Pag-ibig Foundation</span>
             </div>
         </div>
     );

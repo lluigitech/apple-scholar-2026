@@ -163,8 +163,6 @@ const getAuditReport = async (filters) => {
     values.push(filters.date_to);
   }
 
-  const clause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-
   const [rows] = await promiseDb.query(
     `SELECT
        al.id,
@@ -176,9 +174,11 @@ const getAuditReport = async (filters) => {
        al.module,
        al.details,
        al.ip_address
+      ,al.result
      FROM audit_logs al
      JOIN users u ON u.id = al.user_id
-     ${clause}
+     WHERE u.role IN ('admin', 'officer', 'staff')
+       ${conditions.length ? 'AND ' + conditions.join(' AND ') : ''}
      ORDER BY al.created_at DESC
      LIMIT 5000`,
     values

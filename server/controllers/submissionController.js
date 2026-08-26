@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const db = require('../config/db');
+const { getAssignedYearLevels, applyOfficerYearLevelFilter } = require('../utils/officerAssignments');
 const cloudinary = require('../config/cloudinary');
 const nodemailer = require('nodemailer');
 const letterPdfGenerator = require('../services/letterPdfGenerator');
@@ -32,6 +33,57 @@ const normalizeSubmissionType = (value, { hasLetter, hasReportCard, hasCor }) =>
 };
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+const folderForField = {
+    report_card: 'report-cards',
+    cor: 'cor',
+    media: 'other-documents',
+    proof: 'grades-proof',
+};
+
+const uploadBufferToCloudinary = (file) => new Promise((resolve, reject) => {
+    const extension = path.extname(file.originalname || '').toLowerCase();
+    const baseName = path.parse(file.originalname || 'upload').name
+        .replace(/[^a-zA-Z0-9_-]/g, '-')
+        .slice(0, 80) || 'upload';
+    const uploader = cloudinary.uploader.upload_stream({
+        folder: `apple-scholar/submissions/${folderForField[file.fieldname] || 'other'}`,
+        resource_type: 'auto',
+        type: 'authenticated',
+        public_id: `${Date.now()}-${baseName}`,
+        format: extension.slice(1),
+    }, (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+    });
+    uploader.end(file.buffer);
+});
+
+const uploadPermanentFiles = async (files) => {
+    await Promise.all(files.map(async (file) => {
+        const asset = await uploadBufferToCloudinary(file);
+        file.path = asset.secure_url;
+        file.cloudinaryAsset = asset;
+    }));
+};
+
+const registerFileAssets = async (scholarId, files) => {
+    for (const file of files) {
+        const asset = file.cloudinaryAsset;
+        if (!asset?.secure_url || !asset.public_id) continue;
+        await new Promise((resolve) => {
+            db.query(
+                `INSERT INTO file_assets (scholar_id, file_url, public_id, resource_type, file_format)
+                 VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE public_id = VALUES(public_id), resource_type = VALUES(resource_type), file_format = VALUES(file_format)`,
+                [scholarId, asset.secure_url, asset.public_id, asset.resource_type || 'image', asset.format || null],
+                (err) => {
+                    if (err) console.error('File asset registry error:', err.message);
+                    resolve();
+                }
+            );
+        });
+    }
+};
 
 const getTransporter = () => {
     const host = process.env.SMTP_HOST;
@@ -163,7 +215,11 @@ exports.analyzeLetter = async (req, res) => {
 };
 
 // GET LETTERS FOR CORRESPONDENCE EVALUATOR
-exports.getLetters = (req, res) => {
+exports.getLetters = async (req, res) => {
+    const conditions = ["s.submission_type = 'letter'"];
+    const values = [];
+    await applyOfficerYearLevelFilter(req, conditions, values);
+
     const sql = `
         SELECT
             s.id,
@@ -180,11 +236,11 @@ exports.getLetters = (req, res) => {
             u.year_level
         FROM submissions s
         LEFT JOIN users u ON s.scholar_id = u.scholar_id
-        WHERE s.submission_type = 'letter'
+        WHERE ${conditions.join(' AND ')}
         ORDER BY s.submitted_at DESC
     `;
 
-    db.query(sql, (err, rows) => {
+    db.query(sql, values, (err, rows) => {
         if (err) {
             console.error('Error fetching letters:', err);
             const detailObj = {
@@ -225,6 +281,9 @@ exports.submitCompliance = async (req, res) => {
     } = req.body;
 
     try {
+        const uploadedFiles = Object.values(req.files || {}).flat();
+        await uploadPermanentFiles(uploadedFiles);
+        await registerFileAssets(scholar_id, uploadedFiles);
         const reportCardPath = req.files?.['report_card']?.[0]?.path || null;
         const corPath = req.files?.['cor']?.[0]?.path || null;
         const mediaFiles = req.files?.['media'] || [];
@@ -412,11 +471,52 @@ exports.previewCloudinaryFile = async (req, res) => {
 
     try {
         // Basic safety check: only allow proxying actual Cloudinary URLs
-        if (!url.includes('res.cloudinary.com')) {
+        const parsedUrl = new URL(url);
+        const configuredCloudName = process.env.CLOUDINARY_CLOUD_NAME;
+        if (parsedUrl.protocol !== 'https:' || parsedUrl.hostname !== 'res.cloudinary.com' || !configuredCloudName || parsedUrl.pathname.split('/')[1] !== configuredCloudName) {
             return res.status(400).json({ error: 'Invalid file source' });
         }
 
-        const remoteRes = await fetch(url, { redirect: 'follow' });
+        const fileRows = await new Promise((resolve, reject) => {
+            db.query(
+                `SELECT scholar_id FROM submissions
+                 WHERE report_card_path = ? OR cor_path = ? OR generated_pdf_path = ?
+                 UNION ALL SELECT s.scholar_id
+                 FROM submission_media m
+                 JOIN submissions s ON s.id = m.submission_id
+                 WHERE m.file_path = ?
+                 UNION ALL SELECT scholar_id FROM grades WHERE proof_path = ?
+                 LIMIT 1`,
+                [url, url, url, url, url],
+                (queryErr, rows) => queryErr ? reject(queryErr) : resolve(rows)
+            );
+        });
+        if (!fileRows.length) return res.status(404).json({ error: 'File is not registered in the system' });
+        if (req.user?.role === 'scholar' && fileRows[0].scholar_id !== req.user.scholar_id) {
+            return res.status(403).json({ error: 'You are not allowed to preview this file' });
+        }
+
+        const assetRows = await new Promise((resolve, reject) => {
+            db.query('SELECT public_id, resource_type, file_format, scholar_id FROM file_assets WHERE file_url = ? LIMIT 1', [url], (queryErr, rows) => queryErr ? reject(queryErr) : resolve(rows));
+        });
+        let fetchUrl = url;
+        if (assetRows.length) {
+            if (req.user?.role === 'scholar' && assetRows[0].scholar_id !== req.user.scholar_id) {
+                return res.status(403).json({ error: 'You are not allowed to preview this file' });
+            }
+            fetchUrl = cloudinary.utils.private_download_url(
+                assetRows[0].public_id,
+                assetRows[0].file_format || 'bin',
+                {
+                    resource_type: assetRows[0].resource_type || 'image',
+                    type: 'authenticated',
+                    expires_at: Math.floor(Date.now() / 1000) + 600,
+                    attachment: false,
+                }
+            );
+        }
+
+        const remoteRes = await fetch(fetchUrl, { redirect: 'follow' });
 
         if (!remoteRes.ok) {
             return res.status(remoteRes.status).json({ error: 'File not found on Cloudinary' });
@@ -509,7 +609,7 @@ exports.getScholarSubmissions = (req, res) => {
     `;
 
     const gradesSql = `
-        SELECT g.*, g.verification_status AS status, g.officer_comment AS staff_comment, u.full_name
+        SELECT g.*, g.verification_status AS status, g.officer_comment AS staff_comment, u.full_name, u.year_level
         FROM grades g
         LEFT JOIN users u ON g.scholar_id = u.scholar_id
         ORDER BY g.created_at DESC
@@ -527,6 +627,16 @@ exports.getScholarSubmissions = (req, res) => {
                 return res.status(500).json({ error: 'Error fetching grades' });
             }
 
+            const filterRowsForOfficer = async () => {
+                if (req.user?.role !== 'officer') return { submissions, gradeRows };
+                const levels = await getAssignedYearLevels(req.user.id);
+                return {
+                    submissions: submissions.filter(row => levels.includes(row.year_level)),
+                    gradeRows: gradeRows.filter(row => levels.includes(row.year_level)),
+                };
+            };
+
+            filterRowsForOfficer().then(({ submissions: visibleSubmissions, gradeRows: visibleGrades }) => {
             const scholars = {};
 
             const ensureScholar = (scholar_id, full_name) => {
@@ -548,7 +658,7 @@ exports.getScholarSubmissions = (req, res) => {
             };
 
             // --- group submissions rows by scholar + type ---
-            submissions.forEach(row => {
+            visibleSubmissions.forEach(row => {
                 const bucket = ensureScholar(row.scholar_id, row.full_name);
 
                 const media = (row.media_raw || '')
@@ -596,7 +706,7 @@ exports.getScholarSubmissions = (req, res) => {
 
             // --- group grades by scholar + semester (reuse getAllGrades logic) ---
             const semMap = {};
-            gradeRows.forEach(row => {
+            visibleGrades.forEach(row => {
                 const key = `${row.scholar_id}|${row.semester}|${row.academic_year}`;
                 if (!semMap[key]) {
                     semMap[key] = {
@@ -634,6 +744,7 @@ exports.getScholarSubmissions = (req, res) => {
             });
 
             res.json(Object.values(scholars));
+            }).catch(() => res.status(500).json({ error: 'Failed to resolve officer assignments.' }));
         });
     });
 };
@@ -645,9 +756,17 @@ exports.reviewSubmission = (req, res) => {
     const { id } = req.params;
     const { status, staff_comment } = req.body;
 
-    const sql = "UPDATE submissions SET status = ?, officer_comment = ? WHERE id = ?";
-    db.query(sql, [status, staff_comment, id], (err) => {
+    const sql = `UPDATE submissions s
+        JOIN users u ON u.scholar_id = s.scholar_id
+        SET s.status = ?, s.officer_comment = ?
+        WHERE s.id = ?
+          AND (? <> 'officer' OR EXISTS (
+              SELECT 1 FROM officer_year_level_assignments oya
+              WHERE oya.officer_id = ? AND oya.year_level = u.year_level
+          ))`;
+    db.query(sql, [status, staff_comment, id, req.user.role, req.user.id], (err, result) => {
         if (err) return res.status(500).json({ error: 'Error updating submission' });
+        if (!result.affectedRows) return res.status(403).json({ error: 'This scholar is not assigned to your officer account.' });
         res.json({ message: 'Submission reviewed successfully' });
 
         // Fire-and-forget: notify scholar by email about the review decision
@@ -878,7 +997,7 @@ exports.checkGradesLocked = (req, res) => {
 // so the resubmission fully replaces them, then the new rows are inserted
 // with a fresh 'pending' status.
 // scholar_id comes from the verified JWT (req.user), never trusted from the body.
-// req.file.path is the Cloudinary secure URL for the proof photo.
+// req.file is validated in memory before its buffer is stored in Cloudinary.
 exports.submitGrades = (req, res) => {
     const scholar_id = req.user.scholar_id;
     const { semester, academic_year } = req.body;
@@ -897,7 +1016,33 @@ exports.submitGrades = (req, res) => {
         return res.status(400).json({ error: 'A photo of your Report Card / Grade Sheet is required as proof.' });
     }
 
-    const proofPath = req.file.path;
+    for (const subject of subjects) {
+        if (!subject.subject_name || !subject.units || subject.grade === undefined) {
+            return res.status(400).json({ error: 'Each subject needs subject_name, units, and grade' });
+        }
+        if (!Number.isFinite(Number(subject.units)) || Number(subject.units) <= 0) {
+            return res.status(400).json({ error: `Invalid units for ${subject.subject_name}` });
+        }
+        if (!Number.isFinite(Number(subject.grade))) {
+            return res.status(400).json({ error: `Invalid grade for ${subject.subject_name}` });
+        }
+    }
+
+    uploadBufferToCloudinary(req.file)
+        .then(async (asset) => {
+            req.file.path = asset.secure_url;
+            req.file.cloudinaryAsset = asset;
+            await registerFileAssets(scholar_id, [req.file]);
+            return saveGradesWithProofPath(req, res, scholar_id, semester, academic_year, subjects, asset.secure_url);
+        })
+        .catch((uploadError) => {
+            console.error('Grade proof upload error:', uploadError);
+            res.status(502).json({ error: 'Could not securely store the uploaded proof file' });
+        });
+
+};
+
+const saveGradesWithProofPath = (req, res, scholar_id, semester, academic_year, subjects, proofPath) => {
 
     db.query(
         'SELECT year_level, verification_status AS status FROM users u LEFT JOIN grades g ON g.scholar_id = u.scholar_id AND g.semester = ? AND g.academic_year = ? WHERE u.scholar_id = ? LIMIT 1',

@@ -11,6 +11,7 @@ export default function AttendanceReportsTab({
   setFilters,
   onFetch,
   onExport,
+  onExportPdf,
 }) {
   const handleFilterChange = (key, value) => {
     setFilters(prev => ({ ...prev, [key]: value }));
@@ -152,6 +153,27 @@ export default function AttendanceReportsTab({
             }}
           >
             <Download className="w-3.5 h-3.5" /> Export
+          </button>
+          <button
+            onClick={onExportPdf}
+            disabled={data.length === 0}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              padding: '10px 16px',
+              borderRadius: 8,
+              border: 'none',
+              background: MAROON,
+              color: '#fff',
+              fontFamily: "'DM Sans',sans-serif",
+              fontSize: '0.875rem',
+              fontWeight: 600,
+              cursor: data.length > 0 ? 'pointer' : 'not-allowed',
+              opacity: data.length > 0 ? 1 : 0.5,
+            }}
+          >
+            <FileText className="w-3.5 h-3.5" /> Export PDF
           </button>
         </div>
       </div>

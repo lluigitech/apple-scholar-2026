@@ -4,12 +4,10 @@ import ComplianceSummaryTab from '../../components/Admin/Reports/ComplianceSumma
 import MonthlyReportsTab from '../../components/Admin/Reports/MonthlyReportsTab';
 import AttendanceReportsTab from '../../components/Admin/Reports/AttendanceReportsTab';
 import AdminReportDetail from '../../components/Admin/AdminReportDetail';
+import { buildSummaryRows, currentPeriodLabel, downloadReportSummaryPdf } from '../../utils/reportPdfExport';
 
 const API_BASE = (import.meta.env?.VITE_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
 const API = API_BASE.endsWith('/api') ? API_BASE : `${API_BASE}/api`;
-const MAROON = '#802B36';
-const MAROON_LIGHT = '#F5E8EA';
-
 const authHeaders = () => ({
   headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
 });
@@ -29,6 +27,7 @@ const tabItems = [
   { key: 'compliance', label: 'Compliance Summary' },
   { key: 'monthly-reports', label: 'Monthly Reports' },
   { key: 'attendance', label: 'Attendance Reports' },
+  { key: 'donor', label: 'Donor Impact Report' },
 ];
 
 export default function AdminReports() {
@@ -56,6 +55,11 @@ export default function AdminReports() {
   const [attendanceError, setAttendanceError] = useState('');
   const [attendanceFetched, setAttendanceFetched] = useState(false);
   const [attendanceFilters, setAttendanceFilters] = useState({ date_from: '', date_to: '', status: 'all' });
+  const [donorRows, setDonorRows] = useState([]);
+  const [donorLoading, setDonorLoading] = useState(false);
+  const [donorError, setDonorError] = useState('');
+  const [donorFetched, setDonorFetched] = useState(false);
+  const [donorFilters, setDonorFilters] = useState({ date_from: '', date_to: '' });
 
   // ── Fetch Functions ──
   const fetchCompliance = async () => {
@@ -130,6 +134,41 @@ export default function AdminReports() {
     }
   };
 
+  const fetchDonorReport = async () => {
+    setDonorLoading(true);
+    setDonorError('');
+    try {
+      const params = { type: 'donor' };
+      if (donorFilters.date_from) params.date_from = donorFilters.date_from;
+      if (donorFilters.date_to) params.date_to = donorFilters.date_to;
+      const res = await axios.get(`${API}/export/preview`, { ...authHeaders(), params });
+      setDonorRows(res.data?.data || []);
+      setDonorFetched(true);
+    } catch (err) {
+      console.error(err);
+      setDonorError('Failed to load donor impact data. Check your connection or login session.');
+    } finally {
+      setDonorLoading(false);
+    }
+  };
+
+  const downloadDonorReport = async (format) => {
+    try {
+      const params = { type: 'donor' };
+      if (donorFilters.date_from) params.date_from = donorFilters.date_from;
+      if (donorFilters.date_to) params.date_to = donorFilters.date_to;
+      const response = await axios.get(`${API}/export/${format}`, { ...authHeaders(), params, responseType: 'blob' });
+      const url = URL.createObjectURL(response.data);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `donor_impact_report.${format === 'excel' ? 'xlsx' : 'pdf'}`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setDonorError(`Failed to export donor report as ${format.toUpperCase()}.`);
+    }
+  };
+
   const exportAttendanceCSV = (data) => {
     const rows = [['Scholar', 'Scholar ID', 'Year Level', 'Duty', 'Date', 'Location', 'Status', 'Method', 'Marked At']];
     data.forEach(a =>
@@ -161,25 +200,54 @@ export default function AdminReports() {
     ).catch(err => console.warn('Audit log failed:', err));
   };
 
+  const exportAdminPdf = async () => {
+    try {
+      const sourceRows = activeTab === 'attendance' ? attendanceData : complianceRows;
+      const rows = buildSummaryRows(sourceRows, activeTab === 'attendance'
+        ? row => row.status === 'present'
+        : row => Number(row.completionRate) >= 100);
+      await downloadReportSummaryPdf({
+        role: 'admin',
+        reportTitle: activeTab === 'attendance' ? 'Attendance Reports' : 'Compliance Summary',
+        periodLabel: currentPeriodLabel(),
+        rows,
+      });
+    } catch (err) {
+      console.error(err);
+      alert(err.response?.data?.message || 'Failed to generate the PDF report.');
+    }
+  };
+
   // ── useEffect hooks ──
   useEffect(() => {
-    if (activeTab === 'compliance' && !complianceFetched) {
-      fetchCompliance();
-    }
+    const initialize = async () => {
+      if (activeTab === 'compliance' && !complianceFetched) await fetchCompliance();
+    };
+    initialize();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
   useEffect(() => {
-    if (activeTab === 'monthly-reports') {
-      fetchMonthlyReports();
-    }
+    const initialize = async () => {
+      if (activeTab === 'donor' && !donorFetched) await fetchDonorReport();
+    };
+    initialize();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
+
+  useEffect(() => {
+    const initialize = async () => {
+      if (activeTab === 'monthly-reports') await fetchMonthlyReports();
+    };
+    initialize();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, monthlyFilterMonth, monthlyFilterYearLevel]);
 
   useEffect(() => {
-    if (activeTab === 'attendance' && !attendanceFetched) {
-      fetchAttendanceReports();
-    }
+    const initialize = async () => {
+      if (activeTab === 'attendance' && !attendanceFetched) await fetchAttendanceReports();
+    };
+    initialize();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
@@ -233,6 +301,7 @@ export default function AdminReports() {
                   if (tab.key === 'attendance' && !attendanceFetched) {
                     fetchAttendanceReports();
                   }
+                  if (tab.key === 'donor' && !donorFetched) fetchDonorReport();
                 }}
                 className={`rounded-2xl px-4 py-3 text-sm font-semibold transition ${
                   activeTab === tab.key
@@ -257,6 +326,7 @@ export default function AdminReports() {
                 loading={complianceLoading}
                 error={complianceError}
                 onRefresh={fetchCompliance}
+                onGenerate={exportAdminPdf}
               />
             )}
 
@@ -286,7 +356,36 @@ export default function AdminReports() {
                 setFilters={setAttendanceFilters}
                 onFetch={fetchAttendanceReports}
                 onExport={exportAttendanceCSV}
+                onExportPdf={exportAdminPdf}
               />
+            )}
+
+            {activeTab === 'donor' && (
+              <div className="space-y-5">
+                <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                  <div>
+                    <h2 className="text-xl font-black text-slate-900">Donor Impact Report</h2>
+                    <p className="mt-1 text-sm text-slate-500">Scholar progress, verified requirements, service participation, and documented impact.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button type="button" onClick={() => downloadDonorReport('excel')} className="rounded-xl bg-[#7f2d3a] px-4 py-2 text-sm font-semibold text-white">Export Excel</button>
+                    <button type="button" onClick={() => downloadDonorReport('pdf')} className="rounded-xl border border-[#7f2d3a] px-4 py-2 text-sm font-semibold text-[#7f2d3a]">Export PDF</button>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-end gap-3 rounded-xl bg-slate-50 p-4">
+                  <label className="text-xs font-semibold text-slate-600">From<input type="date" value={donorFilters.date_from} onChange={e => setDonorFilters(current => ({ ...current, date_from: e.target.value }))} className="mt-1 block rounded-lg border border-slate-200 px-3 py-2 text-sm" /></label>
+                  <label className="text-xs font-semibold text-slate-600">To<input type="date" value={donorFilters.date_to} onChange={e => setDonorFilters(current => ({ ...current, date_to: e.target.value }))} className="mt-1 block rounded-lg border border-slate-200 px-3 py-2 text-sm" /></label>
+                  <button type="button" onClick={fetchDonorReport} className="rounded-lg bg-slate-800 px-4 py-2 text-sm font-semibold text-white">Apply Filters</button>
+                </div>
+                {donorError && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{donorError}</p>}
+                {donorLoading ? <p className="py-8 text-center text-sm text-slate-500">Loading donor impact data...</p> : (
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="w-full min-w-[1000px] text-left text-sm"><thead className="bg-slate-50 text-xs uppercase text-slate-500"><tr>
+                      <th className="p-3">Scholar</th><th className="p-3">Course</th><th className="p-3">Year</th><th className="p-3">GPA/GWA</th><th className="p-3">Reports</th><th className="p-3">Verified</th><th className="p-3">Requirements</th><th className="p-3">Duty Hours</th><th className="p-3">Activities</th><th className="p-3">Photos</th>
+                    </tr></thead><tbody>{!donorRows.length && <tr><td colSpan="10" className="p-8 text-center text-slate-500">No donor report records found.</td></tr>}{donorRows.map(row => <tr key={`${row.scholar_id || row.scholar}-${row.year_level}`} className="border-t border-slate-100"><td className="p-3 font-semibold">{row.scholar || '—'}</td><td className="p-3">{row.course || '—'}</td><td className="p-3">{row.year_level || '—'}</td><td className="p-3">{row.gpa ?? '—'}</td><td className="p-3">{row.reports_submitted ?? 0}</td><td className="p-3">{row.reports_verified ?? 0}</td><td className="p-3">{row.requirements_verified ?? 0}/{row.requirements_submitted ?? 0}</td><td className="p-3">{row.total_duty_hours ?? 0}</td><td className="p-3">{row.activities_attended ?? 0}</td><td className="p-3">{row.activities_with_photos ?? 0}</td></tr>)}</tbody></table>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </section>

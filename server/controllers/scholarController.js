@@ -1,4 +1,6 @@
 const db = require('../config/db');
+const ExcelJS = require('exceljs');
+const { logAuditEvent } = require('../utils/auditLogger');
 const { calculateComplianceScore, getAcademicTier, normalizeAcademicGrade } = require('../utils/complianceLogger');
 
 const ALL_LEVELS = [
@@ -508,4 +510,116 @@ exports.checkInToDuty = (req, res) => {
             });
         });
     });
+};
+
+exports.getDataConsent = (req, res) => {
+    db.query('SELECT purpose, consented, consented_at, revoked_at FROM data_consents WHERE user_id = ? AND purpose = ?', [req.user.id, 'scholar_data_collection'], (err, rows) => {
+        if (err) return res.status(500).json({ error: 'Failed to load data consent.' });
+        res.json(rows[0] || { purpose: 'scholar_data_collection', consented: 0, consented_at: null, revoked_at: null });
+    });
+};
+
+exports.updateDataConsent = async (req, res) => {
+    const consented = req.body?.consented === true;
+    const sql = `INSERT INTO data_consents (user_id, purpose, consented, consented_at, revoked_at)
+        VALUES (?, 'scholar_data_collection', ?, IF(? = 1, NOW(), NULL), IF(? = 1, NULL, NOW()))
+        ON DUPLICATE KEY UPDATE consented = VALUES(consented), consented_at = VALUES(consented_at), revoked_at = VALUES(revoked_at)`;
+    db.query(sql, [req.user.id, consented ? 1 : 0, consented ? 1 : 0, consented ? 1 : 0], async (err) => {
+        if (err) return res.status(500).json({ error: 'Failed to update data consent.' });
+        await logAuditEvent({ req, action: consented ? 'consent' : 'revoke', module: 'Data Privacy', details: `Scholar data collection consent ${consented ? 'granted' : 'revoked'}`, result: 'success' });
+        res.json({ consented });
+    });
+};
+
+exports.getPrivacyRequests = (req, res) => {
+    db.query(
+        `SELECT id, request_type, status, requested_at, processed_at, notes
+         FROM privacy_requests WHERE user_id = ? ORDER BY requested_at DESC`,
+        [req.user.id],
+        (err, rows) => {
+            if (err) return res.status(500).json({ error: 'Failed to load privacy requests.' });
+            res.json(rows);
+        }
+    );
+};
+
+exports.createPrivacyRequest = async (req, res) => {
+    const requestType = req.body?.request_type;
+    if (!['export', 'deletion'].includes(requestType)) {
+        return res.status(400).json({ error: 'Request type must be export or deletion.' });
+    }
+
+    db.query(
+        `SELECT id FROM privacy_requests
+         WHERE user_id = ? AND request_type = ? AND status = 'pending' LIMIT 1`,
+        [req.user.id, requestType],
+        (checkErr, existing) => {
+            if (checkErr) return res.status(500).json({ error: 'Failed to check existing privacy requests.' });
+            if (existing.length) return res.status(409).json({ error: 'A request of this type is already pending.' });
+
+            db.query(
+                'INSERT INTO privacy_requests (user_id, request_type) VALUES (?, ?)',
+                [req.user.id, requestType],
+                async (insertErr, result) => {
+                    if (insertErr) return res.status(500).json({ error: 'Failed to create privacy request.' });
+                    await logAuditEvent({ req, action: `privacy_${requestType}_request`, module: 'Data Privacy', details: `Scholar requested ${requestType} of personal data`, result: 'success' });
+                    res.status(201).json({ id: result.insertId, request_type: requestType, status: 'pending' });
+                }
+            );
+        }
+    );
+};
+
+const queryRows = (sql, params = []) => new Promise((resolve, reject) => {
+    db.query(sql, params, (err, rows) => err ? reject(err) : resolve(rows));
+});
+
+exports.exportMyData = async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const scholarId = req.user.scholar_id;
+        const [profile, submissions, grades, attendance, consent, requests] = await Promise.all([
+            queryRows(`SELECT id, scholar_id, full_name, email, role, year_level, age, phone, address, course, school, status, created_at FROM users WHERE id = ? AND role = 'scholar'`, [userId]),
+            queryRows(`SELECT id, submission_type, letter_content, sentiment_score, sentiment_label, report_card_path, cor_path, service_activity, service_hours, service_date, quality_score, quality_status, status, officer_comment, submitted_at, reviewed_at FROM submissions WHERE scholar_id = ? ORDER BY submitted_at DESC`, [scholarId]),
+            queryRows(`SELECT semester, academic_year, subject_name, units, grade, grade_scale, proof_path, verification_status, officer_comment, created_at FROM grades WHERE scholar_id = ? ORDER BY created_at DESC`, [scholarId]),
+            queryRows(`SELECT da.duty_id, d.title AS duty, d.location, d.duty_date, da.status, da.method, da.marked_at, da.is_makeup FROM duty_attendance da LEFT JOIN duties d ON d.id = da.duty_id WHERE da.scholar_id = ? ORDER BY da.marked_at DESC`, [scholarId]),
+            queryRows(`SELECT purpose, consented, consented_at, revoked_at FROM data_consents WHERE user_id = ? ORDER BY purpose`, [userId]),
+            queryRows(`SELECT id, request_type, status, requested_at, processed_at, notes FROM privacy_requests WHERE user_id = ? ORDER BY requested_at DESC`, [userId]),
+        ]);
+
+        if (!profile.length) return res.status(404).json({ error: 'Scholar profile not found.' });
+
+        const workbook = new ExcelJS.Workbook();
+        workbook.creator = 'Apple Scholar System';
+        workbook.created = new Date();
+        const addSheet = (name, rows) => {
+            const sheet = workbook.addWorksheet(name);
+            const columns = rows.length ? Object.keys(rows[0]) : [];
+            sheet.columns = columns.map(key => ({ header: key, key, width: Math.min(Math.max(key.length + 4, 16), 32) }));
+            rows.forEach(row => sheet.addRow(row));
+            if (columns.length) {
+                sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+                sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF7F2D3A' } };
+                sheet.views = [{ state: 'frozen', ySplit: 1 }];
+                sheet.autoFilter = { from: 'A1', to: `${String.fromCharCode(64 + columns.length)}1` };
+            }
+        };
+
+        addSheet('Profile', profile);
+        addSheet('Submissions', submissions);
+        addSheet('Grades', grades);
+        addSheet('Attendance', attendance);
+        addSheet('Consent', consent);
+        addSheet('Privacy Requests', requests);
+
+        await logAuditEvent({ req, action: 'export', module: 'Data Privacy', details: `Scholar exported personal data (${scholarId})`, result: 'success' });
+        const filename = `apple-scholar-data-export-${scholarId}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        await workbook.xlsx.write(res);
+        res.end();
+    } catch (err) {
+        console.error('Scholar data export error:', err);
+        res.status(500).json({ error: 'Failed to generate your data export.' });
+    }
 };

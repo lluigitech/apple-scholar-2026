@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Mail, CheckCircle, XCircle, Clock, AlertTriangle,
   MessageSquare, TrendingUp, Eye, ChevronDown, ChevronUp, Download
 } from 'lucide-react';
 
-// ─── Mock Data ─────────────────────────────────────────────────────────────
+/* Legacy mock data retained only as historical reference; the page uses the API below.
 
 const letters = [
   {
@@ -142,7 +142,7 @@ const letters = [
     staffComment: null,
     riskFlag: false,
   },
-];
+]; */
 
 // ─── Config Maps ───────────────────────────────────────────────────────────
 
@@ -377,13 +377,94 @@ function LetterCard({ letter, onStatusChange }) {
 // ─── Main Export ───────────────────────────────────────────────────────────
 
 import axios from 'axios';
+
+const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/+$/, '').replace(/\/api$/, '');
+const authConfig = () => ({ headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+
+const normalizeStatus = status => status === 'rejected' ? 'returned' : status || 'pending';
+const formatDate = value => value ? new Date(value).toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' }) : 'Unknown date';
+const getWordCount = text => String(text || '').trim().split(/\s+/).filter(Boolean).length;
+const getSentiment = (label, score) => {
+  const normalizedLabel = String(label || '').toLowerCase();
+  const numericScore = Number(score);
+  const scoreOutOf100 = numericScore >= -1 && numericScore <= 1
+    ? Math.round((numericScore + 1) * 50)
+    : Math.round(Math.max(0, Math.min(100, numericScore || 0)));
+  const sentiment = ['positive', 'negative', 'neutral'].includes(normalizedLabel)
+    ? normalizedLabel
+    : scoreOutOf100 >= 70 ? 'positive' : scoreOutOf100 < 40 ? 'negative' : 'neutral';
+  return { sentiment, score: scoreOutOf100 };
+};
+
+const mapLetter = row => {
+  const fullText = row.letter_content || '';
+  const wordCount = getWordCount(fullText);
+  const completenessScore = Number(row.quality_score ?? 0);
+  const sentiment = getSentiment(row.sentiment_label, row.sentiment_score);
+  return {
+    id: row.id,
+    scholarId: row.scholar_id || 'Unknown scholar',
+    scholarName: row.full_name || 'Unknown scholar',
+    yearLevel: row.year_level || 'Year level not set',
+    submittedDate: formatDate(row.submitted_at),
+    type: 'Monthly Progress Report',
+    wordCount,
+    completenessScore,
+    completenessItems: [
+      { label: 'Letter body provided', met: wordCount > 0 },
+      { label: 'Minimum word count (300+)', met: wordCount >= 300 },
+      { label: 'Quality evaluation available', met: row.quality_score !== null && row.quality_score !== undefined },
+    ],
+    sentiment: sentiment.sentiment,
+    sentimentScore: sentiment.score,
+    sentimentKeywords: [],
+    excerpt: fullText.slice(0, 240),
+    fullText,
+    staffStatus: normalizeStatus(row.status),
+    staffComment: row.staff_comment || null,
+    riskFlag: sentiment.sentiment === 'negative' || row.quality_status === 'high_risk',
+  };
+};
+
 export function CorrespondenceReview() {
-  const [letterList, setLetterList] = useState(letters);
+  const [letterList, setLetterList] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sentimentFilter, setSentimentFilter] = useState('all');
 
-  const handleStatusChange = (id, status, comment) => {
-    setLetterList(list => list.map(l => l.id === id ? { ...l, staffStatus: status, staffComment: comment } : l));
+  const loadLetters = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const response = await axios.get(`${API_BASE}/api/submission/letters`, authConfig());
+      setLetterList((response.data || []).map(mapLetter));
+    } catch (requestError) {
+      setError(requestError.response?.data?.error || 'Could not load correspondence submissions.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const load = async () => {
+      await loadLetters();
+    };
+    load();
+  }, []);
+
+  const handleStatusChange = async (id, status, comment) => {
+    try {
+      await axios.put(`${API_BASE}/api/submission/review/${id}`, {
+        status: status === 'returned' ? 'rejected' : status,
+        staff_comment: comment || null,
+      }, authConfig());
+      setLetterList(list => list.map(letter => letter.id === id
+        ? { ...letter, staffStatus: status, staffComment: comment || null }
+        : letter));
+    } catch (requestError) {
+      setError(requestError.response?.data?.error || 'Could not save the review decision.');
+    }
   };
 
   const filtered = letterList.filter(l => {
@@ -430,6 +511,13 @@ export function CorrespondenceReview() {
         </button>
       </div>
 
+      {error && (
+        <div className="mb-5 flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <span>{error}</span>
+          <button onClick={loadLetters} className="font-semibold underline" type="button">Retry</button>
+        </div>
+      )}
+
       {/* Summary Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
         <div className="bg-white rounded-xl border border-gray-200 p-3 text-center shadow-sm">
@@ -473,7 +561,12 @@ export function CorrespondenceReview() {
       </div>
 
       <div className="space-y-4">
-        {filtered.length === 0 && (
+        {loading && (
+          <div className="text-center py-10 bg-white rounded-xl border border-gray-200">
+            <p style={{ fontFamily: "'DM Sans', sans-serif", color: '#6b7280' }}>Loading correspondence submissions...</p>
+          </div>
+        )}
+        {!loading && filtered.length === 0 && (
           <div className="text-center py-10 bg-white rounded-xl border border-gray-200">
             <Mail className="w-8 h-8 mx-auto mb-2 text-gray-300" />
             <p style={{ fontFamily: "'DM Sans', sans-serif", color: '#6b7280' }}>No letters match this filter</p>

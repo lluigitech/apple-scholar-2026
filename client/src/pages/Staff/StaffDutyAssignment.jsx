@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 import {
-    ClipboardList, CalendarDays, MapPin, Clock, Users,
-    Plus, X, Save, Loader2, ChevronDown,
-    CheckSquare, Square, AlertCircle, Search, Filter
+    ClipboardList, CalendarDays, MapPin, Clock,
+    Plus, X, Save, Loader2,
+    CheckSquare, Square, AlertCircle
 } from 'lucide-react';
 
 const API = 'http://localhost:5000/api';
@@ -43,7 +43,6 @@ const AudienceCheckbox = ({ value, label, checked, onChange }) => (
 const Skeleton = () => <div className="animate-pulse bg-slate-100 rounded-2xl h-28" />;
 
 const StaffDutyAssignment = () => {
-    const staffName = localStorage.getItem('name') || 'Staff';
     const staffId   = localStorage.getItem('user_id') || localStorage.getItem('id');
 
     const [duties, setDuties]         = useState([]);
@@ -58,15 +57,6 @@ const StaffDutyAssignment = () => {
     const [notifyMessage, setNotifyMessage] = useState('');
     const [notifyError, setNotifyError] = useState('');
 
-    // ── Manage Groups modal state ──
-    const [showGroups, setShowGroups]     = useState(false);
-    const [allScholars, setAllScholars]   = useState([]);
-    const [newGroupName, setNewGroupName] = useState('');
-    const [groupsLoading, setGroupsLoading] = useState(false);
-
-    // ── Manage Groups: search + filter ──
-    const [scholarSearch, setScholarSearch]     = useState('');
-    const [groupFilter, setGroupFilter]         = useState(''); // '' = all, 'unassigned' = no group, or group id
 
     const fetchDuties = async () => {
         try {
@@ -89,83 +79,6 @@ const StaffDutyAssignment = () => {
     };
 
     useEffect(() => { fetchDuties(); fetchGroups(); }, []);
-
-    // ─── Manage Groups handlers ───────────────────────────────────────────────
-    const openGroupsModal = async () => {
-        setShowGroups(true);
-        setGroupsLoading(true);
-        setScholarSearch('');
-        setGroupFilter('');
-        try {
-            const [scholarsRes, groupsRes] = await Promise.all([
-                axios.get(`${API}/staff/scholars-with-groups`, authHeaders()),
-                axios.get(`${API}/staff/groups`, authHeaders()),
-            ]);
-            setAllScholars(scholarsRes.data);
-            setGroups(groupsRes.data);
-        } catch (err) {
-            console.error(err);
-        } finally {
-            setGroupsLoading(false);
-        }
-    };
-
-    const handleCreateGroup = async () => {
-        if (!newGroupName.trim()) return;
-        try {
-            await axios.post(`${API}/staff/groups`, {
-                group_name: newGroupName,
-                created_by: staffId,
-            }, authHeaders());
-            setNewGroupName('');
-            const res = await axios.get(`${API}/staff/groups`, authHeaders());
-            setGroups(res.data);
-        } catch (err) {
-            console.error(err);
-        }
-    };
-
-    // Pag pinili ang group sa dropdown ng isang scholar, i-a-add siya doon
-    // (kung may dating group siya, papalitan lang -- exclusive membership)
-    const handleAssignScholarToGroup = async (scholarId, groupId) => {
-        if (!groupId) return;
-        try {
-            await axios.post(`${API}/staff/groups/${groupId}/members`, {
-                scholar_ids: [scholarId],
-            }, authHeaders());
-            const res = await axios.get(`${API}/staff/scholars-with-groups`, authHeaders());
-            setAllScholars(res.data);
-            fetchGroups();
-        } catch (err) {
-            console.error(err);
-            alert(err.response?.data?.error || 'Failed to assign scholar to group. Baka kabilang na siya sa ibang group.');
-        }
-    };
-
-    const handleRemoveFromGroup = async (scholarId, groupId) => {
-        try {
-            await axios.delete(`${API}/staff/groups/${groupId}/members/${scholarId}`, authHeaders());
-            const res = await axios.get(`${API}/staff/scholars-with-groups`, authHeaders());
-            setAllScholars(res.data);
-            fetchGroups();
-        } catch (err) {
-            console.error(err);
-        }
-    };
-
-    // ─── Manage Groups: filtered scholar list ─────────────────────────────────
-    const filteredAllScholars = allScholars.filter(s => {
-        const q = scholarSearch.trim().toLowerCase();
-        const matchesSearch = !q ||
-            s.full_name?.toLowerCase().includes(q) ||
-            s.scholar_id?.toLowerCase().includes(q);
-
-        const matchesGroup =
-            !groupFilter ||
-            (groupFilter === 'unassigned' ? !s.group_id : String(s.group_id) === String(groupFilter));
-
-        return matchesSearch && matchesGroup;
-    });
 
     // ─── Duty Form handlers ───────────────────────────────────────────────────
     const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -239,10 +152,6 @@ const StaffDutyAssignment = () => {
                         </p>
                     </div>
                     <div className="flex gap-2 shrink-0">
-                        <button onClick={openGroupsModal}
-                            className="flex items-center gap-2 bg-white border border-slate-200 text-slate-600 text-xs font-black px-4 py-2.5 rounded-2xl hover:bg-slate-50 transition-all">
-                            <Users size={14} /> Manage Groups
-                        </button>
                         <button onClick={() => { setShowCreate(true); setFormError(''); }}
                             className="flex items-center gap-2 bg-[#7f2d3a] text-white text-xs font-black px-4 py-2.5 rounded-2xl hover:bg-[#63232d] transition-all shadow-md">
                             <Plus size={14} /> Create Duty
@@ -400,7 +309,7 @@ const StaffDutyAssignment = () => {
                                 </label>
                                 {groups.length === 0 ? (
                                     <p className="text-xs text-slate-400 bg-slate-50 rounded-xl p-3 border border-slate-100">
-                                        Wala pang groups. Gumawa muna via <strong>Manage Groups</strong>.
+                                        Wala pang groups. Ipa-manage sa administrator ang scholar groups.
                                     </p>
                                 ) : (
                                     <div className="flex flex-wrap gap-2">
@@ -435,125 +344,6 @@ const StaffDutyAssignment = () => {
                 </div>
             )}
 
-            {/* ── MANAGE GROUPS MODAL ── */}
-            {showGroups && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
-                    <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-                        <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-slate-100 sticky top-0 bg-white z-10">
-                            <div>
-                                <h3 className="font-black text-slate-800 text-lg">Manage Scholar Groups</h3>
-                                <p className="text-xs text-slate-400 mt-0.5">Isang scholar, isang group lang (exclusive).</p>
-                            </div>
-                            <button onClick={() => setShowGroups(false)}
-                                className="p-2 rounded-xl hover:bg-slate-100 text-slate-400 transition-colors">
-                                <X size={18} />
-                            </button>
-                        </div>
-
-                        <div className="p-6 space-y-5">
-                            {/* Create new group */}
-                            <div className="flex gap-2">
-                                <input type="text" value={newGroupName} onChange={e => setNewGroupName(e.target.value)}
-                                    placeholder="New group name (e.g. Group 3)"
-                                    className="flex-1 border border-slate-200 rounded-xl px-3 py-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-[#7f2d3a]/30" />
-                                <button onClick={handleCreateGroup}
-                                    className="flex items-center gap-1.5 bg-[#7f2d3a] text-white text-xs font-black px-4 py-2.5 rounded-xl hover:bg-[#63232d] transition-all">
-                                    <Plus size={14} /> Add Group
-                                </button>
-                            </div>
-
-                            {/* Existing groups chip list */}
-                            <div className="flex flex-wrap gap-2">
-                                {groups.map(g => (
-                                    <span key={g.id} className="text-[10px] font-black bg-[#7f2d3a]/10 text-[#7f2d3a] px-3 py-1.5 rounded-full">
-                                        {g.group_name} • {g.member_count ?? 0} members
-                                    </span>
-                                ))}
-                            </div>
-
-                            {/* Full scholar list */}
-                            <div>
-                                <div className="flex items-center justify-between mb-2">
-                                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                                        All Scholars ({filteredAllScholars.length}{filteredAllScholars.length !== allScholars.length ? ` / ${allScholars.length}` : ''})
-                                    </p>
-                                </div>
-
-                                {/* Search + Filter bar */}
-                                <div className="flex flex-col sm:flex-row gap-2 mb-3">
-                                    <div className="relative flex-1">
-                                        <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                        <input
-                                            type="text"
-                                            value={scholarSearch}
-                                            onChange={e => setScholarSearch(e.target.value)}
-                                            placeholder="Search name or scholar ID..."
-                                            className="w-full pl-8 pr-3 py-2.5 text-xs rounded-xl border border-slate-200 focus:outline-none focus:border-[#7f2d3a] focus:ring-2 focus:ring-[#7f2d3a]/10 transition-all"
-                                        />
-                                    </div>
-                                    <div className="relative sm:w-52 shrink-0">
-                                        <Filter size={12} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                        <select
-                                            value={groupFilter}
-                                            onChange={e => setGroupFilter(e.target.value)}
-                                            className="w-full appearance-none pl-8 pr-8 py-2.5 text-xs font-bold rounded-xl border border-slate-200 focus:outline-none focus:border-[#7f2d3a] transition-all bg-white text-slate-600 cursor-pointer">
-                                            <option value="">All Groups</option>
-                                            <option value="unassigned">Unassigned</option>
-                                            {groups.map(g => (
-                                                <option key={g.id} value={g.id}>{g.group_name}</option>
-                                            ))}
-                                        </select>
-                                        <ChevronDown size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-                                    </div>
-                                </div>
-
-                                {groupsLoading ? (
-                                    <div className="space-y-2">{Array(4).fill(0).map((_, i) => <Skeleton key={i} />)}</div>
-                                ) : filteredAllScholars.length === 0 ? (
-                                    <div className="text-center py-10 text-slate-300 border-2 border-dashed border-slate-100 rounded-2xl">
-                                        <Search size={26} className="mx-auto mb-2 opacity-40" />
-                                        <p className="text-sm font-bold text-slate-400">No scholars found</p>
-                                        <p className="text-xs text-slate-300 mt-0.5">Try a different search or filter.</p>
-                                    </div>
-                                ) : (
-                                    <div className="space-y-2 max-h-96 overflow-y-auto">
-                                        {filteredAllScholars.map(s => (
-                                            <div key={s.scholar_id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100 gap-3">
-                                                <div className="min-w-0">
-                                                    <p className="font-bold text-slate-700 text-sm truncate">{s.full_name}</p>
-                                                    <p className="text-[10px] text-slate-400">{s.year_level} • {s.scholar_id}</p>
-                                                </div>
-                                                <div className="flex items-center gap-2 shrink-0">
-                                                    {s.group_name && (
-                                                        <span className="text-[10px] font-black bg-emerald-50 text-emerald-600 px-2 py-1 rounded-lg">
-                                                            {s.group_name}
-                                                        </span>
-                                                    )}
-                                                    <select
-                                                        value=""
-                                                        onChange={e => handleAssignScholarToGroup(s.scholar_id, e.target.value)}
-                                                        className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 text-slate-600 focus:outline-none focus:ring-2 focus:ring-[#7f2d3a]/30">
-                                                        <option value="">{s.group_name ? 'Move to...' : 'Assign to...'}</option>
-                                                        {groups.filter(g => g.id !== s.group_id).map(g => (
-                                                            <option key={g.id} value={g.id}>{g.group_name}</option>
-                                                        ))}
-                                                    </select>
-                                                    {s.group_id && (
-                                                        <button onClick={() => handleRemoveFromGroup(s.scholar_id, s.group_id)}
-                                                            className="text-[10px] font-bold text-red-400 hover:text-red-600 px-1">
-                                                            Remove
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 };

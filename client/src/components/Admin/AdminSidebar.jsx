@@ -1,9 +1,10 @@
 import { useNavigate, useLocation } from 'react-router-dom';
+import axios from 'axios';
 import {
     LayoutDashboard, Users, ShieldCheck, Megaphone,
     FilePieChart, LogOut, X, Flag, MessageSquareWarning,
-    Bell, BrainCircuit, Lock, ClipboardList, BarChart3,
-    CalendarCheck,
+    Bell, Lock, ClipboardList, BarChart3,
+    CalendarCheck, UserRoundCog,
 } from 'lucide-react';
 
 const AdminSidebar = ({ isOpen, onClose }) => {
@@ -11,7 +12,8 @@ const AdminSidebar = ({ isOpen, onClose }) => {
     const location = useLocation();
     const name = localStorage.getItem('name');
 
-    const handleLogout = () => {
+    const handleLogout = async () => {
+        await axios.post('http://localhost:5000/api/logout', {}, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }).catch(() => {});
         localStorage.clear();
         navigate('/');
     };
@@ -32,10 +34,13 @@ const AdminSidebar = ({ isOpen, onClose }) => {
             group: 'Management',
             items: [
                 { name: 'User Management',    path: '/admin/users',           icon: <Users size={18} />        },
+                { name: 'Officer Assignments', path: '/admin/officer-assignments', icon: <Users size={18} />    },
+                { name: 'Staff Assignments',   path: '/admin/staff-assignments',   icon: <Users size={18} />    },
                 { name: 'Compliance Manager', path: '/admin/compliance',       icon: <ShieldCheck size={18} />  },
                 { name: 'Flagged Scholars',   path: '/admin/flagged',          icon: <Flag size={18} />         },
                 { name: 'Duty Management',    path: '/admin/duties',           icon: <CalendarCheck size={18} /> },
                 { name: 'Task Assignment',    path: '/admin/task-assignment',  icon: <ClipboardList size={18} /> },
+                { name: 'Privacy Requests',   path: '/admin/privacy-requests', icon: <UserRoundCog size={18} /> },
             ],
         },
         {

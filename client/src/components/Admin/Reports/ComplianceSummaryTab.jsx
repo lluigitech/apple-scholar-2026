@@ -9,21 +9,14 @@ export default function ComplianceSummaryTab({
   loading,
   error,
   onRefresh,
+  onGenerate,
 }) {
   const [generatingPdf, setGeneratingPdf] = useState(false);
 
   const handleGeneratePDF = async () => {
     setGeneratingPdf(true);
     try {
-      // Mock PDF generation - replace with actual API call
-      console.log('Generating compliance PDF...');
-      // const res = await axios.post(..., { responseType: 'blob' });
-      // const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }));
-      // const a = document.createElement('a');
-      // a.href = url;
-      // a.download = `AdminComplianceSummary_${Date.now()}.pdf`;
-      // a.click();
-      alert('PDF generation will connect to backend endpoint');
+      await onGenerate();
     } finally {
       setGeneratingPdf(false);
     }

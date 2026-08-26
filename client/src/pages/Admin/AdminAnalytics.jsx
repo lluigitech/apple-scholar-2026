@@ -52,6 +52,7 @@ const initialAnalytics = {
   submissions: [],
   sentimentTrend: [],
   sentimentByYearLevel: [],
+  averageGradeData: [],
   summary: [],
 };
 
@@ -68,15 +69,17 @@ const AdminAnalytics = () => {
         setLoading(true);
         setError("");
 
-        const [summaryRes, submissionsRes, usersRes] = await Promise.all([
+        const [summaryRes, submissionsRes, usersRes, gradesRes] = await Promise.all([
           axios.get(`${API}/officer/reports/compliance-summary`, getAuthHeaders()),
           axios.get(`${API}/submission/all`, getAuthHeaders()),
           axios.get(`${API}/admin/users`, getAuthHeaders()),
+          axios.get(`${API}/submission/grades/all`, getAuthHeaders()),
         ]);
 
         const summary = Array.isArray(summaryRes?.data) ? summaryRes.data : [];
         const submissions = Array.isArray(submissionsRes?.data) ? submissionsRes.data : [];
         const users = Array.isArray(usersRes?.data) ? usersRes.data : [];
+        const grades = Array.isArray(gradesRes?.data) ? gradesRes.data : [];
 
         const scholarYearMap = users.reduce((acc, user) => {
           if (user?.role === "scholar" && user?.scholar_id) {
@@ -84,6 +87,21 @@ const AdminAnalytics = () => {
           }
           return acc;
         }, {});
+
+        const gradeBuckets = {};
+        grades.forEach((gradeRecord) => {
+          const gwa = Number(gradeRecord.gwa);
+          if (!Number.isFinite(gwa)) return;
+          const level = normalizeYearLevel(scholarYearMap[gradeRecord.scholar_id] || 'Unknown');
+          if (!gradeBuckets[level]) gradeBuckets[level] = { level, total: 0, sum: 0 };
+          gradeBuckets[level].total += 1;
+          gradeBuckets[level].sum += gwa;
+        });
+        const averageGradeData = Object.values(gradeBuckets).map((bucket) => ({
+          level: bucket.level,
+          average: Number((bucket.sum / bucket.total).toFixed(2)),
+          records: bucket.total,
+        }));
 
         const yearBuckets = {};
         summary.forEach((item) => {
@@ -226,6 +244,7 @@ const AdminAnalytics = () => {
           submissions,
           sentimentTrend,
           sentimentByYearLevel,
+          averageGradeData,
           summary,
         });
       } catch (err) {
@@ -318,6 +337,19 @@ const AdminAnalytics = () => {
     { value: "all", label: "All Year Levels" },
     ...analytics.yearLevelData.map((item) => ({ value: item.level, label: item.level }))
   ], [analytics.yearLevelData]);
+
+  const earlyWarnings = useMemo(() => {
+    const warnings = [];
+    const atRisk = filteredSummary.filter(item => Number(item.riskScore || 0) >= 40 || item.riskStatus === 'at-risk').length;
+    const pending = filteredSummary.filter(item => Number(item.completionRate || 0) < 75).length;
+    const negative = analytics.sentimentTrend.reduce((sum, item) => sum + Number(item.negative || 0), 0);
+    const rejected = analytics.submissions.filter(item => String(item.status || '').toLowerCase() === 'rejected').length;
+    if (atRisk) warnings.push({ label: 'Prioritize at-risk scholars', detail: `${atRisk} scholar${atRisk === 1 ? '' : 's'} need compliance follow-up.`, action: 'Open flagged scholars', path: '/admin/flagged' });
+    if (pending) warnings.push({ label: 'Follow up on incomplete compliance', detail: `${pending} scholar${pending === 1 ? '' : 's'} are below the 75% completion threshold.`, action: 'Review compliance', path: '/admin/compliance' });
+    if (negative) warnings.push({ label: 'Review negative correspondence', detail: `${negative} negative sentiment record${negative === 1 ? '' : 's'} appear in the loaded trend.`, action: 'Open correspondence', path: '/admin/correspondence' });
+    if (rejected) warnings.push({ label: 'Resolve rejected submissions', detail: `${rejected} submission${rejected === 1 ? '' : 's'} require scholar revision.`, action: 'Review submissions', path: '/admin/reports' });
+    return warnings.length ? warnings : [{ label: 'No urgent warnings detected', detail: 'Continue monitoring new submissions and compliance changes.', action: 'View reports', path: '/admin/reports' }];
+  }, [analytics.sentimentTrend, analytics.submissions, filteredSummary]);
 
   const exportCsv = () => {
     const rows = [["Month", "Positive%", "Neutral%", "Negative%"]];
@@ -474,6 +506,39 @@ const AdminAnalytics = () => {
             <Line type="monotone" dataKey="rejected" stroke="#dc2626" strokeWidth={3} dot={{ fill: '#dc2626', r: 4 }} name="Rejected" />
           </LineChart>
         </ResponsiveContainer>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-6 mb-8">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <h3 className="mb-1" style={{ fontFamily: "'Playfair Display', serif", fontSize: '1.15rem', fontWeight: 700, color: '#802B36' }}>
+            Average Recorded Grade / GWA by Batch
+          </h3>
+          <p className="mb-4 text-xs text-gray-500">Based on available verified grade records.</p>
+          <ResponsiveContainer width="100%" height={250}>
+            <BarChart data={analytics.averageGradeData.filter(item => selectedYearLevel === 'all' || item.level === selectedYearLevel)}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+              <XAxis dataKey="level" stroke="#6b7280" style={{ fontFamily: "'DM Sans', sans-serif", fontSize: '0.72rem' }} />
+              <YAxis stroke="#6b7280" style={{ fontFamily: "'DM Sans', sans-serif", fontSize: '0.75rem' }} />
+              <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e5e7eb', borderRadius: '8px', fontFamily: "'DM Sans', sans-serif" }} />
+              <Bar dataKey="average" fill="#b98b4e" name="Average GWA / grade" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <h3 className="mb-1" style={{ fontFamily: "'Playfair Display', serif", fontSize: '1.15rem', fontWeight: 700, color: '#802B36' }}>
+            Actionable Early Warnings
+          </h3>
+          <p className="mb-4 text-xs text-gray-500">Recommended follow-up based on current records.</p>
+          <div className="space-y-3">
+            {earlyWarnings.map((warning) => (
+              <div key={warning.label} className="flex items-start justify-between gap-3 rounded-lg border border-gray-100 bg-gray-50 p-3">
+                <div><p className="text-sm font-semibold text-gray-800">{warning.label}</p><p className="mt-1 text-xs text-gray-500">{warning.detail}</p></div>
+                <button type="button" onClick={() => navigate(warning.path)} className="shrink-0 text-xs font-semibold text-[#802B36] underline">{warning.action}</button>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="mb-2">

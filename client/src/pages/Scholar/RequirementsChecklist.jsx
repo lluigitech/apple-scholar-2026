@@ -54,18 +54,23 @@ const PORTAL_TYPE_TO_SUBMISSION_TYPE = {
 
 // Returns the most recent submission (by submitted_at) of a specific
 // submission_type from the scholar's full history, or null if none exists.
-const getLatestSubmissionOfType = (history, submissionType) => {
-  const matches = (history || []).filter((h) => h.submission_type === submissionType);
+const getLatestSubmissionOfType = (history, submissionType, taskCreatedAt) => {
+  const taskTime = taskCreatedAt ? new Date(taskCreatedAt).getTime() : null;
+  const matches = (history || []).filter((h) => {
+    if (h.submission_type !== submissionType) return false;
+    return taskTime === null || new Date(h.submitted_at || 0).getTime() >= taskTime;
+  });
   if (matches.length === 0) return null;
   return matches
     .slice()
     .sort((a, b) => new Date(b.submitted_at || 0) - new Date(a.submitted_at || 0))[0];
 };
 
-const getLatestGradeSubmission = (grades) => {
+const getLatestGradeSubmission = (grades, taskCreatedAt) => {
   if (!Array.isArray(grades)) return null;
-  if (grades.length === 0) return null;
+  const taskTime = taskCreatedAt ? new Date(taskCreatedAt).getTime() : null;
   return grades
+    .filter((grade) => taskTime === null || new Date(grade.submitted_at || 0).getTime() >= taskTime)
     .slice()
     .sort((a, b) => new Date(b.submitted_at || 0) - new Date(a.submitted_at || 0))[0];
 };
@@ -206,8 +211,8 @@ const RequirementsChecklist = () => {
           const submissionType = PORTAL_TYPE_TO_SUBMISSION_TYPE[t.type];
           const latest = submissionType
             ? submissionType === 'report_card'
-              ? getLatestGradeSubmission(gradesHistory)
-              : getLatestSubmissionOfType(history, submissionType)
+              ? getLatestGradeSubmission(gradesHistory, t.created_at)
+              : getLatestSubmissionOfType(history, submissionType, t.created_at)
             : null;
 
           const rawStatus = latest?.status || null; // 'approved' | 'pending' | 'rejected' | null
@@ -228,6 +233,9 @@ const RequirementsChecklist = () => {
             title: t.title || 'Task',
             type: t.type || 'Task',
             description: t.instructions || '',
+            createdByName: t.created_by_name || t.created_by || 'System',
+            createdByRole: t.created_by_role || '',
+            createdAt: t.created_at || '',
             Icon: null,
             done,
             route: t.route || '/scholar/submission',
@@ -392,6 +400,9 @@ const RequirementsChecklist = () => {
                             <p className="text-xs text-slate-400 mt-2 leading-relaxed">{task.description}</p>
                           )}
                           <div className="flex items-center gap-4 mt-2.5 flex-wrap">
+                            <p className="text-[10px]" style={{ color: '#c9b3b8' }}>
+                              Created by {task.createdByName || 'System'}{task.createdByRole ? ` (${task.createdByRole})` : ''}
+                            </p>
                             {task.dueDate && (
                               <p className="text-[10px]" style={{ color: '#c9b3b8' }}>Due {formatDate(task.dueDate)}</p>
                             )}

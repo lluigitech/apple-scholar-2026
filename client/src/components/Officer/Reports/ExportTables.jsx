@@ -34,19 +34,19 @@ export const SubmissionsTable = ({ rows }) => (
   <div className="overflow-x-auto">
     <table className="min-w-full">
       <thead><tr className="border-b border-slate-100">
-        <Th>Scholar</Th><Th>Scholar ID</Th><Th>Activity Type</Th><Th>Service Date</Th><Th>Hours</Th><Th>Status</Th><Th>Quality</Th><Th>Submitted At</Th>
+        <Th>Scholar</Th><Th>Scholar ID</Th><Th>Submission Type</Th><Th>Deadline</Th><Th>Submitted At</Th><Th>Approved At</Th><Th>Status</Th><Th>Quality Status</Th>
       </tr></thead>
       <tbody className="divide-y divide-slate-50">
         {rows.map((r, i) => (
           <tr key={i} className="hover:bg-[#fcf8f8] transition-colors">
             <Td><div className="flex items-center gap-2.5"><Avatar name={r.scholar} /><span className="font-semibold text-slate-800">{r.scholar}</span></div></Td>
             <Td className="text-slate-400 text-xs font-mono">{r.scholar_id}</Td>
-            <Td className="text-slate-600">{fmt(r.type)}</Td>
-            <Td className="text-slate-500">{r.service_date ? new Date(r.service_date).toLocaleDateString("en-PH") : "—"}</Td>
-            <Td><span className="inline-flex items-center gap-1 font-semibold text-slate-700"><Clock size={12} className="text-slate-400" />{fmt(r.service_hours)}h</span></Td>
+            <Td className="text-slate-600">{fmt({ letter: "Monthly Letter", report_card: "Report Card", cor: "COR", other: "Other Document" }[r.type || r.submission_type] || r.type || r.submission_type)}</Td>
+            <Td className="text-slate-500">{r.deadline ? new Date(r.deadline).toLocaleDateString("en-PH") : "—"}</Td>
+            <Td className="text-slate-500">{r.submitted_at ? new Date(r.submitted_at).toLocaleDateString("en-PH") : "—"}</Td>
+            <Td className="text-slate-500">{r.approved_at ? new Date(r.approved_at).toLocaleDateString("en-PH") : "—"}</Td>
             <Td><Badge status={r.status} /></Td>
             <Td className="text-slate-400 text-xs capitalize">{fmt(r.quality_status)}</Td>
-            <Td className="text-slate-500 text-xs">{r.submitted_at ? new Date(r.submitted_at).toLocaleDateString("en-PH") : "—"}</Td>
           </tr>
         ))}
       </tbody>
@@ -58,7 +58,7 @@ export const RequirementsTable = ({ rows }) => (
   <div className="overflow-x-auto">
     <table className="min-w-full">
       <thead><tr className="border-b border-slate-100">
-        <Th>Scholar</Th><Th>Scholar ID</Th><Th>Requirement</Th><Th>Status</Th><Th>Staff Comment</Th><Th>Submitted At</Th>
+        <Th>Scholar</Th><Th>Scholar ID</Th><Th>Requirement</Th><Th>Status</Th><Th>Deadline</Th><Th>Submitted At</Th><Th>Approved At</Th>
       </tr></thead>
       <tbody className="divide-y divide-slate-50">
         {rows.map((r, i) => (
@@ -67,8 +67,9 @@ export const RequirementsTable = ({ rows }) => (
             <Td className="text-slate-400 text-xs font-mono">{r.scholar_id}</Td>
             <Td><span className="inline-flex items-center gap-1.5 font-medium text-slate-700"><GraduationCap size={13} className="text-slate-400" />{fmt(r.type)}</span></Td>
             <Td><Badge status={r.status} /></Td>
-            <Td className="text-slate-500 text-xs max-w-[200px] truncate">{fmt(r.staff_comment)}</Td>
+            <Td className="text-slate-500 text-xs">{r.deadline ? new Date(r.deadline).toLocaleDateString("en-PH") : "—"}</Td>
             <Td className="text-slate-500 text-xs">{r.submitted_at ? new Date(r.submitted_at).toLocaleDateString("en-PH") : "—"}</Td>
+            <Td className="text-slate-500 text-xs">{r.approved_at ? new Date(r.approved_at).toLocaleDateString("en-PH") : "—"}</Td>
           </tr>
         ))}
       </tbody>
@@ -103,7 +104,7 @@ export const ActivitiesTable = ({ rows }) => (
 
 const SECTION_CONFIG = {
   "Duty Attendance":                    { icon: ClipboardList, color: "text-blue-600",    bg: "bg-blue-50",    border: "border-blue-100" },
-  "Monthly Report Submissions":         { icon: FileText,      color: "text-violet-600",  bg: "bg-violet-50",  border: "border-violet-100" },
+  "Monthly Letter Submissions":         { icon: FileText,      color: "text-violet-600",  bg: "bg-violet-50",    border: "border-violet-100" },
   "Requirements (COR / Grades / Card)": { icon: GraduationCap, color: "text-amber-600",   bg: "bg-amber-50",   border: "border-amber-100" },
   "Activity Participation":             { icon: Activity,      color: "text-emerald-600", bg: "bg-emerald-50", border: "border-emerald-100" },
 };
@@ -160,12 +161,12 @@ export const SelectField = ({ label, icon: Icon, value, onChange, children }) =>
   </div>
 );
 
-export const DateField = ({ label, value, onChange }) => (
+export const DateField = ({ label, value, onChange, type = "date" }) => (
   <div>
     <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-1.5">{label}</label>
     <div className="relative">
       <Calendar size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-      <input type="date" value={value} onChange={onChange}
+      <input type={type} value={value} onChange={onChange}
         className="w-full border border-slate-200 rounded-xl pl-8 pr-3 py-2.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:border-transparent transition-all" />
     </div>
   </div>

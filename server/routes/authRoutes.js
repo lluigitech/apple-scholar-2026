@@ -4,6 +4,7 @@ const db = require('../config/db');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { logAuditEvent } = require('../utils/auditLogger');
+const { verifyToken } = require('../middleware/authMiddleware');
 
 const jwtSecret = process.env.JWT_SECRET || 'apple_scholar_secret_2026';
 
@@ -29,10 +30,20 @@ router.post('/login', (req, res) => {
 
             const user = data[0];
             console.log('[LOGIN USER]', { id: user.id, email: user.email, role: user.role, passwordPresent: !!user.password });
+            const normalizedRole = typeof user.role === 'string' ? user.role.toLowerCase().trim() : user.role;
 
             let match = false;
             if (!user.password) {
                 console.log('[LOGIN] user has no password');
+                logAuditEvent({
+                    req,
+                    userId: user.id,
+                    role: normalizedRole,
+                    action: 'login',
+                    module: 'Authentication',
+                    details: `Failed login attempt for ${user.email}`,
+                    result: 'failed',
+                }).catch(() => {});
                 return res.status(401).json({ message: "Invalid email or password" });
             }
 
@@ -43,9 +54,18 @@ router.post('/login', (req, res) => {
             }
 
             console.log('[LOGIN] password match:', match);
-            if (!match) return res.status(401).json({ message: "Invalid email or password" });
-
-            const normalizedRole = typeof user.role === 'string' ? user.role.toLowerCase().trim() : user.role;
+            if (!match) {
+                logAuditEvent({
+                    req,
+                    userId: user.id,
+                    role: normalizedRole,
+                    action: 'login',
+                    module: 'Authentication',
+                    details: `Failed login attempt for ${user.email}`,
+                    result: 'failed',
+                }).catch(() => {});
+                return res.status(401).json({ message: "Invalid email or password" });
+            }
 
             // Debug: ensure JWT secret is available (helps identify signing errors)
             try {
@@ -65,6 +85,7 @@ router.post('/login', (req, res) => {
             logAuditEvent({
                 req,
                 userId: user.id,
+                role: normalizedRole,
                 action: 'login',
                 module: 'Authentication',
                 details: `User ${user.email} logged in successfully`,
@@ -90,16 +111,33 @@ router.post('/login', (req, res) => {
     });
 });
 
+router.post('/logout', verifyToken, async (req, res) => {
+    await logAuditEvent({
+        req,
+        action: 'logout',
+        module: 'Authentication',
+        details: `User ${req.user.email || req.user.id} logged out`,
+        result: 'success',
+    });
+    return res.json({ status: 'Success', message: 'Logged out successfully' });
+});
+
 // ─── CHANGE PASSWORD ─────────────────────────────────────────
-router.post('/change-password', async (req, res) => {
+router.post('/change-password', verifyToken, async (req, res) => {
     const { email, new_password } = req.body;
 
     try {
         const hashedPassword = await bcrypt.hash(new_password, 10);
         const sql = "UPDATE users SET password = ?, must_change_password = 0 WHERE email = ?";
 
-        db.query(sql, [hashedPassword, email], (err) => {
+        db.query(sql, [hashedPassword, email], (err, result) => {
             if (err) return res.status(500).json({ error: "Error changing password" });
+            if (!result.affectedRows) return res.status(404).json({ error: "User not found" });
+            db.query('SELECT id, role FROM users WHERE email = ? LIMIT 1', [email], (lookupErr, rows) => {
+                if (!lookupErr && rows?.[0]) {
+                    logAuditEvent({ req, userId: rows[0].id, role: rows[0].role, action: 'edit', module: 'Authentication', details: 'Password changed successfully', result: 'success' });
+                }
+            });
             return res.json({ message: "Password changed successfully" });
         });
     } catch (err) {

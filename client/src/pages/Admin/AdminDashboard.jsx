@@ -9,6 +9,10 @@ import {
     ArrowRight, Activity, MessageSquare, ShieldAlert
 } from 'lucide-react';
 
+const authConfig = () => ({
+    headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+});
+
 const AdminDashboard = () => {
     const navigate = useNavigate();
     const name = localStorage.getItem('name');
@@ -28,10 +32,11 @@ const AdminDashboard = () => {
     useEffect(() => {
         const fetchData = async () => {
             try {
+                const config = authConfig();
                 const [usersRes, complianceRes, announcementsRes] = await Promise.allSettled([
-                    axios.get('http://localhost:5000/api/admin/users'),
-                    axios.get('http://localhost:5000/api/admin/compliance'),
-                    axios.get('http://localhost:5000/api/admin/announcements'),
+                    axios.get('http://localhost:5000/api/admin/users', config),
+                    axios.get('http://localhost:5000/api/admin/compliance', config),
+                    axios.get('http://localhost:5000/api/admin/announcements', config),
                 ]);
 
                 if (usersRes.status === 'fulfilled') {

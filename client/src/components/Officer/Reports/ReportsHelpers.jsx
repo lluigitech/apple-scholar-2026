@@ -11,8 +11,25 @@ const normalizeApiBase = (url) => {
 };
 
 export const API_BASE = normalizeApiBase(import.meta.env?.VITE_API_URL);
+
+// ── Token system — shared across the whole portal ──
 export const MAROON = "#7f2d3a";
-export const MAROON_LIGHT = "#F5E8EA";
+export const MAROON_DEEP = "#4f1620";
+export const MAROON_LIGHT = "#F5E8EA"; // kept for backward compatibility — same value as ROSE below
+export const GOLD = "#b98b4e";
+export const GOLD_LIGHT = "#d4af7a";
+export const IVORY = "#FBF7F2";
+export const INK = "#241512";
+export const SAGE = "#6b8f71";
+export const CLAY = "#c1666b";
+export const AMBER = "#b8863f";
+export const PAPER = "#F6EFE4";
+export const RULE = "#e8dccb";
+export const ROSE = "#F5E8EA";
+
+export const serif = { fontFamily: "'Playfair Display', serif" };
+export const sans = { fontFamily: "'DM Sans', sans-serif" };
+export const mono = { fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, monospace" };
 
 export const token = () => localStorage.getItem("token");
 export const authHeaders = () => ({ headers: { Authorization: `Bearer ${token()}` } });
@@ -22,21 +39,21 @@ export const fmt = (v) => (v !== null && v !== undefined && v !== "" ? v : "—"
 
 export function riskBadge(status) {
   const map = {
-    excellent: { bg: "#d1fae5", color: "#065f46", label: "Excellent" },
-    good:      { bg: "#dbeafe", color: "#1e40af", label: "Good" },
-    "at-risk": { bg: "#fee2e2", color: "#991b1b", label: "At Risk" },
+    excellent: { bg: `${SAGE}18`, color: SAGE,  label: "Excellent" },
+    good:      { bg: `${GOLD}18`, color: GOLD,  label: "Good" },
+    "at-risk": { bg: `${CLAY}18`, color: CLAY,  label: "At Risk" },
   };
-  return map[status] || { bg: "#f3f4f6", color: "#374151", label: status || "Unknown" };
+  return map[status] || { bg: PAPER, color: "#8a7a70", label: status || "Unknown" };
 }
 
 // ─── Monthly Reports badges ─────────────────────────────────────────────────
 
 export function reportStatusBadge(status) {
   const map = {
-    accepted:      { bg: "#d1fae5", color: "#065f46", label: "Accepted",    Icon: CheckCircle },
-    "medium-risk": { bg: "#fef3c7", color: "#92400e", label: "Medium Risk", Icon: AlertTriangle },
-    "high-risk":   { bg: "#fee2e2", color: "#991b1b", label: "High Risk",   Icon: XCircle },
-    pending:       { bg: "#f3f4f6", color: "#374151", label: "Pending",     Icon: Clock },
+    accepted:      { bg: `${SAGE}18`,  color: SAGE,  label: "Accepted",    Icon: CheckCircle },
+    "medium-risk": { bg: `${AMBER}18`, color: AMBER, label: "Medium Risk", Icon: AlertTriangle },
+    "high-risk":   { bg: `${CLAY}18`,  color: CLAY,  label: "High Risk",   Icon: XCircle },
+    pending:       { bg: PAPER,        color: "#8a7a70", label: "Pending", Icon: Clock },
   };
   return map[status] || map.pending;
 }
@@ -44,36 +61,38 @@ export function reportStatusBadge(status) {
 export function staffActionBadge(action) {
   if (!action) return null;
   const map = {
-    approved:         { bg: "#f0fdf4", color: "#16a34a", border: "#bbf7d0", label: "Approved",       Icon: ThumbsUp },
-    rejected:         { bg: "#fef2f2", color: "#ef4444", border: "#fecaca", label: "Rejected",       Icon: ThumbsDown },
-    "needs-revision": { bg: "#fffbeb", color: "#d97706", border: "#fde68a", label: "Needs Revision", Icon: MessageSquare },
+    approved:         { bg: `${SAGE}14`,  color: SAGE,  border: `${SAGE}55`,  label: "Approved",       Icon: ThumbsUp },
+    rejected:         { bg: `${CLAY}14`,  color: CLAY,  border: `${CLAY}55`,  label: "Rejected",       Icon: ThumbsDown },
+    "needs-revision": { bg: `${AMBER}14`, color: AMBER, border: `${AMBER}55`, label: "Needs Revision", Icon: MessageSquare },
   };
   return map[action];
 }
 
 export function scoreColor(score) {
-  if (score >= 71) return "#16a34a";
-  if (score >= 51) return "#d97706";
-  return "#ef4444";
+  if (score >= 71) return SAGE;
+  if (score >= 51) return AMBER;
+  return CLAY;
 }
 
 // ─── Export tab status badges ──────────────────────────────────────────────
+// Kept as Tailwind-class based (used by ExportTables.jsx) but recolored onto
+// the same ledger palette instead of generic emerald/blue/red/gray.
 
 export const STATUS_CONFIG = {
-  Completed:       { bg: "bg-emerald-50",  text: "text-emerald-700",  border: "border-emerald-200", icon: CheckCircle2 },
-  Verified:        { bg: "bg-emerald-50",  text: "text-emerald-700",  border: "border-emerald-200", icon: CheckCircle2 },
-  Present:         { bg: "bg-emerald-50",  text: "text-emerald-700",  border: "border-emerald-200", icon: CheckCircle2 },
-  present:         { bg: "bg-emerald-50",  text: "text-emerald-700",  border: "border-emerald-200", icon: CheckCircle2 },
-  approved:        { bg: "bg-emerald-50",  text: "text-emerald-700",  border: "border-emerald-200", icon: CheckCircle2 },
-  Submitted:       { bg: "bg-blue-50",     text: "text-blue-700",     border: "border-blue-200",    icon: Clock },
-  submitted:       { bg: "bg-blue-50",     text: "text-blue-700",     border: "border-blue-200",    icon: Clock },
-  Pending:         { bg: "bg-amber-50",    text: "text-amber-700",    border: "border-amber-200",   icon: Clock },
-  pending:         { bg: "bg-amber-50",    text: "text-amber-700",    border: "border-amber-200",   icon: Clock },
-  Absent:          { bg: "bg-red-50",      text: "text-red-700",      border: "border-red-200",     icon: XCircle },
-  absent:          { bg: "bg-red-50",      text: "text-red-700",      border: "border-red-200",     icon: XCircle },
-  Rejected:        { bg: "bg-red-50",      text: "text-red-700",      border: "border-red-200",     icon: XCircle },
-  rejected:        { bg: "bg-red-50",      text: "text-red-700",      border: "border-red-200",     icon: XCircle },
-  "Not Submitted": { bg: "bg-gray-50",     text: "text-gray-500",     border: "border-gray-200",    icon: AlertCircle },
+  Completed:       { bg: "bg-[#6b8f71]/10",  text: "text-[#6b8f71]",  border: "border-[#6b8f71]/30",  icon: CheckCircle2 },
+  Verified:        { bg: "bg-[#6b8f71]/10",  text: "text-[#6b8f71]",  border: "border-[#6b8f71]/30",  icon: CheckCircle2 },
+  Present:         { bg: "bg-[#6b8f71]/10",  text: "text-[#6b8f71]",  border: "border-[#6b8f71]/30",  icon: CheckCircle2 },
+  present:         { bg: "bg-[#6b8f71]/10",  text: "text-[#6b8f71]",  border: "border-[#6b8f71]/30",  icon: CheckCircle2 },
+  approved:        { bg: "bg-[#6b8f71]/10",  text: "text-[#6b8f71]",  border: "border-[#6b8f71]/30",  icon: CheckCircle2 },
+  Submitted:       { bg: "bg-[#b98b4e]/10",  text: "text-[#b98b4e]",  border: "border-[#b98b4e]/30",  icon: Clock },
+  submitted:       { bg: "bg-[#b98b4e]/10",  text: "text-[#b98b4e]",  border: "border-[#b98b4e]/30",  icon: Clock },
+  Pending:         { bg: "bg-[#b8863f]/10",  text: "text-[#b8863f]",  border: "border-[#b8863f]/30",  icon: Clock },
+  pending:         { bg: "bg-[#b8863f]/10",  text: "text-[#b8863f]",  border: "border-[#b8863f]/30",  icon: Clock },
+  Absent:          { bg: "bg-[#c1666b]/10",  text: "text-[#c1666b]",  border: "border-[#c1666b]/30",  icon: XCircle },
+  absent:          { bg: "bg-[#c1666b]/10",  text: "text-[#c1666b]",  border: "border-[#c1666b]/30",  icon: XCircle },
+  Rejected:        { bg: "bg-[#c1666b]/10",  text: "text-[#c1666b]",  border: "border-[#c1666b]/30",  icon: XCircle },
+  rejected:        { bg: "bg-[#c1666b]/10",  text: "text-[#c1666b]",  border: "border-[#c1666b]/30",  icon: XCircle },
+  "Not Submitted": { bg: "bg-[#F6EFE4]",     text: "text-[#a89890]",  border: "border-[#e8dccb]",     icon: AlertCircle },
 };
 
 // ─── Excel export (Export Reports tab) ─────────────────────────────────────
@@ -86,10 +105,24 @@ export const exportToExcel = (data, scholarName, reportType) => {
     ws["!cols"] = Object.keys(rows[0]).map(k => ({ wch: Math.max(k.length, ...rows.map(r => String(r[k] ?? "").length)) + 2 }));
     XLSX.utils.book_append_sheet(wb, ws, name);
   };
+  const addGroupedSheets = (rows, mapRow) => {
+    const groups = new Map();
+    rows.forEach(row => {
+      const date = new Date(row.submitted_at || row.deadline || 0);
+      const month = Number.isNaN(date.getTime()) ? "No Date" : date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+      const type = fmt(row.type || "Other Documents");
+      const key = `${month} - ${type}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(row);
+    });
+    [...groups.entries()].sort(([a], [b]) => b.localeCompare(a)).forEach(([name, groupedRows]) => {
+      addSheet(groupedRows.sort((a, b) => new Date(b.submitted_at || b.deadline || 0) - new Date(a.submitted_at || a.deadline || 0)).map(mapRow), name.slice(0, 31));
+    });
+  };
   if (reportType === "all" || reportType === "submissions")
-    addSheet(data.submissions.map(r => ({ Scholar: r.scholar, "Scholar ID": r.scholar_id, "Activity Type": fmt(r.type), "Service Date": r.service_date ? new Date(r.service_date).toLocaleDateString("en-PH") : "—", Hours: fmt(r.service_hours), Status: r.status, "Quality Status": fmt(r.quality_status), "Submitted At": r.submitted_at ? new Date(r.submitted_at).toLocaleDateString("en-PH") : "—" })), "Submissions");
+    addGroupedSheets(data.submissions, r => ({ Scholar: r.scholar, "Scholar ID": r.scholar_id, "Activity Type": fmt(r.type), "Service Date": r.service_date ? new Date(r.service_date).toLocaleDateString("en-PH") : "—", Hours: fmt(r.service_hours), Status: r.status, "Quality Status": fmt(r.quality_status), Deadline: r.deadline ? new Date(r.deadline).toLocaleDateString("en-PH") : "—", "Submitted At": r.submitted_at ? new Date(r.submitted_at).toLocaleDateString("en-PH") : "—", "Approved At": r.approved_at ? new Date(r.approved_at).toLocaleDateString("en-PH") : "—" }));
   if (reportType === "all" || reportType === "requirements")
-    addSheet(data.requirements.map(r => ({ Scholar: r.scholar, "Scholar ID": r.scholar_id, Requirement: fmt(r.type), Status: r.status, "Staff Comment": fmt(r.staff_comment), "Submitted At": r.submitted_at ? new Date(r.submitted_at).toLocaleDateString("en-PH") : "—" })), "Requirements");
+    addGroupedSheets(data.requirements, r => ({ Scholar: r.scholar, "Scholar ID": r.scholar_id, Requirement: fmt(r.type), Status: r.status, "Staff Comment": fmt(r.staff_comment), Deadline: r.deadline ? new Date(r.deadline).toLocaleDateString("en-PH") : "—", "Submitted At": r.submitted_at ? new Date(r.submitted_at).toLocaleDateString("en-PH") : "—", "Approved At": r.approved_at ? new Date(r.approved_at).toLocaleDateString("en-PH") : "—" }));
   if (reportType === "all" || reportType === "activities")
     addSheet(data.activities.map(r => ({ Scholar: r.scholar, "Scholar ID": r.scholar_id, Activity: r.activity, Date: r.date ? new Date(r.date).toLocaleDateString("en-PH") : "—", Location: fmt(r.location), Attended: r.attended, Method: fmt(r.method) })), "Activity Participation");
   const filename = `SummaryReport_${scholarName}_${Date.now()}.xlsx`;

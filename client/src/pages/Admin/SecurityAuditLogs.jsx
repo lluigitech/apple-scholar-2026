@@ -26,7 +26,6 @@ const resultConfig = {
 };
 
 const roleColors = {
-  scholar: '#802B36',
   staff:   '#1d4ed8',
   officer: '#f59e0b',
   admin:   '#7c3aed',
@@ -205,7 +204,6 @@ const SecurityAuditLogs = () => {
             className="text-sm px-3 py-2 rounded-lg border border-gray-200 outline-none"
             style={{ fontFamily: "'DM Sans', sans-serif", color: '#374151' }}>
             <option value="all">All Roles</option>
-            <option value="scholar">Scholar</option>
             <option value="staff">Staff</option>
             <option value="officer">Officer</option>
             <option value="admin">Admin</option>

@@ -1,7 +1,7 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import axios from 'axios';
 import {
-    Lock, Eye, EyeOff, CheckCircle, AlertTriangle,
+    Lock, Eye, EyeOff,
     ShieldCheck, Bell, User, ChevronRight, KeyRound,
 } from 'lucide-react';
 
@@ -55,6 +55,10 @@ const ScholarSettings = () => {
         duty_reminders: true,
     });
     const [notifSuccess, setNotifSuccess] = useState('');
+    const [dataConsent, setDataConsent] = useState({ consented: false, consented_at: null });
+    const [consentLoading, setConsentLoading] = useState(false);
+    const [consentMessage, setConsentMessage] = useState('');
+    const [privacyRequestLoading, setPrivacyRequestLoading] = useState(false);
 
     useEffect(() => {
         const loadSettings = async () => {
@@ -79,6 +83,8 @@ const ScholarSettings = () => {
                     yearLevel: data.year_level || prev.yearLevel,
                     status: data.status || prev.status,
                 }));
+                const consentRes = await axios.get(`${API_BASE}/scholar/data-consent`, { headers: authHeader() });
+                setDataConsent({ consented: Boolean(consentRes.data?.consented), consented_at: consentRes.data?.consented_at || null });
             } catch (err) {
                 console.error('Error loading scholar profile', err);
                 setError('Unable to load profile data. Please refresh or log in again.');
@@ -90,7 +96,9 @@ const ScholarSettings = () => {
             if (savedNotif) {
                 try {
                     setNotifSettings(JSON.parse(savedNotif));
-                } catch (ignored) {}
+                } catch (ignored) {
+                    console.warn('Unable to restore notification preferences:', ignored);
+                }
             }
         };
 
@@ -175,7 +183,7 @@ const ScholarSettings = () => {
             await axios.post('http://localhost:5000/api/change-password', {
                 email: profile.email,
                 new_password: newPassword,
-            });
+            }, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
 
             setPasswordSuccess('Password changed successfully!');
             setCurrentPassword('');
@@ -193,6 +201,54 @@ const ScholarSettings = () => {
         localStorage.setItem('notif_settings', JSON.stringify(notifSettings));
         setNotifSuccess('Notification preferences saved!');
         setTimeout(() => setNotifSuccess(''), 3000);
+    };
+
+    const handleConsentChange = async () => {
+        setConsentLoading(true);
+        setConsentMessage('');
+        try {
+            const res = await axios.patch(`${API_BASE}/scholar/data-consent`, { consented: !dataConsent.consented }, { headers: authHeader() });
+            setDataConsent(current => ({ ...current, consented: Boolean(res.data?.consented), consented_at: res.data?.consented ? new Date().toISOString() : null }));
+            setConsentMessage(res.data?.consented ? 'Data collection consent recorded.' : 'Data collection consent revoked.');
+        } catch (err) {
+            setConsentMessage(err.response?.data?.error || 'Unable to update data consent.');
+        } finally {
+            setConsentLoading(false);
+        }
+    };
+
+    const handlePrivacyRequest = async (requestType) => {
+        setPrivacyRequestLoading(true);
+        setConsentMessage('');
+        try {
+            await axios.post(`${API_BASE}/scholar/privacy-requests`, { request_type: requestType }, { headers: authHeader() });
+            setConsentMessage(requestType === 'export'
+                ? 'Data export request recorded for administrator review.'
+                : 'Data deletion request recorded for administrator review.');
+        } catch (err) {
+            setConsentMessage(err.response?.data?.error || 'Unable to create privacy request.');
+        } finally {
+            setPrivacyRequestLoading(false);
+        }
+    };
+
+    const handleDataExport = async () => {
+        setPrivacyRequestLoading(true);
+        setConsentMessage('');
+        try {
+            const response = await axios.get(`${API_BASE}/scholar/privacy-export`, { headers: authHeader(), responseType: 'blob' });
+            const url = URL.createObjectURL(response.data);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `apple-scholar-data-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
+            link.click();
+            URL.revokeObjectURL(url);
+            setConsentMessage('Your personal data export has been downloaded.');
+        } catch (err) {
+            setConsentMessage(err.response?.data?.error || 'Unable to download your data export.');
+        } finally {
+            setPrivacyRequestLoading(false);
+        }
     };
 
     // Toggle switch recolored to the maroon/gold pair — reads as a small
@@ -218,6 +274,7 @@ const ScholarSettings = () => {
 
     return (
         <div style={{ ...sans, background: IVORY, minHeight: '100vh' }}>
+            {loading && <div className="px-4 pt-3 text-center text-xs" style={{ color: GOLD }}>Loading account settings...</div>}
 
             {/* ── Hero band ─────────────────────────────────────── */}
             <div
@@ -409,6 +466,33 @@ const ScholarSettings = () => {
                                         >
                                             Save Profile
                                         </button>
+                                        <div className="rounded-xl p-4" style={{ background: IVORY, border: '1px solid #e9dfd8' }}>
+                                            <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: '#a56475' }}>Data Privacy Consent</p>
+                                            <p className="mt-2 text-xs leading-relaxed" style={{ color: '#6b6058' }}>
+                                                I consent to the collection and processing of my scholar profile, submissions, attendance, grades, and uploaded documents for scholarship monitoring and reporting.
+                                            </p>
+                                            <div className="mt-3 flex items-center justify-between gap-3">
+                                                <span className="text-xs font-bold" style={{ color: dataConsent.consented ? '#15803d' : '#991b1b' }}>
+                                                    {dataConsent.consented ? `Consented${dataConsent.consented_at ? ` on ${new Date(dataConsent.consented_at).toLocaleDateString('en-PH')}` : ''}` : 'Consent not recorded'}
+                                                </span>
+                                                <button onClick={handleConsentChange} disabled={consentLoading}
+                                                    className="rounded-full px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
+                                                    style={{ background: dataConsent.consented ? '#991b1b' : MAROON }}>
+                                                    {consentLoading ? 'Saving...' : dataConsent.consented ? 'Revoke Consent' : 'Give Consent'}
+                                                </button>
+                                            </div>
+                                            {consentMessage && <p className="mt-2 text-xs" style={{ color: '#6b6058' }}>{consentMessage}</p>}
+                                            <div className="mt-4 flex flex-wrap gap-2 border-t pt-3" style={{ borderColor: '#e9dfd8' }}>
+                                                <button type="button" onClick={handleDataExport} disabled={privacyRequestLoading}
+                                                    className="rounded-full border px-3 py-2 text-xs font-bold disabled:opacity-50" style={{ borderColor: GOLD, color: MAROON }}>
+                                                    Download My Data
+                                                </button>
+                                                <button type="button" onClick={() => handlePrivacyRequest('deletion')} disabled={privacyRequestLoading}
+                                                    className="rounded-full border px-3 py-2 text-xs font-bold disabled:opacity-50" style={{ borderColor: '#d9a0a0', color: '#991b1b' }}>
+                                                    Request Data Deletion
+                                                </button>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             )}

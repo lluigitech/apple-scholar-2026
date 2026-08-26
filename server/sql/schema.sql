@@ -35,11 +35,26 @@ CREATE TABLE IF NOT EXISTS submissions (
   description TEXT DEFAULT NULL,
   status VARCHAR(64) DEFAULT 'pending',
   staff_comment TEXT DEFAULT NULL,
+  officer_comment TEXT DEFAULT NULL,
+  generated_pdf_path VARCHAR(1000) DEFAULT NULL,
   submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  reviewed_at TIMESTAMP NULL DEFAULT NULL,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS submission_media (
+
+  CREATE TABLE IF NOT EXISTS file_assets (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    scholar_id VARCHAR(64) NOT NULL,
+    file_url VARCHAR(1000) NOT NULL,
+    public_id VARCHAR(500) NOT NULL,
+    resource_type VARCHAR(32) NOT NULL DEFAULT 'image',
+    file_format VARCHAR(16) DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_file_asset_url (file_url(255)),
+    INDEX idx_file_assets_scholar (scholar_id)
+  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   id INT AUTO_INCREMENT PRIMARY KEY,
   submission_id INT NOT NULL,
   file_path VARCHAR(500) NOT NULL,
@@ -61,10 +76,6 @@ CREATE TABLE IF NOT EXISTS grades (
   officer_comment TEXT DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-ALTER TABLE grades
-  ADD COLUMN grade_scale ENUM('k12', 'college') NOT NULL DEFAULT 'k12'
-  AFTER grade;
 
 CREATE TABLE IF NOT EXISTS compliance_settings (
   id INT PRIMARY KEY,
@@ -90,6 +101,9 @@ CREATE TABLE IF NOT EXISTS compliance_settings (
   updated_by INT DEFAULT NULL,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO compliance_settings (id) VALUES (1)
+ON DUPLICATE KEY UPDATE id = id;
 
 CREATE TABLE IF NOT EXISTS compliance_incident_log (
   id INT AUTO_INCREMENT PRIMARY KEY,
@@ -135,6 +149,29 @@ CREATE TABLE IF NOT EXISTS notification_logs (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS data_consents (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  purpose VARCHAR(128) NOT NULL,
+  consented TINYINT(1) NOT NULL DEFAULT 0,
+  consented_at TIMESTAMP NULL DEFAULT NULL,
+  revoked_at TIMESTAMP NULL DEFAULT NULL,
+  UNIQUE KEY uq_data_consent_user_purpose (user_id, purpose)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS privacy_requests (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  request_type ENUM('export', 'deletion') NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'pending',
+  requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  processed_at TIMESTAMP NULL DEFAULT NULL,
+  processed_by INT DEFAULT NULL,
+  notes TEXT DEFAULT NULL,
+  INDEX idx_privacy_requests_user (user_id),
+  INDEX idx_privacy_requests_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS audit_logs (
   id INT AUTO_INCREMENT PRIMARY KEY,
   user_id INT NOT NULL,
@@ -156,6 +193,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   source VARCHAR(32) DEFAULT 'manual',
   created_by INT DEFAULT NULL,
   created_by_role VARCHAR(32) DEFAULT NULL,
+  target_year_levels JSON DEFAULT NULL,
   is_active TINYINT DEFAULT 1,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -228,6 +266,7 @@ CREATE TABLE IF NOT EXISTS scholar_groups (
   group_name VARCHAR(255) NOT NULL,
   description TEXT DEFAULT NULL,
   created_by INT DEFAULT NULL,
+  assigned_staff_id INT DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -244,4 +283,13 @@ CREATE TABLE IF NOT EXISTS duty_group_assignments (
   group_id INT NOT NULL,
   assigned_by INT DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS officer_year_level_assignments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  officer_id INT NOT NULL,
+  year_level VARCHAR(64) NOT NULL,
+  assigned_by INT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_officer_year_level (officer_id, year_level)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

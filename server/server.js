@@ -16,6 +16,9 @@ const dutyRoutes       = require('./routes/dutyRoutes');
 const exportRoutes     = require('./routes/exportroutes'); // ← consistent casing
 const flaggedRoutes    = require('./routes/flaggedRoutes');
 const tasksRoutes      = require('./routes/tasksRoutes');
+const reportSummaryRoutes = require('./routes/reportSummaryRoutes');
+const { sendTaskDeadlineReminders, sendComplianceAlerts } = require('./utils/notifyHelpers');
+const { rateLimit } = require('./middleware/rateLimit');
 
 const app = express();
 
@@ -31,6 +34,13 @@ app.use(cors({
     credentials: true,
 }));
 app.use(express.json());
+app.use(rateLimit({ max: 120 }));
+app.use((req, res, next) => {
+    if (process.env.NODE_ENV === 'production' && req.headers['x-forwarded-proto'] !== 'https') {
+        return res.status(426).json({ error: 'HTTPS is required.' });
+    }
+    next();
+});
 
 // Static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -82,6 +92,7 @@ app.use('/api/duties',     dutyRoutes);
 app.use('/api/export',     exportRoutes);
 app.use('/api/flagged',    flaggedRoutes);
 app.use('/api/tasks',      tasksRoutes);
+app.use('/api/reports',    reportSummaryRoutes);
 
 // ─── Test Route ───────────────────────────────────────────────
 app.get('/', (req, res) => {
@@ -99,6 +110,29 @@ const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`Server is running on http://localhost:${PORT}`);
 });
+
+const reminderIntervalMs = 24 * 60 * 60 * 1000;
+let reminderRunInProgress = false;
+
+const runTaskDeadlineReminders = async () => {
+    if (process.env.ENABLE_DEADLINE_REMINDERS === 'false' || reminderRunInProgress) return;
+    reminderRunInProgress = true;
+    try {
+        const result = await sendTaskDeadlineReminders();
+        if (!result.skipped) console.log('[deadline-reminder] run complete:', result);
+        const alerts = await sendComplianceAlerts();
+        if (!alerts.skipped) console.log('[compliance-alert] run complete:', alerts);
+    } catch (err) {
+        console.error('[deadline-reminder] run failed:', err.message || err);
+    } finally {
+        reminderRunInProgress = false;
+    }
+};
+
+if (process.env.ENABLE_DEADLINE_REMINDERS !== 'false') {
+    setTimeout(runTaskDeadlineReminders, 15 * 1000);
+    setInterval(runTaskDeadlineReminders, reminderIntervalMs);
+}
 
 const initializeDatabase = () => {
     if (!process.env.DB_NAME) {
@@ -215,7 +249,7 @@ const initializeDatabase = () => {
         db.query(`
             INSERT INTO users (scholar_id, full_name, email, password, role, year_level, qr_code, status, must_change_password)
             VALUES (?, ?, ?, ?, 'admin', 'N/A', ?, 'active', 1)
-            ON DUPLICATE KEY UPDATE full_name = VALUES(full_name), password = VALUES(password), role = VALUES(role);
+            ON DUPLICATE KEY UPDATE full_name = VALUES(full_name), role = VALUES(role);
         `, [
             'ADMIN-001',
             process.env.DEFAULT_ADMIN_NAME || 'System Administrator',
@@ -268,6 +302,20 @@ const initializeDatabase = () => {
         console.log('✅ audit_logs table ensured');
     });
 
+    db.query(`
+        CREATE TABLE IF NOT EXISTS officer_year_level_assignments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            officer_id INT NOT NULL,
+            year_level VARCHAR(64) NOT NULL,
+            assigned_by INT DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_officer_year_level (officer_id, year_level)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `, (assignmentErr) => {
+        if (assignmentErr) console.error('Failed to create officer assignment table:', assignmentErr);
+        else console.log('✅ officer_year_level_assignments table ensured');
+    });
+
     // Keep compliance threshold settings compatible with older databases.
     db.query(`
         ALTER TABLE compliance_settings
@@ -292,7 +340,16 @@ const initializeDatabase = () => {
         ADD COLUMN IF NOT EXISTS monthly_recovery_cap DECIMAL(4,2) NOT NULL DEFAULT 2.00;
     `, (alterErr) => {
         if (alterErr) console.error('Failed to add compliance_settings fields:', alterErr);
-        else console.log('✅ compliance_settings fields ensured');
+        else {
+            console.log('✅ compliance_settings fields ensured');
+            db.query(
+                'INSERT INTO compliance_settings (id) VALUES (1) ON DUPLICATE KEY UPDATE id = id',
+                (seedErr) => {
+                    if (seedErr) console.error('Failed to seed compliance settings:', seedErr.message);
+                    else console.log('✅ compliance settings defaults ensured');
+                }
+            );
+        }
     });
 
     // Ensure submissions schema is compatible with current application logic.
@@ -307,7 +364,10 @@ const initializeDatabase = () => {
         ADD COLUMN IF NOT EXISTS service_hours DECIMAL(8,2) DEFAULT NULL,
         ADD COLUMN IF NOT EXISTS service_date DATE DEFAULT NULL,
         ADD COLUMN IF NOT EXISTS quality_score DECIMAL(5,2) DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS quality_status VARCHAR(64) DEFAULT NULL
+        ADD COLUMN IF NOT EXISTS quality_status VARCHAR(64) DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS officer_comment TEXT DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP NULL DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS generated_pdf_path VARCHAR(1000) DEFAULT NULL
     `, (alterErr) => {
         if (alterErr) console.error('Failed to ensure submissions schema:', alterErr);
         else console.log('✅ submissions table schema ensured');
@@ -350,13 +410,55 @@ const initializeDatabase = () => {
             source VARCHAR(32) DEFAULT 'manual',
             created_by INT DEFAULT NULL,
             created_by_role VARCHAR(32) DEFAULT NULL,
+            target_year_levels JSON DEFAULT NULL,
             is_active TINYINT DEFAULT 1,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `, (tErr) => {
         if (tErr) console.error('Failed to ensure tasks table:', tErr);
-        else console.log('✅ tasks table ensured');
+        else db.query(
+            'ALTER TABLE tasks ADD COLUMN IF NOT EXISTS target_year_levels JSON DEFAULT NULL',
+            (alterTaskErr) => {
+                if (alterTaskErr) console.error('Failed to ensure task target levels:', alterTaskErr.message);
+                else {
+                    db.query(
+                        `SELECT id, created_by FROM tasks
+                         WHERE created_by_role = 'officer' AND target_year_levels IS NULL`,
+                        (legacyErr, legacyTasks) => {
+                            if (legacyErr) {
+                                console.error('Failed to find legacy officer tasks:', legacyErr.message);
+                                return;
+                            }
+
+                            let remaining = legacyTasks.length;
+                            if (!remaining) {
+                                console.log('✅ tasks table and target levels ensured');
+                                return;
+                            }
+
+                            legacyTasks.forEach(task => {
+                                db.query(
+                                    `SELECT year_level FROM officer_year_level_assignments WHERE officer_id = ?`,
+                                    [task.created_by],
+                                    (levelsErr, levels) => {
+                                        if (!levelsErr && levels.length) {
+                                            db.query(
+                                                'UPDATE tasks SET target_year_levels = ? WHERE id = ?',
+                                                [JSON.stringify(levels.map(row => row.year_level)), task.id],
+                                                () => {}
+                                            );
+                                        }
+                                        remaining -= 1;
+                                        if (!remaining) console.log('✅ tasks table and target levels ensured');
+                                    }
+                                );
+                            });
+                        }
+                    );
+                }
+            }
+        );
     });
 };
 
@@ -372,4 +474,59 @@ db.ready
     })
     .catch((err) => {
         console.error('Database initialization skipped because the connection is not ready:', err.message || err);
+    });
+
+    db.query("ALTER TABLE scholar_groups ADD COLUMN IF NOT EXISTS assigned_staff_id INT DEFAULT NULL", (groupErr) => {
+        if (groupErr) console.error('Failed to add staff assignment column:', groupErr.message);
+        else db.query('UPDATE scholar_groups SET assigned_staff_id = created_by WHERE assigned_staff_id IS NULL AND created_by IS NOT NULL', () => {});
+    });
+
+    db.query(`
+        CREATE TABLE IF NOT EXISTS data_consents (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            purpose VARCHAR(128) NOT NULL,
+            consented TINYINT(1) NOT NULL DEFAULT 0,
+            consented_at TIMESTAMP NULL DEFAULT NULL,
+            revoked_at TIMESTAMP NULL DEFAULT NULL,
+            UNIQUE KEY uq_data_consent_user_purpose (user_id, purpose)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `, (consentErr) => {
+        if (consentErr) console.error('Failed to create data_consents table:', consentErr);
+        else console.log('✅ data_consents table ensured');
+    });
+
+    db.query(`
+        CREATE TABLE IF NOT EXISTS file_assets (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            scholar_id VARCHAR(64) NOT NULL,
+            file_url VARCHAR(1000) NOT NULL,
+            public_id VARCHAR(500) NOT NULL,
+            resource_type VARCHAR(32) NOT NULL DEFAULT 'image',
+            file_format VARCHAR(16) DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_file_asset_url (file_url(255)),
+            INDEX idx_file_assets_scholar (scholar_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `, (assetErr) => {
+        if (assetErr) console.error('Failed to create file_assets table:', assetErr);
+        else console.log('✅ file_assets table ensured');
+    });
+
+    db.query(`
+        CREATE TABLE IF NOT EXISTS privacy_requests (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            user_id INT NOT NULL,
+            request_type ENUM('export', 'deletion') NOT NULL,
+            status VARCHAR(32) NOT NULL DEFAULT 'pending',
+            requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            processed_at TIMESTAMP NULL DEFAULT NULL,
+            processed_by INT DEFAULT NULL,
+            notes TEXT DEFAULT NULL,
+            INDEX idx_privacy_requests_user (user_id),
+            INDEX idx_privacy_requests_status (status)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `, (privacyErr) => {
+        if (privacyErr) console.error('Failed to create privacy_requests table:', privacyErr);
+        else console.log('✅ privacy_requests table ensured');
     });

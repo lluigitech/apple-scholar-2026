@@ -5,7 +5,7 @@ const duty    = require('../../controllers/dutyController');
 const { verifyToken, requireRole } = require('../../middleware/authMiddleware');
 
 // Scholars
-router.get('/pending', staff.getPendingScholars);
+router.get('/pending', verifyToken, requireRole(['staff', 'admin', 'officer']), staff.getPendingScholars);
 
 // Announcements
 router.get('/announcements', staff.getAnnouncements);
@@ -25,19 +25,19 @@ router.put   ('/attendance/:id',           staff.updateAttendance);
 router.delete('/attendance/:id',           staff.deleteAttendance);
 
 // Reports
-router.get('/reports/duty-attendance', staff.reportDutyAttendance);
-router.get('/reports/submissions',     staff.reportSubmissions);
-router.get('/reports/requirements',    staff.reportRequirements);
-router.get('/reports/activities',      staff.reportActivities);
+router.get('/reports/duty-attendance', verifyToken, requireRole(['staff', 'admin', 'officer']), staff.reportDutyAttendance);
+router.get('/reports/submissions',     verifyToken, requireRole(['staff', 'admin', 'officer']), staff.reportSubmissions);
+router.get('/reports/requirements',    verifyToken, requireRole(['staff', 'admin', 'officer']), staff.reportRequirements);
+router.get('/reports/activities',      verifyToken, requireRole(['staff', 'admin', 'officer']), staff.reportActivities);
 
-// ── Scholar Groups (Staff-only) ─────────────────────────────
-router.get   ('/groups',                          verifyToken, requireRole(['staff', 'Staff']), staff.getGroups);
-router.post  ('/groups',                          verifyToken, requireRole(['staff', 'Staff']), staff.createGroup);
-router.get   ('/groups/:group_id/members',        verifyToken, requireRole(['staff', 'Staff']), staff.getGroupMembers);
-router.post  ('/groups/:group_id/members',        verifyToken, requireRole(['staff', 'Staff']), staff.addGroupMembers);
-router.delete('/groups/:group_id/members/:scholar_id', verifyToken, requireRole(['staff', 'Staff']), staff.removeGroupMember);
-router.get   ('/scholars-ungrouped',              verifyToken, requireRole(['staff', 'Staff']), staff.getUngroupedScholars);
-router.get   ('/scholars-with-groups',            verifyToken, requireRole(['staff', 'Staff']), staff.getAllScholarsWithGroups);
+// ── Scholar Groups (Admin-controlled; staff may read for duty assignment) ──
+router.get   ('/groups',                          verifyToken, requireRole(['staff', 'Staff', 'admin']), staff.getGroups);
+router.post  ('/groups',                          verifyToken, requireRole(['admin']), staff.createGroup);
+router.get   ('/groups/:group_id/members',        verifyToken, requireRole(['admin']), staff.getGroupMembers);
+router.post  ('/groups/:group_id/members',        verifyToken, requireRole(['admin']), staff.addGroupMembers);
+router.delete('/groups/:group_id/members/:scholar_id', verifyToken, requireRole(['admin']), staff.removeGroupMember);
+router.get   ('/scholars-ungrouped',              verifyToken, requireRole(['admin']), staff.getUngroupedScholars);
+router.get   ('/scholars-with-groups',            verifyToken, requireRole(['admin']), staff.getAllScholarsWithGroups);
 
 // ── Duty <-> Group Assignment (Staff-only) ──────────────────
 // NOTE: dating tumatawag ito sa staffController (staff.xxx), pero na-move na

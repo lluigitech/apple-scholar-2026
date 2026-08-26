@@ -4,7 +4,42 @@ const QRCode = require('qrcode');
 const fs     = require('fs');
 const path   = require('path');
 const { sendAnnouncementNotifyEmails, sendWelcomeEmail } = require('../utils/notifyHelpers');
+const { logAuditEvent } = require('../utils/auditLogger');
+const { getAssignedYearLevels } = require('../utils/officerAssignments');
 const { logComplianceIncident, clampCompliance, getComplianceSettings, calculateCurrentCompliance, resolveGradeScale } = require('../utils/complianceLogger');
+
+exports.getPrivacyRequests = (req, res) => {
+    db.query(
+        `SELECT pr.id, pr.request_type, pr.status, pr.requested_at, pr.processed_at, pr.notes,
+                u.id AS user_id, u.scholar_id, u.full_name, u.email
+         FROM privacy_requests pr
+         JOIN users u ON u.id = pr.user_id
+         ORDER BY pr.requested_at DESC`,
+        (err, rows) => {
+            if (err) return res.status(500).json({ error: 'Failed to load privacy requests.' });
+            res.json(rows);
+        }
+    );
+};
+
+exports.updatePrivacyRequest = async (req, res) => {
+    const status = req.body?.status;
+    if (!['approved', 'rejected', 'completed'].includes(status)) {
+        return res.status(400).json({ error: 'Status must be approved, rejected, or completed.' });
+    }
+
+    db.query(
+        `UPDATE privacy_requests SET status = ?, processed_at = NOW(), processed_by = ?, notes = ?
+         WHERE id = ? AND status = 'pending'`,
+        [status, req.user.id, req.body?.notes || null, req.params.id],
+        async (err, result) => {
+            if (err) return res.status(500).json({ error: 'Failed to update privacy request.' });
+            if (!result.affectedRows) return res.status(404).json({ error: 'Pending privacy request not found.' });
+            await logAuditEvent({ req, action: `privacy_request_${status}`, module: 'Data Privacy', details: `Processed privacy request ${req.params.id}`, result: 'success' });
+            res.json({ id: Number(req.params.id), status });
+        }
+    );
+};
 
 // ─── ID Generators ────────────────────────────────────────────
 const generateId = (prefix, padLength, cb) => {
@@ -102,6 +137,14 @@ exports.createUser = async (req, res) => {
                         () => {}
                     );
 
+                    logAuditEvent({
+                        req,
+                        action: 'create',
+                        module: 'User Management',
+                        details: `Created ${role} user ${email} (${generatedId})`,
+                        result: 'success',
+                    });
+
                     res.status(201).json({
                         message: 'User created successfully',
                         userId: result.insertId,
@@ -136,6 +179,13 @@ exports.updateUser = async (req, res) => {
         }
         db.query(sql, params, (err) => {
             if (err) return res.status(500).json({ error: 'Error updating user' });
+            logAuditEvent({
+                req,
+                action: 'edit',
+                module: 'User Management',
+                details: `Updated user ${id} (${email})`,
+                result: 'success',
+            });
             res.json({ message: 'User updated successfully' });
         });
     } catch (err) {
@@ -154,6 +204,13 @@ exports.assignUserRole = (req, res) => {
     db.query('UPDATE users SET role = ? WHERE id = ?', [newRole, id], (err, result) => {
         if (err)                     return res.status(500).json({ error: 'Database error', details: err });
         if (result.affectedRows === 0) return res.status(404).json({ error: 'User not found' });
+        logAuditEvent({
+            req,
+            action: 'edit',
+            module: 'User Management',
+            details: `Changed role for user ${id} to ${newRole}`,
+            result: 'success',
+        });
         res.json({ message: 'User role updated successfully', newRole });
     });
 };
@@ -176,6 +233,13 @@ exports.deleteUser = (req, res) => {
             return res.status(500).json({ error: 'Error deleting user', details: err.message });
         }
         if (result && result.affectedRows === 0) return res.status(404).json({ error: 'User not found' });
+        logAuditEvent({
+            req,
+            action: 'delete',
+            module: 'User Management',
+            details: `Deactivated user ${userId}`,
+            result: 'success',
+        });
         res.json({ message: 'User marked inactive (soft-deleted)' });
     });
 };
@@ -995,6 +1059,142 @@ exports.getMonthlySubmissions = (req, res) => {
             }));
 
             res.json(enrichedSubmissions);
+        });
+    });
+};
+
+exports.getOfficerAssignments = async (req, res) => {
+    try {
+        const [officers, assignments] = await Promise.all([
+            new Promise((resolve, reject) => db.query("SELECT id, scholar_id, full_name, email, year_level, status FROM users WHERE role = 'officer' ORDER BY full_name", (err, rows) => err ? reject(err) : resolve(rows))),
+            new Promise((resolve, reject) => db.query('SELECT officer_id, year_level FROM officer_year_level_assignments ORDER BY year_level', (err, rows) => err ? reject(err) : resolve(rows))),
+        ]);
+        const byOfficer = assignments.reduce((map, row) => {
+            if (!map[row.officer_id]) map[row.officer_id] = [];
+            map[row.officer_id].push(row.year_level);
+            return map;
+        }, {});
+        res.json(officers.map(officer => ({ ...officer, assigned_year_levels: byOfficer[officer.id] || [] })));
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to load officer assignments' });
+    }
+};
+
+exports.updateOfficerAssignments = async (req, res) => {
+    const officerId = Number(req.params.id);
+    const levels = Array.isArray(req.body?.year_levels) ? [...new Set(req.body.year_levels.map(String).map(v => v.trim()).filter(Boolean))] : [];
+    if (!officerId) return res.status(400).json({ error: 'Invalid officer id' });
+    try {
+        await new Promise((resolve, reject) => db.query("SELECT id FROM users WHERE id = ? AND role = 'officer'", [officerId], (err, rows) => err ? reject(err) : rows.length ? resolve() : reject(Object.assign(new Error('Officer not found'), { statusCode: 404 }))));
+        await new Promise((resolve, reject) => db.query('DELETE FROM officer_year_level_assignments WHERE officer_id = ?', [officerId], err => err ? reject(err) : resolve()));
+        if (levels.length) {
+            await new Promise((resolve, reject) => db.query('INSERT INTO officer_year_level_assignments (officer_id, year_level, assigned_by) VALUES ?', [levels.map(level => [officerId, level, req.user.id])], err => err ? reject(err) : resolve()));
+        }
+        await logAuditEvent({ req, action: 'edit', module: 'Officer Assignments', details: `Assigned year levels to officer ${officerId}: ${levels.join(', ') || 'none'}`, result: 'success' });
+        res.json({ message: 'Officer assignments updated', year_levels: levels });
+    } catch (err) {
+        res.status(err.statusCode || 500).json({ error: err.statusCode === 404 ? 'Officer not found' : 'Failed to update officer assignments' });
+    }
+};
+
+exports.getStaffAssignments = (req, res) => {
+    const staffSql = `
+        SELECT
+            u.id,
+            u.full_name,
+            u.email,
+            g.id AS group_id,
+            g.group_name,
+            g.description,
+            (SELECT COUNT(*) FROM scholar_group_members m WHERE m.group_id = g.id) AS member_count
+        FROM users u
+        LEFT JOIN scholar_groups g ON g.assigned_staff_id = u.id
+        WHERE u.role = 'staff'
+        ORDER BY u.full_name, g.group_name
+    `;
+
+    db.query(staffSql, (err, rows) => {
+        if (err) {
+            console.error('getStaffAssignments failed:', err);
+            return res.status(500).json({ error: 'Failed to load staff assignments' });
+        }
+
+        const staffMap = new Map();
+        rows.forEach((row) => {
+            if (!staffMap.has(row.id)) {
+                staffMap.set(row.id, {
+                    id: row.id,
+                    full_name: row.full_name,
+                    email: row.email,
+                    assigned_groups: [],
+                });
+            }
+
+            if (row.group_id) {
+                staffMap.get(row.id).assigned_groups.push({
+                    id: row.group_id,
+                    group_name: row.group_name,
+                    description: row.description,
+                    member_count: Number(row.member_count || 0),
+                });
+            }
+        });
+
+        db.query(`
+            SELECT
+                id,
+                group_name,
+                description,
+                assigned_staff_id,
+                (SELECT COUNT(*) FROM scholar_group_members m WHERE m.group_id = scholar_groups.id) AS member_count
+            FROM scholar_groups
+            ORDER BY group_name
+        `, (groupErr, groups) => {
+            if (groupErr) {
+                console.error('getStaffAssignments groups failed:', groupErr);
+                return res.status(500).json({ error: 'Failed to load scholar groups' });
+            }
+
+            res.json({
+                staff: Array.from(staffMap.values()),
+                groups: groups.map((group) => ({
+                    ...group,
+                    member_count: Number(group.member_count || 0),
+                })),
+            });
+        });
+    });
+};
+
+exports.updateStaffAssignments = (req, res) => {
+    const staffId = Number(req.params.id);
+    const groupIds = Array.isArray(req.body?.group_ids) ? [...new Set(req.body.group_ids.map(Number).filter(Boolean))] : [];
+    if (!staffId) return res.status(400).json({ error: 'Invalid staff id' });
+    db.query("SELECT id FROM users WHERE id = ? AND role = 'staff'", [staffId], (staffErr, staffRows) => {
+        if (staffErr) return res.status(500).json({ error: 'Failed to resolve staff account' });
+        if (!staffRows.length) return res.status(404).json({ error: 'Staff account not found' });
+        db.query('UPDATE scholar_groups SET assigned_staff_id = NULL WHERE assigned_staff_id = ?', [staffId], (clearErr) => {
+            if (clearErr) return res.status(500).json({ error: 'Failed to clear staff assignments' });
+            if (!groupIds.length) return res.json({ message: 'Staff assignments updated', group_ids: [] });
+            db.query('UPDATE scholar_groups SET assigned_staff_id = ? WHERE id IN (?)', [staffId, groupIds], async (assignErr) => {
+                if (assignErr) return res.status(500).json({ error: 'Failed to assign staff groups' });
+                await logAuditEvent({ req, action: 'edit', module: 'Staff Assignments', details: `Assigned groups to staff ${staffId}: ${groupIds.join(', ')}`, result: 'success' });
+                res.json({ message: 'Staff assignments updated', group_ids: groupIds });
+            });
+        });
+    });
+};
+
+exports.deleteStaffAssignments = (req, res) => {
+    const staffId = Number(req.params.id);
+    if (!staffId) return res.status(400).json({ error: 'Invalid staff id' });
+    db.query("SELECT id FROM users WHERE id = ? AND role = 'staff'", [staffId], (staffErr, staffRows) => {
+        if (staffErr) return res.status(500).json({ error: 'Failed to resolve staff account' });
+        if (!staffRows.length) return res.status(404).json({ error: 'Staff account not found' });
+        db.query('UPDATE scholar_groups SET assigned_staff_id = NULL WHERE assigned_staff_id = ?', [staffId], async (clearErr) => {
+            if (clearErr) return res.status(500).json({ error: 'Failed to delete staff assignments' });
+            await logAuditEvent({ req, action: 'delete', module: 'Staff Assignments', details: `Deleted group assignments for staff ${staffId}`, result: 'success' });
+            res.json({ message: 'Staff assignments deleted', group_ids: [] });
         });
     });
 };

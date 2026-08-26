@@ -287,7 +287,7 @@ function AnnouncementCard({ ann, isLatest, onNotify, notifyingId }) {
                             {new Date(ann.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}
                         </span>
                         <span className="text-[10px] text-slate-300">•</span>
-                        <span className="text-[10px] font-bold text-[#7f2d3a] uppercase tracking-wider">{ann.created_by}</span>
+                        <span className="text-[10px] font-bold text-[#7f2d3a] uppercase tracking-wider">Announced by {ann.created_by_name || ann.created_by || 'Unknown'}{ann.created_by_role ? ` (${ann.created_by_role})` : ''}</span>
                         <button
                             onClick={() => onNotify(ann.id)}
                             disabled={notifyingId === ann.id}

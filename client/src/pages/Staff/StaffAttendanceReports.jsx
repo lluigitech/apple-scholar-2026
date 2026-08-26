@@ -5,6 +5,7 @@ import {
     CheckCircle, XCircle, AlertTriangle, Users,
     FileSpreadsheet, Filter, Clock
 } from 'lucide-react';
+import { buildSummaryRows, currentPeriodLabel, downloadReportSummaryPdf } from '../../utils/reportPdfExport';
 
 const API = 'http://localhost:5000/api';
 const MAROON = '#7f2d3a';
@@ -36,6 +37,7 @@ const StaffAttendanceReports = () => {
     const [statusFilter, setStatusFilter] = useState('');
     const [dateFrom, setDateFrom]     = useState('');
     const [dateTo, setDateTo]         = useState('');
+    const [pdfLoading, setPdfLoading] = useState(false);
 
     useEffect(() => {
         fetchAll();
@@ -141,6 +143,19 @@ const StaffAttendanceReports = () => {
         });
     };
 
+    const exportPDF = async () => {
+        setPdfLoading(true);
+        try {
+            const rows = buildSummaryRows(filtered, row => row.status === 'present');
+            await downloadReportSummaryPdf({ role: 'staff', reportTitle: 'Attendance Reports', periodLabel: currentPeriodLabel(), rows });
+        } catch (err) {
+            console.error(err);
+            alert(err.response?.data?.message || 'Failed to generate the PDF report.');
+        } finally {
+            setPdfLoading(false);
+        }
+    };
+
     const uniqueDuties = [...new Set(records.map(r => r.duty).filter(Boolean))];
 
     return (
@@ -169,6 +184,11 @@ const StaffAttendanceReports = () => {
                             className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-xs font-bold hover:opacity-90 transition-all"
                             style={{ background: '#0f9d58' }}>
                             <FileSpreadsheet size={13} /> Google Sheets
+                        </button>
+                        <button onClick={exportPDF} disabled={pdfLoading}
+                            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-white text-xs font-bold hover:opacity-90 transition-all disabled:opacity-60"
+                            style={{ background: MAROON }}>
+                            <Download size={13} /> {pdfLoading ? 'Generating PDF...' : 'Export PDF'}
                         </button>
                     </div>
                 </div>

@@ -1,15 +1,28 @@
 const express = require('express');
 const router  = express.Router();
 const admin   = require('../../controllers/adminController');
+const staff   = require('../../controllers/staffController');
 const { verifyToken, requireRole } = require('../../middleware/authMiddleware');
 
 // Users
-router.get   ('/users',              admin.getAllUsers);
-router.post  ('/users',              admin.createUser);
-router.put   ('/users/:id',          admin.updateUser);
-router.post  ('/users/:id/role',     admin.assignUserRole);
-router.delete('/users/:id',          admin.deleteUser);
+router.get   ('/users',              verifyToken, requireRole(['admin']), admin.getAllUsers);
+router.get   ('/officer-assignments', verifyToken, requireRole(['admin']), admin.getOfficerAssignments);
+router.put   ('/officer-assignments/:id', verifyToken, requireRole(['admin']), admin.updateOfficerAssignments);
+router.get   ('/staff-assignments', verifyToken, requireRole(['admin']), admin.getStaffAssignments);
+router.put   ('/staff-assignments/:id', verifyToken, requireRole(['admin']), admin.updateStaffAssignments);
+router.delete('/staff-assignments/:id', verifyToken, requireRole(['admin']), admin.deleteStaffAssignments);
+router.get   ('/scholar-groups', verifyToken, requireRole(['admin']), staff.getGroups);
+router.post  ('/scholar-groups', verifyToken, requireRole(['admin']), staff.createGroup);
+router.get   ('/scholar-groups/scholars', verifyToken, requireRole(['admin']), staff.getAllScholarsWithGroups);
+router.post  ('/scholar-groups/:group_id/members', verifyToken, requireRole(['admin']), staff.addGroupMembers);
+router.delete('/scholar-groups/:group_id/members/:scholar_id', verifyToken, requireRole(['admin']), staff.removeGroupMember);
+router.post  ('/users',              verifyToken, requireRole(['admin']), admin.createUser);
+router.put   ('/users/:id',          verifyToken, requireRole(['admin']), admin.updateUser);
+router.post  ('/users/:id/role',     verifyToken, requireRole(['admin']), admin.assignUserRole);
+router.delete('/users/:id',          verifyToken, requireRole(['admin']), admin.deleteUser);
 router.get   ('/users/:id/qr',       admin.getUserQR);
+router.get   ('/privacy-requests',   verifyToken, requireRole(['admin']), admin.getPrivacyRequests);
+router.patch ('/privacy-requests/:id', verifyToken, requireRole(['admin']), admin.updatePrivacyRequest);
 
 // Scholar profile
 router.get('/scholars/:id/profile',     admin.getScholarProfile);
