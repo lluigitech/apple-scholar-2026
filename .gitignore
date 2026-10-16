@@ -10,6 +10,7 @@ build/
 client/dist/
 client/build/
 server/uploads/generated-letters/
+server/backups/
 submission-*.docx
 submission-*.pdf
 submission-*.png

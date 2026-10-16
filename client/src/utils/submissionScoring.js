@@ -3,6 +3,45 @@
 // ML scoring service is available, swap out buildEval while preserving the
 // same return shape.
 
+// The scoring contract is intentionally three-way in the UI model,
+// rendered as a 100-point scoreboard with explicit subcomponent maxes.
+export const LETTER_BODY_MAX = 70;
+const DOCUMENTATION_MAX = 20;
+const INFO_MAX = 10;
+
+export function classifyQualityScore(score) {
+    const normalizedScore = Math.min(Math.max(Number(score) || 0, 0), 100);
+
+    if (normalizedScore >= 90) {
+        return { riskLevel: 'accepted', riskColor: '#16a34a', riskLabel: 'Excellent', accepted: true, qualityStatus: 'accepted' };
+    }
+    if (normalizedScore >= 75) {
+        return { riskLevel: 'accepted', riskColor: '#16a34a', riskLabel: 'Good', accepted: true, qualityStatus: 'accepted' };
+    }
+    if (normalizedScore >= 50) {
+        return { riskLevel: 'medium', riskColor: '#d97706', riskLabel: 'Needs Improvement', accepted: false, qualityStatus: 'medium_risk' };
+    }
+    return { riskLevel: 'high', riskColor: '#ef4444', riskLabel: 'Non-Compliant', accepted: false, qualityStatus: 'high_risk' };
+}
+
+export function classifyAcademicTone(body) {
+    const text = asText(body).toLowerCase();
+    if (!text) return { toneLabel: 'Formal', toneColor: '#16a34a' };
+
+    const formalSignals = [
+        /\bdear\b/, /\brespectfully\b/, /\bsincerely\b/, /\bthank you\b/, /\bgrateful\b/, /\bappreciate\b/, /\bscholarship\b/, /\bfoundation\b/,
+    ];
+    const informalSignals = [
+        /\bgonna\b/, /\bwanna\b/, /\bthanks a lot\b/, /\bsuper\b/, /\bcan\\'t\b/, /\bdon\\'t\b/, /\bwon\\'t\b/, /\bain\\'t\b/,
+    ];
+    const formalScore = formalSignals.filter((pattern) => pattern.test(text)).length;
+    const informalScore = informalSignals.filter((pattern) => pattern.test(text)).length;
+
+    if (formalScore >= informalScore && formalScore > 0) return { toneLabel: 'Formal', toneColor: '#16a34a' };
+    if (informalScore > 0) return { toneLabel: 'Informal', toneColor: '#ef4444' };
+    return { toneLabel: 'Moderate', toneColor: '#d97706' };
+}
+
 const FORMAL_WORDS = [
     'furthermore', 'therefore', 'accordingly', 'hereby', 'grateful',
     'appreciate', 'sincerely', 'respectfully', 'honor', 'commitment',
@@ -42,12 +81,6 @@ export function calcReportScore(info, body) {
     const paragraphs = countParagraphs(normalized);
 
     let score = 0;
-    score += asText(info.name).length > 2 ? 10 : 0;
-    score += asText(info.age).length > 0 ? 5 : 0;
-    score += asText(info.year).length > 0 ? 5 : 0;
-    score += asText(info.course).length > 2 ? 5 : 0;
-    score += asText(info.school).length > 2 ? 5 : 0;
-
     score += words >= 50 ? 12 : 0;
     score += words >= 150 ? 16 : 0;
     score += words >= 300 ? 10 : 0;
@@ -68,56 +101,63 @@ export function calcReportScore(info, body) {
     return Math.min(Math.max(Math.round(score), 0), 100);
 }
 
+export function calcInfoScore(info) {
+    let score = 0;
+    score += asText(info.name).length > 2 ? 3 : 0;
+    score += asText(info.age).length > 0 ? 1 : 0;
+    score += asText(info.year).length > 0 ? 1.5 : 0;
+    score += asText(info.course).length > 2 ? 2 : 0;
+    score += asText(info.school).length > 2 ? 2 : 0;
+    score += asText(info.date).length > 0 ? 0.5 : 0;
+    return Math.min(score, 10);
+}
+
+export function isInfoBlank(info) {
+    return !asText(info.name)
+        && !asText(info.age)
+        && !asText(info.year)
+        && !asText(info.course)
+        && !asText(info.school)
+        && !asText(info.date);
+}
+
 export function calcMediaScore(media) {
     if (!Array.isArray(media) || media.length === 0) return 0;
 
-    const photos = media.length;
-    const described = media.filter(m => m.description?.trim().length > 3).length;
-
-    let score = 10;
-    score += photos >= 1 ? 20 : 0;
-    score += photos >= 2 ? 10 : 0;
-    score += photos >= 3 ? 10 : 0;
-    score += photos >= 5 ? 5 : 0;
-    score += Math.min((described / photos) * 30, 30);
-
-    return Math.min(Math.round(score), 100);
+    const photos = Array.isArray(media) ? media.length : 0;
+    const described = Array.isArray(media) ? media.filter(m => m.description?.trim().length > 3).length : 0;
+    const pictureScore = photos >= 1 ? 15 : 0;
+    const captionScore = Math.min(described, photos) >= 1 ? 5 : 0;
+    const total = Math.min(Math.round(pictureScore + captionScore), 20);
+    return total;
 }
 
 export function buildEval(info, body, media) {
-    const reportScore = calcReportScore(info, body);
+    const rawReportScore = calcReportScore(info, body);
     const mediaScore = calcMediaScore(media);
-    const overallScore = Math.round(reportScore * 0.7 + mediaScore * 0.3);
+    const infoScore = calcInfoScore(info);
+
+    const reportScore = rawReportScore * LETTER_BODY_MAX / 100;
+    const overallScore = Math.min(reportScore + mediaScore + infoScore, 100);
+
     const checklist = CHECKLIST.map(item => ({ item, passed: item.check(info, body, media) }));
-    const toneLabel = overallScore >= 80 ? 'Strong' : overallScore >= 60 ? 'Moderate' : 'Informal';
-    const toneColor = overallScore >= 80 ? '#16a34a' : overallScore >= 60 ? '#d97706' : '#ef4444';
+    const tone = classifyAcademicTone(body);
 
-    let riskLevel = 'high';
-    let riskColor = '#ef4444';
-    let riskLabel = 'High Risk';
-    let accepted = false;
-    let qualityStatus = 'high_risk';
+    const quality = classifyQualityScore(overallScore);
 
-    if (overallScore >= 71) {
-        riskLevel = 'accepted';
-        riskColor = '#16a34a';
-        riskLabel = 'Accepted';
-        accepted = true;
-        qualityStatus = 'accepted';
-    } else if (overallScore >= 51) {
-        riskLevel = 'medium';
-        riskColor = '#d97706';
-        riskLabel = 'Medium Risk';
-        qualityStatus = 'medium_risk';
-    }
-
-    const sentimentLabel = overallScore >= 71 ? 'Positive' : overallScore >= 51 ? 'Neutral' : 'Negative';
+    const sentimentLabel = overallScore >= 75 ? 'Positive' : overallScore >= 50 ? 'Neutral' : 'Negative';
     const sentimentScore = Math.max(-1, Math.min(1, (overallScore - 50) / 50));
 
     return {
-        reportScore, mediaScore, overallScore, checklist,
-        toneLabel, toneColor, riskLevel, riskColor, riskLabel, accepted,
-        qualityStatus, sentimentLabel, sentimentScore,
+        reportScore,
+        mediaScore,
+        infoScore,
+        overallScore,
+        checklist,
+        ...tone,
+        ...quality,
+        sentimentLabel,
+        sentimentScore,
     };
 }
 

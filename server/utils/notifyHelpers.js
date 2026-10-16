@@ -122,26 +122,38 @@ const getAnnouncementRecipients = async (announcementId) => {
     const targetLevels = normalizeTargetLevels(announcement.target_levels);
     const roles = targetRoles.length ? targetRoles : (announcement.created_by_role ? [announcement.created_by_role] : ['scholar', 'staff', 'officer']);
 
-    let sql = `SELECT id, scholar_id, full_name, email, role, year_level FROM users WHERE status = 'active'`;
+    let sql = `SELECT u.id, u.scholar_id, u.full_name, u.email, u.role, u.year_level, p.settings_json AS preferences
+               FROM users u LEFT JOIN admin_preferences p ON p.user_id = u.id
+               WHERE u.status = 'active'`;
     const values = [];
 
     if (roles.includes('scholar')) {
-        sql += ` AND role = 'scholar'`;
+        sql += ` AND u.role = 'scholar'`;
         if (targetLevels.length) {
             const placeholders = targetLevels.map(() => '?').join(', ');
-            sql += ` AND (year_level IS NULL OR year_level IN (${placeholders}))`;
+            sql += ` AND (u.year_level IS NULL OR u.year_level IN (${placeholders}))`;
             values.push(...targetLevels);
         }
     } else {
-        sql += ` AND role IN (${roles.map(() => '?').join(', ')})`;
+        sql += ` AND u.role IN (${roles.map(() => '?').join(', ')})`;
         values.push(...roles);
     }
 
-    sql += ' ORDER BY full_name';
+    sql += ' ORDER BY u.full_name';
 
     const rows = await queryDb(sql, values);
+    const eligibleRecipients = rows.filter((recipient) => {
+        if (recipient.role !== 'admin') return true;
+        try {
+            const preferences = recipient.preferences ? JSON.parse(recipient.preferences) : {};
+            return preferences.emailNotifications !== false;
+        } catch (error) {
+            console.error('Invalid administrator notification preferences:', error);
+            return true;
+        }
+    });
 
-    return { announcement, recipients: rows };
+    return { announcement, recipients: eligibleRecipients };
 };
 
 exports.sendDutyNotifyEmails = (dutyId, cb) => {
@@ -214,11 +226,13 @@ exports.sendWelcomeEmail = (user, plainPassword, cb) => {
         if (!user.email) return cb(null, { ok: false, error: 'No email on file for this user' });
 
         const subject = 'Welcome to Kalinga Scholar — Your Account Details';
+        const portalUrl = `${(process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/+$/, '')}/account/setup`;
         const text = `Hello ${user.full_name || ''},\n\n` +
             `An account has been created for you on Kalinga Scholar.\n\n` +
             `Login ID: ${user.generatedId}\n` +
             `Email: ${user.email}\n` +
             `Temporary Password: ${plainPassword}\n\n` +
+            `Complete your account setup here: ${portalUrl}\n\n` +
             `Please log in and change your password immediately, as required on first login.\n\n` +
             `— Kalinga at Pag-ibig Foundation`;
 
@@ -249,6 +263,29 @@ exports.sendWelcomeEmail = (user, plainPassword, cb) => {
             });
             cb(null, { ok: false, error: String(err) });
         }
+    })().catch((err) => cb(err));
+};
+
+exports.sendPasswordResetEmail = (user, resetUrl, cb) => {
+    (async () => {
+        const transporter = getTransporter();
+        if (!transporter) return cb(null, { ok: false, error: 'SMTP not configured' });
+
+        const info = await transporter.sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to: user.email,
+            subject: 'Kalinga Scholar - Reset your password',
+            text: `Hello ${user.full_name || ''},\n\nUse this link to reset your Scholar Portal password:\n${resetUrl}\n\nThis link expires in 15 minutes. If you did not request this, you can ignore this email.`,
+        });
+        await logNotification({
+            scholar_id: user.scholar_id,
+            recipient: user.email,
+            channel: 'email',
+            type: 'password_reset',
+            status: 'sent',
+            detail: info.messageId || 'sent',
+        });
+        cb(null, { ok: true, sent: true });
     })().catch((err) => cb(err));
 };
 
@@ -383,10 +420,23 @@ exports.sendComplianceAlerts = async () => {
             WHERE role = 'scholar' AND status = 'active' AND email IS NOT NULL AND email <> ''
         `),
         queryDb(`
-            SELECT id, email, full_name FROM users
-            WHERE role IN ('admin', 'staff', 'officer') AND status = 'active' AND email IS NOT NULL AND email <> ''
+            SELECT u.id, u.email, u.full_name, u.role, p.settings_json AS preferences
+            FROM users u
+            LEFT JOIN admin_preferences p ON p.user_id = u.id
+            WHERE u.role IN ('admin', 'staff', 'officer')
+              AND u.status = 'active' AND u.email IS NOT NULL AND u.email <> ''
         `),
     ]);
+    const staffRecipients = staff.filter((recipient) => {
+        if (recipient.role !== 'admin') return true;
+        try {
+            const preferences = recipient.preferences ? JSON.parse(recipient.preferences) : {};
+            return preferences.emailNotifications !== false && preferences.securityAlerts !== false;
+        } catch (error) {
+            console.error('Invalid administrator notification preferences:', error);
+            return true;
+        }
+    });
 
     const typeMap = { 'Monthly Report': 'letter', 'Report Card': 'report_card', 'COR Upload': 'cor' };
     const today = new Date().toISOString().slice(0, 10);
@@ -412,7 +462,7 @@ exports.sendComplianceAlerts = async () => {
                 await transporter.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to: scholar.email, subject: `Overdue requirement: ${task.title}`, text: `Hello ${scholar.full_name || 'Scholar'},\n\n${text}\nPlease submit the requirement through your Scholar Portal.` });
                 await logNotification({ scholar_id: scholar.scholar_id, recipient: scholar.email, channel: 'email', type: 'overdue_requirement', status: 'sent', detail });
                 sentCount += 1;
-                for (const recipient of staff) {
+                for (const recipient of staffRecipients) {
                     try {
                         await transporter.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to: recipient.email, subject: `Scholar overdue requirement: ${task.title}`, text });
                         await logNotification({ scholar_id: scholar.scholar_id, recipient: recipient.email, channel: 'email', type: 'overdue_requirement', status: 'sent', detail });
@@ -437,7 +487,7 @@ exports.sendComplianceAlerts = async () => {
         const detail = `repeated-risk:${risk.scholar_id}:date:${today}`;
         const existing = await queryDb(`SELECT id FROM notification_logs WHERE type = 'repeated_risk_flag' AND detail = ? LIMIT 1`, [detail]);
         if (existing.length) continue;
-        const recipient = staff[0];
+        const recipient = staffRecipients[0];
         if (!recipient) continue;
         const text = `${risk.full_name || risk.scholar_id} has ${risk.negative_letters} negative correspondence flags in the last 90 days and needs follow-up.`;
         try {

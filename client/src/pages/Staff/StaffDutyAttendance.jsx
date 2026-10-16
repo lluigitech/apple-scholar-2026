@@ -2,30 +2,131 @@ import { useState, useEffect } from 'react';
 import axios from 'axios';
 import {
   QrCode, CheckCircle2, X, Users, ListChecks,
-  Save, Search, AlertTriangle, ChevronDown, Clock,
-  RefreshCw, Printer, CalendarClock, MapPin
+  Save, Search, AlertTriangle, Clock, Hourglass, XCircle,
+  RefreshCw, Printer, CalendarClock, CalendarDays, MapPin,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { formatYearLevelLabel } from '../../utils/yearLevelLabels';
 
 const API = 'http://localhost:5000/api';
 const token = () => localStorage.getItem('token');
 const authHeaders = () => ({ headers: { Authorization: `Bearer ${token()}` } });
 
+// ── Design tokens — Apple Scholar premium system ──
+const BG = '#F3EEE6';
+const CARD = '#FFFDF9';
+const BORDER = '#E7D8C7';
+const MAROON = '#6D2140';
+const MAROON_DEEP = '#4A1730';
+const GOLD = '#A9784E';
+const INK = '#241512';
+const MUTED = '#8A7A68';
+const SUCCESS = '#3F8A55';
+const SUCCESS_BG = '#EAF6EC';
+const AMBER = '#C77F1F';
+const AMBER_BG = '#FBF1DF';
+const CLAY = '#C0473F';
+const CLAY_BG = '#FBEAE8';
+const RADIUS = 16;
+
+const display = { fontFamily: "'Lora', Georgia, 'Times New Roman', serif" };
+const body = { fontFamily: "'Inter', 'Segoe UI', sans-serif" };
+const mono = { fontFamily: "'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace" };
+
+const cardShadow = { boxShadow: '0 12px 28px -20px rgba(36,21,18,0.22)' };
+const cardWrap = { background: CARD, border: `1px solid ${BORDER}`, borderRadius: RADIUS, ...cardShadow, overflow: 'hidden' };
+const subCard = { background: CARD, border: `1px solid ${BORDER}`, borderRadius: 14 };
+const bordField = { width: '100%', padding: '10px 12px', border: `1px solid ${BORDER}`, borderRadius: 10, background: '#fff', ...body, fontSize: '0.85rem', color: INK, outline: 'none', appearance: 'none', cursor: 'pointer' };
+const fieldLabel = { ...body, fontSize: '0.7rem', color: MUTED, display: 'block', marginBottom: 6 };
+const filledBtn  = { display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, padding: '12px 0', border: 'none', borderRadius: 10, background: `linear-gradient(120deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)`, color: '#fff', ...body, fontSize: '0.82rem', fontWeight: 700, cursor: 'pointer', width: '100%' };
+
+const iconBadge = (color) => ({ width: 38, height: 38, borderRadius: 12, background: `${color}16`, color, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 });
+
 const initials = (name = '') =>
   name.trim().split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+
+// Presentation-only: "13:00" / "13:00:00" -> "01:00 PM". Falls back to the raw value.
+const formatTime = (value) => {
+  if (!value) return '';
+  const match = String(value).match(/^(\d{1,2}):(\d{2})/);
+  if (!match) return String(value);
+  const h = Number(match[1]);
+  if (Number.isNaN(h) || h > 23) return String(value);
+  return `${String(h % 12 === 0 ? 12 : h % 12).padStart(2, '0')}:${match[2]} ${h >= 12 ? 'PM' : 'AM'}`;
+};
+
+const STATUS_STAMPS = [
+  { key: 'present', label: 'Present', short: 'P', icon: <CheckCircle2 size={12} />, color: SUCCESS },
+  { key: 'late',    label: 'Late',    short: 'L', icon: <Clock size={12} />,       color: AMBER },
+  { key: 'absent',  label: 'Absent',  short: 'A', icon: <X size={12} />,            color: CLAY },
+  { key: 'excused', label: 'Excused', short: 'E', icon: <AlertTriangle size={12} />, color: AMBER },
+];
+
+const ROSTER_PAGE_SIZE = 8;
+
+// ---------------------------------------------------------------------------
+// Presentational-only helpers
+// ---------------------------------------------------------------------------
+
+const KPICard = ({ icon: Icon, label, value, accent, sub, progress }) => (
+  <div className="min-w-0 h-full" style={{ ...cardWrap, padding: 'clamp(14px, 3vw, 18px)' }}>
+    <div className="flex items-center gap-3 sm:gap-4">
+      <div className="flex items-center justify-center flex-shrink-0" style={{ width: 48, height: 48, borderRadius: 14, background: `${accent}16`, color: accent }}>
+        <Icon size={21} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p style={{ ...display, fontSize: 'clamp(1.35rem, 4vw, 1.7rem)', fontWeight: 700, color: MAROON, lineHeight: 1 }}>{value}</p>
+        <p style={{ ...body, fontSize: '0.78rem', color: MUTED, marginTop: 5 }}>{label}</p>
+      </div>
+    </div>
+    {sub && (
+      <div style={{ marginTop: 10 }}>
+        <p style={{ ...body, fontSize: '0.7rem', color: accent, fontWeight: 600 }}>{sub}</p>
+        {progress !== undefined && (
+          <div style={{ height: 5, background: `${accent}1f`, borderRadius: 3, marginTop: 5, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${progress}%`, background: accent, borderRadius: 3, transition: 'width 0.5s' }} />
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+);
+
+const StatusBadge = ({ status }) => {
+  const map = {
+    present: { label: 'Checked In', color: SUCCESS, background: SUCCESS_BG },
+    late:    { label: 'Late',       color: AMBER,   background: AMBER_BG },
+    absent:  { label: 'Absent',     color: CLAY,    background: CLAY_BG },
+    excused: { label: 'Excused',    color: AMBER,   background: AMBER_BG },
+  };
+  const cfg = map[status] || { label: 'Waiting', color: MUTED, background: BG };
+  return (
+    <span style={{ ...body, fontSize: '0.68rem', fontWeight: 700, borderRadius: 999, padding: '4px 12px', background: cfg.background, color: cfg.color, whiteSpace: 'nowrap', display: 'inline-block' }}>
+      {cfg.label}
+    </span>
+  );
+};
+
+const SectionHead = ({ icon: Icon, title, subtitle, color = MAROON }) => (
+  <div className="flex items-center gap-3 min-w-0">
+    <span style={iconBadge(color)}><Icon size={17} /></span>
+    <div className="min-w-0">
+      <h2 style={{ ...display, fontSize: '1.05rem', fontWeight: 600, color: MAROON }}>{title}</h2>
+      {subtitle && <p style={{ ...body, fontSize: '0.74rem', color: MUTED, marginTop: 2 }}>{subtitle}</p>}
+    </div>
+  </div>
+);
 
 const StaffDutyAttendance = () => {
   const [duties, setDuties] = useState([]);
   const [subTab, setSubTab] = useState('qr');
 
-  // qr / monitor tab
   const [qrDuty, setQrDuty] = useState('');
   const [dutyQR, setDutyQR] = useState(null);
   const [qrScholars, setQrScholars] = useState([]);
   const [qrLoading, setQrLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  // manual tab
   const [manualDuty, setManualDuty] = useState('');
   const [scholars, setScholars] = useState([]);
   const [attendance, setAttendance] = useState({});
@@ -34,13 +135,19 @@ const StaffDutyAttendance = () => {
   const [saving, setSaving] = useState(false);
   const [manualLoading, setManualLoading] = useState(false);
 
+  // ---- Presentation-only: roster search, status filter and pagination over
+  // the already-loaded live roster (qrScholars). No extra requests.
+  const [rosterSearch, setRosterSearch] = useState('');
+  const [rosterFilter, setRosterFilter] = useState('all');
+  const [rosterPage, setRosterPage] = useState(1);
+
   useEffect(() => {
     axios.get(`${API}/duties`, authHeaders())
       .then(res => setDuties(res.data.filter(d => d.status === 'upcoming' || d.status === 'ongoing')))
       .catch(err => console.error('Failed to fetch duties:', err));
   }, []);
 
-  // ── QR Monitor tab ──────────────────────────────────────────
+  useEffect(() => { setRosterPage(1); setRosterFilter('all'); setRosterSearch(''); }, [qrDuty]);
 
   const loadQRDuty = async (dutyId) => {
     setQrDuty(dutyId);
@@ -75,6 +182,19 @@ const StaffDutyAttendance = () => {
     }
   };
 
+  useEffect(() => {
+    if (!qrDuty) return undefined;
+    const intervalId = setInterval(async () => {
+      try {
+        const res = await axios.get(`${API}/staff/duties/${qrDuty}/scholars`, authHeaders());
+        setQrScholars(res.data);
+      } catch (err) {
+        console.error(`Failed to refresh attendance for duty ${qrDuty}:`, err);
+      }
+    }, 60 * 1000);
+    return () => clearInterval(intervalId);
+  }, [qrDuty]);
+
   const handlePrintQR = () => {
     if (!dutyQR) return;
     const svgEl = document.getElementById('duty-qr-svg');
@@ -89,9 +209,9 @@ const StaffDutyAttendance = () => {
           <style>
             body { font-family: 'DM Sans', Arial, sans-serif; display: flex; flex-direction: column;
                    align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; }
-            h2 { color: #7f2d3a; margin-bottom: 4px; }
+            h2 { color: #6D2140; margin-bottom: 4px; }
             p { color: #64748b; font-size: 13px; margin: 2px 0 20px; }
-            .box { border: 2px dashed #7f2d3a; border-radius: 16px; padding: 24px; }
+            .box { border: 2px dashed #A9784E; border-radius: 16px; padding: 24px; }
           </style>
         </head>
         <body>
@@ -107,11 +227,9 @@ const StaffDutyAttendance = () => {
     setTimeout(() => printWindow.print(), 250);
   };
 
-  const checkedIn = qrScholars.filter(s => s.attendance_status === 'present');
-  const notYet = qrScholars.filter(s => s.attendance_status !== 'present');
+  const checkedIn = qrScholars.filter(s => s.attendance_status === 'present' || s.attendance_status === 'late');
+  const notYet = qrScholars.filter(s => s.attendance_status !== 'present' && s.attendance_status !== 'late');
   const qrPercent = qrScholars.length ? Math.round((checkedIn.length / qrScholars.length) * 100) : 0;
-
-  // ── Manual Entry tab ────────────────────────────────────────
 
   const loadScholars = async (dutyId) => {
     setManualDuty(dutyId);
@@ -170,315 +288,464 @@ const StaffDutyAttendance = () => {
 
   const scholarCounts = {
     present: Object.values(attendance).filter(v => v === 'present').length,
+    late:    Object.values(attendance).filter(v => v === 'late').length,
     absent:  Object.values(attendance).filter(v => v === 'absent').length,
     excused: Object.values(attendance).filter(v => v === 'excused').length,
   };
 
-  const selectedQrDuty = duties.find(d => String(d.id) === String(qrDuty));
-  const selectedManualDuty = duties.find(d => String(d.id) === String(manualDuty));
-
-  const dutySelect = (value, onChange, placeholder = '-- Select a duty --') => (
-    <div className="relative mb-4">
-      <select value={value} onChange={e => onChange(e.target.value)}
-        className="w-full bg-slate-50 border border-slate-200 p-3 pr-9 rounded-xl text-sm font-medium text-slate-700 outline-none focus:border-[#7f2d3a] focus:bg-white focus:ring-4 focus:ring-[#7f2d3a]/5 transition-all appearance-none cursor-pointer">
-        <option value="">{placeholder}</option>
-        {duties.map(d => (
-          <option key={d.id} value={d.id}>
-            {d.title} — {new Date(d.duty_date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
-          </option>
-        ))}
-      </select>
-      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
-    </div>
+  const dutySelect = (value, onChange, ariaLabel, placeholder = '-- Select a duty --') => (
+    <select value={value} onChange={e => onChange(e.target.value)} aria-label={ariaLabel} style={bordField}>
+      <option value="">{placeholder}</option>
+      {duties.map(d => (
+        <option key={d.id} value={d.id}>
+          {d.title} — {new Date(d.duty_date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
+        </option>
+      ))}
+    </select>
   );
 
-  const statusChip = {
-    present: 'bg-emerald-500 text-white border-emerald-500 shadow-sm shadow-emerald-200',
-    absent:  'bg-red-500 text-white border-red-500 shadow-sm shadow-red-200',
-    excused: 'bg-amber-400 text-white border-amber-400 shadow-sm shadow-amber-200',
+  // ---- Presentation-only derived values for KPIs, roster search/filter/pagination ----
+  const rosterMatches = (s) => !rosterSearch.trim() ||
+    s.full_name?.toLowerCase().includes(rosterSearch.toLowerCase()) ||
+    s.scholar_id?.toLowerCase().includes(rosterSearch.toLowerCase());
+
+  const filteredRoster = {
+    checkedIn: checkedIn.filter(rosterMatches),
+    notYet: notYet.filter(rosterMatches),
   };
 
+  const lateCount = qrScholars.filter(s => s.attendance_status === 'late').length;
+  const absentExcusedCount = qrScholars.filter(s => s.attendance_status === 'absent' || s.attendance_status === 'excused').length;
+  const pct = (n) => (qrScholars.length ? Math.round((n / qrScholars.length) * 1000) / 10 : 0);
+
+  const ROSTER_FILTERS = [
+    { key: 'all',     label: 'All',            count: qrScholars.length, dot: MAROON,  match: () => true },
+    { key: 'present', label: 'Checked In',     count: qrScholars.filter(s => s.attendance_status === 'present').length, dot: SUCCESS, match: s => s.attendance_status === 'present' },
+    { key: 'late',    label: 'Late',           count: lateCount,         dot: AMBER,   match: s => s.attendance_status === 'late' },
+    { key: 'absent',  label: 'Absent/Excused', count: absentExcusedCount, dot: CLAY,   match: s => s.attendance_status === 'absent' || s.attendance_status === 'excused' },
+  ];
+  const activeFilter = ROSTER_FILTERS.find(f => f.key === rosterFilter) || ROSTER_FILTERS[0];
+
+  const rosterRows = [...filteredRoster.checkedIn, ...filteredRoster.notYet].filter(activeFilter.match);
+  const totalPages = Math.max(1, Math.ceil(rosterRows.length / ROSTER_PAGE_SIZE));
+  const currentPage = Math.min(rosterPage, totalPages);
+  const pageStart = (currentPage - 1) * ROSTER_PAGE_SIZE;
+  const pagedRows = rosterRows.slice(pageStart, pageStart + ROSTER_PAGE_SIZE);
+
+  const handleRefreshAll = () => {
+    if (qrDuty) refreshQRScholars();
+  };
+
+  const selectedDuty = duties.find(d => String(d.id) === String(qrDuty));
+  const todayLabel = new Date().toLocaleDateString('en-PH', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' });
+
+  const thStyle = { ...body, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.04em', color: MUTED, textAlign: 'left', padding: '11px 12px', borderBottom: `1px solid ${BORDER}`, background: BG, whiteSpace: 'nowrap' };
+  const tdStyle = { ...body, fontSize: '0.78rem', color: INK, padding: '10px 12px', borderBottom: `1px solid ${BORDER}`, verticalAlign: 'middle' };
+
+  const tabStyle = (active) => ({
+    ...body, fontSize: '0.84rem', fontWeight: 700, borderRadius: 12, padding: '11px 22px', cursor: 'pointer', border: 'none',
+    background: active ? MAROON : 'transparent', color: active ? '#fff' : MAROON,
+    transition: 'background-color 160ms ease, color 160ms ease',
+  });
+
   return (
-    <div className="min-h-screen bg-slate-50/50 p-4 sm:p-6">
+    <div className="min-h-screen" style={{ background: BG, ...body, overflowX: 'hidden' }}>
+      <div className="w-full px-4 sm:px-6 lg:px-8 py-4 sm:py-6 lg:py-8">
 
-      {/* Header */}
-      <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm mb-6 flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <span className="text-[10px] bg-amber-100 text-amber-700 font-black uppercase tracking-[0.2em] px-3 py-1 rounded-full">
-            Staff — Attendance
-          </span>
-          <h1 className="text-2xl sm:text-3xl font-black text-slate-800 mt-2 tracking-tight" style={{ fontFamily: "'Playfair Display', serif" }}>
-            Duty Attendance
-          </h1>
-          <p className="text-xs text-slate-400 mt-1">
-            Monitor QR check-ins per duty, or mark attendance manually as a fallback.
-          </p>
-        </div>
-        <div className="w-11 h-11 rounded-2xl bg-[#7f2d3a]/10 flex items-center justify-center shrink-0">
-          <ListChecks size={20} className="text-[#7f2d3a]" />
-        </div>
-      </div>
-
-      {/* Sub Tabs */}
-      <div className="flex gap-3 mb-6">
-        {[
-          { key: 'qr',     label: 'QR Monitor',   icon: <QrCode size={14} /> },
-          { key: 'manual', label: 'Manual Entry (Fallback)', icon: <ListChecks size={14} /> },
-        ].map(t => (
-          <button key={t.key} onClick={() => setSubTab(t.key)}
-            className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-2xl text-xs font-black uppercase tracking-widest transition-all border ${
-              subTab === t.key
-                ? 'bg-[#7f2d3a] text-white border-[#7f2d3a] shadow-sm shadow-[#7f2d3a]/20'
-                : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
-            }`}>
-            {t.icon} {t.label}
-          </button>
-        ))}
-      </div>
-
-      {/* QR Monitor Tab */}
-      {subTab === 'qr' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm">
-            <h3 className="font-black text-slate-800 text-sm mb-4 flex items-center gap-2">
-              <QrCode size={14} className="text-slate-400" /> Duty QR Code
-            </h3>
-            <label className="text-[10px] font-black text-[#7f2d3a] uppercase tracking-widest block mb-1.5">Select Duty *</label>
-            {dutySelect(qrDuty, loadQRDuty)}
-
-            {qrLoading ? (
-              <div className="animate-pulse space-y-3">
-                <div className="bg-slate-100 rounded-2xl h-48" />
-                <div className="bg-slate-100 rounded-lg h-3 w-2/3 mx-auto" />
-              </div>
-            ) : dutyQR ? (
-              <div className="bg-white rounded-2xl border-2 border-dashed border-[#7f2d3a]/30 flex flex-col items-center p-5">
-                {(dutyQR.duty_date || dutyQR.location) && (
-                  <div className="flex items-center gap-3 text-[11px] text-slate-400 font-bold mb-4">
-                    <span className="flex items-center gap-1">
-                      <CalendarClock size={12} />
-                      {new Date(dutyQR.duty_date).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}
-                    </span>
-                    {dutyQR.location && (
-                      <span className="flex items-center gap-1">
-                        <MapPin size={12} /> {dutyQR.location}
-                      </span>
-                    )}
-                  </div>
-                )}
-                <div className="p-3 bg-white rounded-xl">
-                  <QRCodeSVG id="duty-qr-svg" value={dutyQR.qr_token} size={176} fgColor="#7f2d3a" />
-                </div>
-                <p className="text-[10px] text-slate-400 mt-4 text-center max-w-[220px] leading-relaxed">
-                  I-print at i-post ito sa duty location. Ang scholar ang mag-sscan nito para mag-check-in.
-                </p>
-                <button onClick={handlePrintQR}
-                  className="mt-4 flex items-center gap-2 bg-[#7f2d3a] text-white text-xs font-black px-4 py-2.5 rounded-xl hover:bg-[#63232d] active:scale-[0.98] transition-all shadow-sm shadow-[#7f2d3a]/20">
-                  <Printer size={14} /> Print QR Code
-                </button>
-              </div>
-            ) : (
-              <div className="text-center py-14 text-slate-300 border-2 border-dashed border-slate-100 rounded-2xl">
-                <QrCode size={30} className="mx-auto mb-3 opacity-40" />
-                <p className="text-sm font-bold text-slate-400">Pumili ng duty</p>
-                <p className="text-xs text-slate-300 mt-0.5">para makita yung QR code nito.</p>
-              </div>
-            )}
+        {/* ── Standard Staff header: title card + date card ── */}
+        <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3 sm:gap-4 mb-5">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 min-w-0" style={{ ...cardWrap, padding: 'clamp(14px, 3vw, 20px)' }}>
+            <div className="min-w-0">
+              <p style={{ ...body, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.08em', color: GOLD }}>STAFF PORTAL</p>
+              <h1 style={{ ...display, fontSize: 'clamp(1.3rem, 4vw, 1.6rem)', fontWeight: 600, color: MAROON, marginTop: 4, lineHeight: 1.2 }}>Duty Attendance</h1>
+              <p style={{ ...body, fontSize: '0.82rem', color: MUTED, marginTop: 4, lineHeight: 1.5 }}>
+                Record and monitor scholar attendance for assigned duties.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={handleRefreshAll}
+              disabled={!qrDuty}
+              className="flex items-center justify-center gap-1.5 flex-shrink-0"
+              style={{ background: '#fff', color: MAROON, border: `1px solid ${BORDER}`, borderRadius: 999, padding: '8px 16px', ...body, fontSize: '0.78rem', fontWeight: 700, cursor: qrDuty ? 'pointer' : 'not-allowed', opacity: qrDuty ? 1 : 0.6 }}
+            >
+              <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /> Refresh
+            </button>
           </div>
 
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm flex flex-col">
-            <div className="flex items-center justify-between mb-1">
-              <h3 className="font-black text-slate-800 text-sm flex items-center gap-2">
-                <CheckCircle2 size={14} className="text-emerald-500" />
-                Checked In
-              </h3>
-              {qrDuty && qrScholars.length > 0 && (
-                <button onClick={refreshQRScholars}
-                  className="text-slate-400 hover:text-[#7f2d3a] transition-colors p-1 -m-1 rounded-lg">
-                  <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
-                </button>
-              )}
+          <div className="flex items-center gap-3" style={{ ...cardWrap, padding: 'clamp(14px, 3vw, 20px)' }}>
+            <div className="flex items-center justify-center flex-shrink-0" style={{ width: 42, height: 42, borderRadius: 12, background: `${GOLD}22`, color: GOLD }}>
+              <CalendarDays size={17} />
             </div>
+            <div>
+              <p style={{ ...mono, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.05em', color: MUTED }}>Today</p>
+              <p style={{ ...display, fontSize: '0.95rem', fontWeight: 600, color: INK, marginTop: 2, whiteSpace: 'nowrap' }}>{todayLabel}</p>
+            </div>
+          </div>
+        </div>
 
-            {qrScholars.length === 0 ? (
-              <div className="flex-1 text-center py-14 text-slate-300 border-2 border-dashed border-slate-100 rounded-2xl mt-4">
-                <Users size={30} className="mx-auto mb-3 opacity-40" />
-                <p className="text-sm font-bold text-slate-400">Pumili muna ng duty</p>
-                <p className="text-xs text-slate-300 mt-0.5">para lumabas ang mga naka-assign na scholar.</p>
-              </div>
-            ) : (
-              <>
-                <div className="flex items-end justify-between mb-2 mt-3">
-                  <p className="text-2xl font-black text-slate-800">
-                    {checkedIn.length}<span className="text-slate-300 font-bold">/{qrScholars.length}</span>
-                  </p>
-                  <p className="text-[10px] font-black text-emerald-600 uppercase tracking-wider">{qrPercent}% in</p>
-                </div>
-                <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden mb-4">
-                  <div className="h-full bg-emerald-500 rounded-full transition-all duration-500"
-                    style={{ width: `${qrPercent}%` }} />
+        {/* ── KPI cards (real counts from the loaded roster) ── */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 sm:gap-4 mb-5">
+          <KPICard icon={Users} label="Assigned Scholars" value={qrScholars.length || '—'} accent={MAROON} />
+          <KPICard icon={CheckCircle2} label="Checked In" value={qrScholars.length ? checkedIn.length : '—'} accent={SUCCESS}
+            sub={qrScholars.length ? `${qrPercent}% attendance rate` : undefined} progress={qrScholars.length ? qrPercent : undefined} />
+          <KPICard icon={Hourglass} label="Late" value={qrScholars.length ? lateCount : '—'} accent={AMBER}
+            sub={qrScholars.length ? `${pct(lateCount)}%` : undefined} progress={qrScholars.length ? pct(lateCount) : undefined} />
+          <KPICard icon={XCircle} label="Absent / Excused" value={qrScholars.length ? absentExcusedCount : '—'} accent={CLAY}
+            sub={qrScholars.length ? `${pct(absentExcusedCount)}%` : undefined} progress={qrScholars.length ? pct(absentExcusedCount) : undefined} />
+        </div>
+
+        {/* ── Workspace card: tabs + content ── */}
+        <section style={{ ...cardWrap, padding: 'clamp(12px, 2.5vw, 18px)' }}>
+          <div role="tablist" aria-label="Check-in mode" className="flex flex-wrap gap-2" style={{ marginBottom: 'clamp(12px, 2.5vw, 16px)' }}>
+            <button type="button" role="tab" id="tab-qr" aria-selected={subTab === 'qr'} aria-controls="panel-qr" onClick={() => setSubTab('qr')} className="flex items-center gap-2" style={tabStyle(subTab === 'qr')}>
+              <QrCode size={15} /> QR Check-In
+            </button>
+            <button type="button" role="tab" id="tab-manual" aria-selected={subTab === 'manual'} aria-controls="panel-manual" onClick={() => setSubTab('manual')} className="flex items-center gap-2" style={tabStyle(subTab === 'manual')}>
+              <ListChecks size={15} /> Manual Check-In
+            </button>
+          </div>
+
+          {/* ═════════ QR CHECK-IN TAB ═════════ */}
+          {subTab === 'qr' && (
+            <div id="panel-qr" role="tabpanel" aria-labelledby="tab-qr" className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-4 items-start">
+
+              {/* LEFT — 1. Select duty, 2. Duty QR code */}
+              <div className="flex flex-col gap-4 min-w-0">
+                <div style={{ ...subCard, padding: 'clamp(14px, 3vw, 18px)' }}>
+                  <SectionHead icon={CalendarClock} title="1. Select Duty Schedule" subtitle="Choose a duty to generate the QR code for check-in." />
+                  <div style={{ marginTop: 14 }}>{dutySelect(qrDuty, loadQRDuty, 'Select duty for QR code')}</div>
                 </div>
 
-                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                  {checkedIn.map(s => (
-                    <div key={s.scholar_id} className="flex items-center justify-between p-3 bg-emerald-50/70 rounded-xl border border-emerald-100">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-8 h-8 rounded-full bg-emerald-500 text-white text-[10px] font-black flex items-center justify-center shrink-0">
-                          {initials(s.full_name)}
+                <div style={{ ...subCard, padding: 'clamp(14px, 3vw, 18px)' }}>
+                  <SectionHead icon={QrCode} title="2. Duty QR Code" subtitle="Display this code for scholars to scan." />
+
+                  <div style={{ marginTop: 14 }}>
+                    {qrLoading ? (
+                      <div className="animate-pulse" style={{ background: `${BORDER}88`, height: 220, borderRadius: 10 }} />
+                    ) : dutyQR ? (
+                      <>
+                        <div className="flex flex-col sm:flex-row gap-3 items-stretch">
+                          <div className="flex items-center justify-center flex-shrink-0" style={{ background: '#fff', border: `1px solid ${BORDER}`, borderRadius: 12, padding: 16 }}>
+                            <QRCodeSVG id="duty-qr-svg" value={dutyQR.qr_token} size={168} fgColor={GOLD} />
+                          </div>
+
+                          {/* Duty information (only fields returned by the existing endpoints) */}
+                          <div className="min-w-0 flex-1" style={{ background: BG, border: `1px solid ${BORDER}`, borderRadius: 12, padding: '14px 16px' }}>
+                            <p style={{ ...mono, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.06em', color: GOLD }}>DUTY INFORMATION</p>
+                            <p style={{ ...display, fontSize: '1rem', fontWeight: 600, color: INK, marginTop: 6, wordBreak: 'break-word' }}>{dutyQR.title}</p>
+                            <div className="flex flex-col gap-2" style={{ marginTop: 10, ...body, fontSize: '0.78rem', color: INK }}>
+                              {dutyQR.duty_date && (
+                                <span className="flex items-center gap-2">
+                                  <CalendarDays size={13} style={{ color: GOLD, flexShrink: 0 }} />
+                                  {new Date(dutyQR.duty_date).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}
+                                </span>
+                              )}
+                              {selectedDuty?.time_start && (
+                                <span className="flex items-center gap-2">
+                                  <Clock size={13} style={{ color: GOLD, flexShrink: 0 }} />
+                                  {formatTime(selectedDuty.time_start)}{selectedDuty.time_end ? ` – ${formatTime(selectedDuty.time_end)}` : ''}
+                                </span>
+                              )}
+                              {dutyQR.location && (
+                                <span className="flex items-start gap-2">
+                                  <MapPin size={13} style={{ color: GOLD, flexShrink: 0, marginTop: 2 }} />
+                                  <span style={{ wordBreak: 'break-word' }}>{dutyQR.location}</span>
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                        <div className="min-w-0">
-                          <p className="font-bold text-slate-800 text-sm truncate">{s.full_name}</p>
-                          <p className="text-[10px] text-slate-400 font-mono">{s.scholar_id}{s.is_makeup ? ' • makeup' : ''}</p>
-                        </div>
+
+                        <p style={{ ...body, fontSize: '0.74rem', color: MUTED, marginTop: 14, textAlign: 'center', lineHeight: 1.55 }}>
+                          I-print at i-post ito sa duty location. Ang scholar ang mag-sscan nito para mag-check-in.
+                        </p>
+                        <button type="button" onClick={handlePrintQR} style={{ ...filledBtn, marginTop: 14 }}>
+                          <Printer size={15} /> Print QR Code
+                        </button>
+                      </>
+                    ) : (
+                      <div className="text-center" style={{ background: '#fff', border: `1.5px dashed ${GOLD}`, borderRadius: 12, padding: '44px 20px' }}>
+                        <QrCode size={26} style={{ margin: '0 auto 12px', color: BORDER }} />
+                        <p style={{ ...body, fontSize: '0.85rem', fontWeight: 600, color: MUTED }}>Select a duty first</p>
+                        <p style={{ ...body, fontSize: '0.76rem', color: MUTED, marginTop: 2 }}>Generate a QR code to begin attendance.</p>
                       </div>
-                      {s.marked_at && (
-                        <div className="flex items-center gap-1 text-[10px] text-slate-400 shrink-0 ml-2">
-                          <Clock size={10} /> {new Date(s.marked_at).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' })}
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* RIGHT — Live Attendance */}
+              <div className="min-w-0" style={{ ...subCard, padding: 'clamp(14px, 3vw, 18px)' }}>
+                <div className="flex flex-col 2xl:flex-row 2xl:items-center 2xl:justify-between gap-3">
+                  <SectionHead icon={Users} title="Live Attendance" subtitle="Scholars assigned to the selected duty" />
+                  {qrDuty && qrScholars.length > 0 && (
+                    <div className="flex items-center gap-2 w-full 2xl:w-auto">
+                      <div className="flex items-center gap-1.5 flex-1 2xl:flex-none" style={{ background: '#fff', border: `1px solid ${BORDER}`, borderRadius: 999, padding: '7px 12px' }}>
+                        <Search size={13} style={{ color: MUTED, flexShrink: 0 }} />
+                        <input
+                          type="text"
+                          value={rosterSearch}
+                          onChange={e => { setRosterSearch(e.target.value); setRosterPage(1); }}
+                          placeholder="Search scholar name or ID…"
+                          aria-label="Search live roster by name or ID"
+                          className="min-w-0 flex-1 2xl:w-52 2xl:flex-none"
+                          style={{ border: 'none', outline: 'none', background: 'none', ...body, fontSize: '0.78rem', color: INK }}
+                        />
+                      </div>
+                      <button type="button" onClick={refreshQRScholars} aria-label="Refresh live roster" style={{ background: 'none', border: 'none', color: MUTED, cursor: 'pointer', lineHeight: 0, padding: 6 }}>
+                        <RefreshCw size={15} className={refreshing ? 'animate-spin' : ''} />
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {qrScholars.length === 0 ? (
+                  <div className="text-center" style={{ background: '#fff', border: `1.5px dashed ${GOLD}`, borderRadius: 12, padding: '56px 20px', marginTop: 16 }}>
+                    <QrCode size={26} style={{ margin: '0 auto 12px', color: BORDER }} />
+                    <p style={{ ...body, fontSize: '0.85rem', fontWeight: 600, color: MUTED }}>Select a duty first</p>
+                    <p style={{ ...body, fontSize: '0.76rem', color: MUTED, marginTop: 2 }}>Generate a QR code to begin attendance.</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Status filters */}
+                    <div className="flex items-center gap-2 flex-wrap" role="group" aria-label="Filter roster by status" style={{ marginTop: 16 }}>
+                      {ROSTER_FILTERS.map(f => {
+                        const active = f.key === activeFilter.key;
+                        return (
+                          <button
+                            key={f.key}
+                            type="button"
+                            aria-pressed={active}
+                            onClick={() => { setRosterFilter(f.key); setRosterPage(1); }}
+                            className="flex items-center gap-2 flex-shrink-0"
+                            style={{
+                              ...body, fontSize: '0.74rem', fontWeight: 600, borderRadius: 999, padding: '6px 14px', cursor: 'pointer', whiteSpace: 'nowrap',
+                              border: `1px solid ${active ? MAROON : BORDER}`,
+                              background: active ? MAROON : '#fff',
+                              color: active ? '#fff' : INK,
+                            }}
+                          >
+                            <span style={{ width: 7, height: 7, borderRadius: '50%', background: active ? '#fff' : f.dot, flexShrink: 0 }} />
+                            {f.label} ({f.count})
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Table */}
+                    <div style={{ marginTop: 14, border: `1px solid ${BORDER}`, borderRadius: 12, overflow: 'hidden', background: '#fff' }}>
+                      {rosterRows.length === 0 ? (
+                        <div className="text-center" style={{ padding: '36px 16px' }}>
+                          <p style={{ ...body, fontSize: '0.8rem', color: MUTED }}>
+                            {rosterSearch.trim() ? `No scholars match "${rosterSearch}".` : 'No scholars in this status.'}
+                          </p>
+                        </div>
+                      ) : (
+                        <div style={{ overflowX: 'auto' }}>
+                          <table style={{ width: '100%', minWidth: 600, borderCollapse: 'collapse' }}>
+                            <thead>
+                              <tr>
+                                <th scope="col" style={{ ...thStyle, width: 40 }}>#</th>
+                                <th scope="col" style={thStyle}>Scholar</th>
+                                <th scope="col" style={thStyle}>Year Level</th>
+                                <th scope="col" style={thStyle}>Time In</th>
+                                <th scope="col" style={thStyle}>Status</th>
+                                <th scope="col" style={thStyle}>Make-up</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {pagedRows.map((s, i) => {
+                                const hasTime = (s.attendance_status === 'present' || s.attendance_status === 'late') && s.marked_at;
+                                const checked = s.attendance_status === 'present' || s.attendance_status === 'late';
+                                return (
+                                  <tr key={s.scholar_id}>
+                                    <td style={{ ...tdStyle, color: MUTED }}>{pageStart + i + 1}</td>
+                                    <td style={{ ...tdStyle, minWidth: 190 }}>
+                                      <div className="flex items-center gap-3 min-w-0">
+                                        <span style={{ width: 34, height: 34, borderRadius: '50%', background: checked ? MAROON : BG, color: checked ? '#fff' : MUTED, ...body, fontSize: '0.64rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                          {initials(s.full_name)}
+                                        </span>
+                                        <div className="min-w-0">
+                                          <p style={{ ...body, fontSize: '0.82rem', fontWeight: 600, color: checked ? INK : MUTED }} className="truncate">{s.full_name}</p>
+                                          <p style={{ ...mono, fontSize: '0.64rem', color: MUTED }}>{s.scholar_id}</p>
+                                        </div>
+                                      </div>
+                                    </td>
+                                    <td style={{ ...tdStyle, color: MUTED, whiteSpace: 'nowrap' }}>{s.year_level ? formatYearLevelLabel(s.year_level) : '—'}</td>
+                                    <td style={{ ...tdStyle, ...mono, fontSize: '0.72rem', color: MUTED, whiteSpace: 'nowrap' }}>
+                                      {hasTime ? new Date(s.marked_at).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' }) : '—'}
+                                    </td>
+                                    <td style={tdStyle}><StatusBadge status={s.attendance_status} /></td>
+                                    <td style={{ ...tdStyle, color: MUTED }}>{s.is_makeup ? 'Make-up' : '—'}</td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
                         </div>
                       )}
                     </div>
-                  ))}
-                  {notYet.map(s => (
-                    <div key={s.scholar_id} className="flex items-center justify-between p-3 bg-slate-50 rounded-xl border border-slate-100">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-8 h-8 rounded-full bg-slate-200 text-slate-500 text-[10px] font-black flex items-center justify-center shrink-0">
-                          {initials(s.full_name)}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-bold text-slate-500 text-sm truncate">{s.full_name}</p>
-                          <p className="text-[10px] text-slate-400 font-mono">{s.scholar_id}</p>
-                        </div>
+
+                    {/* Pagination (client-side over the loaded roster) */}
+                    {rosterRows.length > 0 && (
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3" style={{ marginTop: 14 }}>
+                        <p style={{ ...body, fontSize: '0.74rem', color: MUTED }}>
+                          Showing {pageStart + 1} – {Math.min(pageStart + ROSTER_PAGE_SIZE, rosterRows.length)} of {rosterRows.length} scholars
+                        </p>
+                        {totalPages > 1 && (
+                          <nav aria-label="Roster pages" className="flex items-center gap-1.5 flex-wrap">
+                            <button type="button" aria-label="Previous page" disabled={currentPage === 1} onClick={() => setRosterPage(currentPage - 1)}
+                              style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${BORDER}`, background: '#fff', color: MAROON, cursor: currentPage === 1 ? 'not-allowed' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1 }}>‹</button>
+                            {Array.from({ length: totalPages }, (_, idx) => idx + 1).map(n => (
+                              <button key={n} type="button" aria-label={`Page ${n}`} aria-current={n === currentPage ? 'page' : undefined} onClick={() => setRosterPage(n)}
+                                style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${n === currentPage ? MAROON : BORDER}`, background: n === currentPage ? MAROON : '#fff', color: n === currentPage ? '#fff' : INK, ...body, fontSize: '0.76rem', fontWeight: 600, cursor: 'pointer' }}>{n}</button>
+                            ))}
+                            <button type="button" aria-label="Next page" disabled={currentPage === totalPages} onClick={() => setRosterPage(currentPage + 1)}
+                              style={{ width: 32, height: 32, borderRadius: 8, border: `1px solid ${BORDER}`, background: '#fff', color: MAROON, cursor: currentPage === totalPages ? 'not-allowed' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1 }}>›</button>
+                          </nav>
+                        )}
                       </div>
-                      <span className="text-[10px] font-black text-slate-400 uppercase shrink-0 ml-2">Pending</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Manual Tab */}
-      {subTab === 'manual' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm">
-            <h3 className="font-black text-slate-800 text-sm mb-4 flex items-center gap-2">
-              <ListChecks size={14} className="text-slate-400" /> Setup
-            </h3>
-            <label className="text-[10px] font-black text-[#7f2d3a] uppercase tracking-widest block mb-1.5">Select Duty *</label>
-            {dutySelect(manualDuty, loadScholars)}
-
-            {manualLoading ? (
-              <div className="animate-pulse space-y-3">
-                <div className="bg-slate-100 rounded-xl h-11" />
-                <div className="bg-slate-100 rounded-xl h-16" />
-              </div>
-            ) : scholars.length > 0 && (
-              <>
-                <label className="text-[10px] font-black text-[#7f2d3a] uppercase tracking-widest block mb-1.5">Search Scholar</label>
-                <div className="relative mb-4">
-                  <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                  <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
-                    placeholder="Name or scholar ID..."
-                    className="w-full bg-slate-50 border border-slate-200 pl-8 pr-3 py-3 rounded-xl text-sm outline-none focus:border-[#7f2d3a] focus:bg-white focus:ring-4 focus:ring-[#7f2d3a]/5 transition-all" />
-                </div>
-
-                <div className="grid grid-cols-3 gap-2 mb-4">
-                  {[
-                    { label: 'Present', count: scholarCounts.present, color: 'bg-emerald-50 text-emerald-700 border-emerald-100' },
-                    { label: 'Absent',  count: scholarCounts.absent,  color: 'bg-red-50 text-red-600 border-red-100' },
-                    { label: 'Excused', count: scholarCounts.excused, color: 'bg-amber-50 text-amber-700 border-amber-100' },
-                  ].map(c => (
-                    <div key={c.label} className={`rounded-xl border p-3 text-center ${c.color}`}>
-                      <p className="text-lg font-black">{c.count}</p>
-                      <p className="text-[10px] font-bold uppercase tracking-wider">{c.label}</p>
-                    </div>
-                  ))}
-                </div>
-
-                <p className="text-[10px] text-slate-400 font-bold mb-3 text-center">
-                  {Object.values(attendance).filter(Boolean).length} of {scholars.length} marked
-                </p>
-
-                <button onClick={saveAttendance} disabled={saving}
-                  className="w-full py-3.5 bg-[#7f2d3a] text-white font-black text-xs rounded-2xl uppercase tracking-widest hover:bg-[#63232d] active:scale-[0.99] transition-all flex items-center justify-center gap-2 disabled:opacity-60 shadow-sm shadow-[#7f2d3a]/20">
-                  <Save size={13} /> {saving ? 'Saving...' : 'Save Attendance'}
-                </button>
-                {saveMsg && (
-                  <p className={`text-xs font-bold text-center mt-3 ${saveMsg.startsWith('Error') || saveMsg.startsWith('Walang') ? 'text-red-500' : 'text-emerald-600'}`}>
-                    {saveMsg}
-                  </p>
+                    )}
+                  </>
                 )}
-              </>
-            )}
+              </div>
+            </div>
+          )}
 
-            {!manualLoading && scholars.length === 0 && (
-              <div className="text-center py-10 text-slate-300 border-2 border-dashed border-slate-100 rounded-2xl">
-                <ListChecks size={28} className="mx-auto mb-3 opacity-40" />
-                <p className="text-sm font-bold text-slate-400">Pumili ng duty</p>
-                <p className="text-xs text-slate-300 mt-0.5">para simulan ang manual attendance.</p>
-              </div>
-            )}
-          </div>
+          {/* ═════════ MANUAL CHECK-IN TAB ═════════ */}
+          {subTab === 'manual' && (
+            <div id="panel-manual" role="tabpanel" aria-labelledby="tab-manual" className="grid grid-cols-1 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-4 items-start">
 
-          <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm">
-            <h3 className="font-black text-slate-800 text-sm mb-4 flex items-center gap-2">
-              <Users size={14} className="text-slate-400" />
-              Scholar List {scholars.length > 0 && (
-                <span className="text-slate-400 font-bold normal-case">({filteredScholars.length})</span>
-              )}
-            </h3>
-            {scholars.length === 0 ? (
-              <div className="text-center py-14 text-slate-300 border-2 border-dashed border-slate-100 rounded-2xl">
-                <Users size={30} className="mx-auto mb-3 opacity-40" />
-                <p className="text-sm font-bold text-slate-400">No scholars loaded</p>
-                <p className="text-xs text-slate-300 mt-1">Select a duty to load its assigned group members.</p>
-              </div>
-            ) : filteredScholars.length === 0 ? (
-              <div className="text-center py-10 text-slate-300">
-                <Search size={26} className="mx-auto mb-3 opacity-40" />
-                <p className="text-sm font-bold text-slate-400">No results for "{searchQuery}"</p>
-              </div>
-            ) : (
-              <div className="space-y-1 max-h-[420px] overflow-y-auto pr-1">
-                {filteredScholars.map(s => {
-                  const status = attendance[s.scholar_id];
-                  return (
-                    <div key={s.scholar_id} className="flex items-center justify-between py-2.5 border-b border-slate-50 last:border-0">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-500 text-[10px] font-black flex items-center justify-center shrink-0">
-                          {initials(s.full_name)}
-                        </div>
-                        <div className="min-w-0">
-                          <p className="font-bold text-slate-800 text-sm truncate">{s.full_name}</p>
-                          <p className="text-[10px] text-slate-400 font-mono">{s.scholar_id}</p>
-                        </div>
-                      </div>
-                      <div className="flex gap-1.5 shrink-0 ml-3">
-                        {[
-                          { key: 'present', label: 'P', icon: <CheckCircle2 size={11} />, inactiveHover: 'hover:border-emerald-300 hover:text-emerald-600' },
-                          { key: 'absent',  label: 'A', icon: <X size={11} />,            inactiveHover: 'hover:border-red-300 hover:text-red-500' },
-                          { key: 'excused', label: 'E', icon: <AlertTriangle size={11} />, inactiveHover: 'hover:border-amber-300 hover:text-amber-600' },
-                        ].map(btn => (
-                          <button key={btn.key} onClick={() => setScholarStatus(s.scholar_id, btn.key)} title={btn.key}
-                            className={`px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider border transition-all flex items-center gap-0.5 ${
-                              status === btn.key
-                                ? statusChip[btn.key]
-                                : `bg-slate-50 text-slate-400 border-slate-200 ${btn.inactiveHover}`
-                            }`}>
-                            {btn.icon} {btn.label}
-                          </button>
-                        ))}
+              {/* LEFT — duty, search, counts, save */}
+              <div className="min-w-0" style={{ ...subCard, padding: 'clamp(14px, 3vw, 18px)' }}>
+                <SectionHead icon={ListChecks} title="Manual Check-In" subtitle="Fallback roll call for a duty" />
+                <div style={{ marginTop: 14 }}>
+                  <span style={fieldLabel}>Select duty</span>
+                  {dutySelect(manualDuty, loadScholars, 'Select duty for manual check-in')}
+                </div>
+
+                {manualLoading ? (
+                  <div className="animate-pulse space-y-3" style={{ marginTop: 18 }}>
+                    <div style={{ background: `${BORDER}88`, height: 40, borderRadius: 8 }} />
+                    <div style={{ background: `${BORDER}88`, height: 60, borderRadius: 8 }} />
+                  </div>
+                ) : scholars.length > 0 ? (
+                  <>
+                    <div style={{ marginTop: 16 }}>
+                      <span style={fieldLabel}>Search scholar</span>
+                      <div className="flex items-center gap-2" style={{ ...bordField, cursor: 'text' }}>
+                        <Search size={13} style={{ color: MUTED, flexShrink: 0 }} />
+                        <input
+                          type="text"
+                          value={searchQuery}
+                          onChange={e => setSearchQuery(e.target.value)}
+                          placeholder="Name or scholar ID…"
+                          aria-label="Search scholar by name or ID"
+                          style={{ flex: 1, minWidth: 0, border: 'none', outline: 'none', background: 'none', ...body, fontSize: '0.85rem', color: INK }}
+                        />
                       </div>
                     </div>
-                  );
-                })}
+
+                    <div className="grid grid-cols-2 xl:grid-cols-4 gap-2" style={{ marginTop: 16 }}>
+                      {[
+                        { label: 'Present', count: scholarCounts.present, color: SUCCESS },
+                        { label: 'Late',    count: scholarCounts.late,    color: AMBER },
+                        { label: 'Absent',  count: scholarCounts.absent,  color: CLAY },
+                        { label: 'Excused', count: scholarCounts.excused, color: AMBER },
+                      ].map(c => (
+                        <div key={c.label} className="text-center" style={{ background: `${c.color}12`, border: `1px solid ${c.color}30`, borderRadius: 8, padding: '10px 4px' }}>
+                          <p style={{ ...display, fontSize: '1.2rem', fontWeight: 700, color: c.color }}>{c.count}</p>
+                          <p style={{ ...body, fontSize: '0.66rem', fontWeight: 600, color: c.color, marginTop: 1 }}>{c.label}</p>
+                        </div>
+                      ))}
+                    </div>
+
+                    <p style={{ ...mono, fontSize: '0.7rem', color: MUTED, textAlign: 'center', margin: '14px 0 16px' }}>
+                      {Object.values(attendance).filter(Boolean).length} of {scholars.length} marked
+                    </p>
+
+                    <button type="button" onClick={saveAttendance} disabled={saving} style={{ ...filledBtn, opacity: saving ? 0.6 : 1 }}>
+                      <Save size={14} /> {saving ? 'Saving…' : 'Save attendance'}
+                    </button>
+                    {saveMsg && (
+                      <p role="status" style={{ ...body, fontSize: '0.78rem', fontWeight: 600, textAlign: 'center', marginTop: 12, color: saveMsg.startsWith('Error') || saveMsg.startsWith('Walang') ? CLAY : SUCCESS }}>
+                        {saveMsg}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <div className="text-center" style={{ background: BG, border: `1.5px dashed ${GOLD}88`, borderRadius: 12, padding: '40px 20px', marginTop: 18 }}>
+                    <ListChecks size={24} style={{ margin: '0 auto 12px', color: BORDER }} />
+                    <p style={{ ...body, fontSize: '0.85rem', fontWeight: 600, color: MUTED }}>Select a duty first</p>
+                    <p style={{ ...body, fontSize: '0.76rem', color: MUTED, marginTop: 2 }}>to begin manual attendance.</p>
+                  </div>
+                )}
               </div>
-            )}
-          </div>
-        </div>
-      )}
+
+              {/* RIGHT — scholar list with P / A / E controls */}
+              <div className="min-w-0" style={{ ...subCard, padding: 'clamp(14px, 3vw, 18px)' }}>
+                <SectionHead icon={Users} title="Scholar Roll Call" subtitle="Mark each scholar Present, Late, Absent or Excused" color={SUCCESS} />
+                {scholars.length === 0 ? (
+                  <div className="text-center" style={{ background: '#fff', border: `1.5px dashed ${GOLD}`, borderRadius: 12, padding: '56px 20px', marginTop: 16 }}>
+                    <Users size={26} style={{ margin: '0 auto 12px', color: BORDER }} />
+                    <p style={{ ...body, fontSize: '0.85rem', fontWeight: 600, color: MUTED }}>No scholars loaded</p>
+                    <p style={{ ...body, fontSize: '0.76rem', color: MUTED, marginTop: 2 }}>Select a duty to see its scholars.</p>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 14, maxHeight: 520, overflowY: 'auto', border: `1px solid ${BORDER}`, borderRadius: 12, background: '#fff' }}>
+                    {filteredScholars.length === 0 ? (
+                      <div className="text-center" style={{ padding: '28px 16px' }}>
+                        <p style={{ ...body, fontSize: '0.8rem', color: MUTED }}>No results for "{searchQuery}"</p>
+                      </div>
+                    ) : filteredScholars.map(s => {
+                      const status = attendance[s.scholar_id];
+                      return (
+                        <div key={s.scholar_id} className="flex items-center justify-between" style={{ padding: '10px 14px', borderBottom: `1px solid ${BORDER}` }}>
+                          <div className="flex items-center gap-3 min-w-0">
+                            <span style={{ width: 30, height: 30, borderRadius: '50%', background: BG, color: MUTED, ...body, fontSize: '0.6rem', fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              {initials(s.full_name)}
+                            </span>
+                            <div className="min-w-0">
+                              <p style={{ ...body, fontSize: '0.82rem', fontWeight: 600, color: INK }} className="truncate">{s.full_name}</p>
+                              <p style={{ ...mono, fontSize: '0.64rem', color: MUTED }}>{s.scholar_id}</p>
+                            </div>
+                          </div>
+                          <div className="flex gap-1.5 flex-shrink-0" style={{ marginLeft: 10 }}>
+                            {STATUS_STAMPS.map(stamp => {
+                              const active = status === stamp.key;
+                              return (
+                                <button
+                                  key={stamp.key}
+                                  type="button"
+                                  onClick={() => setScholarStatus(s.scholar_id, stamp.key)}
+                                  title={stamp.label}
+                                  aria-label={`Mark ${s.full_name} ${stamp.label}`}
+                                  aria-pressed={active}
+                                  className="flex items-center gap-1"
+                                  style={{
+                                    padding: '5px 8px', borderRadius: 8,
+                                    border: `1.5px solid ${active ? stamp.color : BORDER}`,
+                                    background: active ? stamp.color : 'transparent',
+                                    color: active ? '#fff' : MUTED,
+                                    ...body, fontSize: '0.66rem', fontWeight: 700, cursor: 'pointer',
+                                  }}
+                                >
+                                  {stamp.icon} {stamp.short}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 };

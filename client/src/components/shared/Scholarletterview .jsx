@@ -1,4 +1,5 @@
 import { X, CheckCircle, Clock, XCircle, Download, Image as ImageIcon } from 'lucide-react';
+import { formatYearLevelLabel } from '../../utils/yearLevelLabels';
 
 const MAROON = '#802B36';
 const MAROON_LIGHT = '#F5E8EA';
@@ -7,8 +8,8 @@ const MAROON_LIGHT = '#F5E8EA';
 
 const getQualityColor = (score) => {
     if (!score && score !== 0) return '#6b7280';
-    if (score >= 71) return '#16a34a';
-    if (score >= 51) return '#d97706';
+    if (score >= 70) return '#16a34a';
+    if (score >= 50) return '#d97706';
     return '#ef4444';
 };
 
@@ -226,7 +227,7 @@ const ScholarLetterView = ({ submission, onClose }) => {
                             {[
                                 ['Name',       submission.full_name || '—'                ],
                                 ['Scholar ID', submission.scholar_id || submission.sid || '—'],
-                                ['Year Level', submission.year_level || '—'               ],
+                                ['Year Level', formatYearLevelLabel(submission.year_level)],
                                 ['Date',       submittedDate                              ],
                             ].map(([label, value], i) => (
                                 <div

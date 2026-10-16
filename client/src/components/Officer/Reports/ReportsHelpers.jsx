@@ -12,24 +12,38 @@ const normalizeApiBase = (url) => {
 
 export const API_BASE = normalizeApiBase(import.meta.env?.VITE_API_URL);
 
-// ── Token system — shared across the whole portal ──
+// ── Design tokens — shared Records Office brand system ──
+// This file backs every tab in the "Statistics Bureau" (Officer
+// Reports): Compliance Summary, Monthly Letter Review, Export
+// Reports, and the report detail modal. The color values below
+// already matched the portal-wide maroon/gold/sage/clay/amber
+// palette, so only the type family needed updating — from the old
+// Playfair Display / DM Sans pairing to the portal's actual
+// Lora / Work Sans / IBM Plex Mono system.
 export const MAROON = "#7f2d3a";
 export const MAROON_DEEP = "#4f1620";
 export const MAROON_LIGHT = "#F5E8EA"; // kept for backward compatibility — same value as ROSE below
 export const GOLD = "#b98b4e";
 export const GOLD_LIGHT = "#d4af7a";
 export const IVORY = "#FBF7F2";
+export const BG = "#F6EFE4";
+export const CARD = "#fffdf8";
 export const INK = "#241512";
+export const MUTED = "#a89890";
 export const SAGE = "#6b8f71";
 export const CLAY = "#c1666b";
 export const AMBER = "#b8863f";
-export const PAPER = "#F6EFE4";
+export const PAPER = "#F6EFE4"; // kept for backward compatibility — same value as BG above
 export const RULE = "#e8dccb";
 export const ROSE = "#F5E8EA";
 
-export const serif = { fontFamily: "'Playfair Display', serif" };
-export const sans = { fontFamily: "'DM Sans', sans-serif" };
-export const mono = { fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, monospace" };
+export const display = { fontFamily: "'Lora', Georgia, 'Times New Roman', serif" };
+export const body = { fontFamily: "'Work Sans', 'Segoe UI', sans-serif" };
+export const mono = { fontFamily: "'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace" };
+// Old names kept as aliases so any file still importing `serif`/`sans` from
+// here keeps working without a rewrite.
+export const serif = display;
+export const sans = body;
 
 export const token = () => localStorage.getItem("token");
 export const authHeaders = () => ({ headers: { Authorization: `Bearer ${token()}` } });
@@ -43,7 +57,7 @@ export function riskBadge(status) {
     good:      { bg: `${GOLD}18`, color: GOLD,  label: "Good" },
     "at-risk": { bg: `${CLAY}18`, color: CLAY,  label: "At Risk" },
   };
-  return map[status] || { bg: PAPER, color: "#8a7a70", label: status || "Unknown" };
+  return map[status] || { bg: PAPER, color: MUTED, label: status || "Unknown" };
 }
 
 // ─── Monthly Reports badges ─────────────────────────────────────────────────
@@ -53,7 +67,7 @@ export function reportStatusBadge(status) {
     accepted:      { bg: `${SAGE}18`,  color: SAGE,  label: "Accepted",    Icon: CheckCircle },
     "medium-risk": { bg: `${AMBER}18`, color: AMBER, label: "Medium Risk", Icon: AlertTriangle },
     "high-risk":   { bg: `${CLAY}18`,  color: CLAY,  label: "High Risk",   Icon: XCircle },
-    pending:       { bg: PAPER,        color: "#8a7a70", label: "Pending", Icon: Clock },
+    pending:       { bg: PAPER,        color: MUTED, label: "Pending", Icon: Clock },
   };
   return map[status] || map.pending;
 }
@@ -69,14 +83,14 @@ export function staffActionBadge(action) {
 }
 
 export function scoreColor(score) {
-  if (score >= 71) return SAGE;
-  if (score >= 51) return AMBER;
+  if (score >= 70) return SAGE;
+  if (score >= 50) return AMBER;
   return CLAY;
 }
 
 // ─── Export tab status badges ──────────────────────────────────────────────
-// Kept as Tailwind-class based (used by ExportTables.jsx) but recolored onto
-// the same ledger palette instead of generic emerald/blue/red/gray.
+// Tailwind-class based (used by SharedTableBits.jsx's Badge), already on
+// the shared ledger palette.
 
 export const STATUS_CONFIG = {
   Completed:       { bg: "bg-[#6b8f71]/10",  text: "text-[#6b8f71]",  border: "border-[#6b8f71]/30",  icon: CheckCircle2 },

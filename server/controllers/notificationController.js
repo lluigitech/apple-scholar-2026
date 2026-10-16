@@ -2,6 +2,7 @@ const nodemailer = require('nodemailer');
 const { URL } = require('url');
 const http = require('http');
 const https = require('https');
+const db = require('../config/db');
 
 const getTransporter = () => {
   const host = process.env.SMTP_HOST;
@@ -78,7 +79,7 @@ exports.getStatus = async (req, res) => {
 exports.testGmail = async (req, res) => {
   try {
     const transporter = getTransporter();
-    const to = process.env.TEST_EMAIL || req.body?.email;
+    const to = req.body?.email || process.env.TEST_EMAIL;
     if (!transporter) return res.status(400).json({ error: 'SMTP not configured' });
     if (!to) return res.status(400).json({ error: 'No recipient configured for test email' });
 
@@ -186,7 +187,10 @@ exports.getLogs = (req, res) => {
     const limit = Math.min(100, Number(req.query.limit) || 50);
     const sql = `SELECT id, scholar_id, recipient, channel, type, status, detail, created_at FROM notification_logs ORDER BY created_at DESC LIMIT ?`;
     db.query(sql, [limit], (err, rows) => {
-      if (err) return res.status(500).json({ error: 'Failed to fetch logs' });
+      if (err) {
+        console.error('Failed to fetch administrator notification logs:', err);
+        return res.status(500).json({ error: 'Failed to fetch logs' });
+      }
       res.json(rows);
     });
   } catch (e) {

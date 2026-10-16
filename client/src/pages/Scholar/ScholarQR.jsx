@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { User, Mail, Phone, Hash, Download, Shield, BookOpen, QrCode, CreditCard } from 'lucide-react';
+import { formatYearLevelLabel } from '../../utils/yearLevelLabels';
 
 // Deterministic QR SVG
 function QRCodeSVG({ value, cellSize = 7 }) {
@@ -137,7 +138,7 @@ function PremiumIDCard({ scholar }) {
               </div>
               <div>
                 <p style={{ margin: 0, fontSize: '0.41rem', color: '#D4AF37', opacity: 0.75, textTransform: 'uppercase', letterSpacing: '0.1em' }}>Year Level</p>
-                <p style={{ margin: '1px 0 0', fontSize: '0.6rem', fontWeight: 700, color: 'rgba(255,255,255,0.9)' }}>{scholar.yearLevel}</p>
+                <p style={{ margin: '1px 0 0', fontSize: '0.6rem', fontWeight: 700, color: 'rgba(255,255,255,0.9)' }}>{formatYearLevelLabel(scholar.yearLevel)}</p>
               </div>
               <div style={{ gridColumn: '1 / -1' }}>
                 <p style={{ margin: 0, fontSize: '0.41rem', color: '#D4AF37', opacity: 0.75, textTransform: 'uppercase', letterSpacing: '0.1em' }}>Course</p>
@@ -218,7 +219,7 @@ function MyID() {
         .dl-btn.outline:hover { background:#fdf0f2; transform:translateY(-1px); }
       `}</style>
 
-      <div style={{ maxWidth: 820, margin: '0 auto' }}>
+      <div style={{ width: '100%' }}>
 
         {/* Header */}
         <div className={`fade-up d1${visible ? ' visible' : ''}`} style={{ marginBottom: '1.8rem' }}>
@@ -318,7 +319,7 @@ function MyID() {
                   <div style={{ textAlign: 'center' }}>
                     <p style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: '0.95rem', fontWeight: 700, color: '#1a1a1a' }}>{scholar.name}</p>
                     <p style={{ margin: '3px 0 0', fontSize: '0.72rem', color: MAROON, fontWeight: 600, letterSpacing: '0.06em' }}>{scholar.studentId}</p>
-                    <p style={{ margin: '2px 0 0', fontSize: '0.68rem', color: '#9ca3af' }}>{scholar.course} · {scholar.yearLevel}</p>
+                    <p style={{ margin: '2px 0 0', fontSize: '0.68rem', color: '#9ca3af' }}>{scholar.course} · {formatYearLevelLabel(scholar.yearLevel)}</p>
                   </div>
                   <div style={{ width: '100%', paddingTop: 10, borderTop: '1px dashed #f0e0e2', textAlign: 'center' }}>
                     <p style={{ margin: 0, fontSize: '0.62rem', color: '#c4c4c4', letterSpacing: '0.05em' }}>Valid · {scholar.academicYear}</p>

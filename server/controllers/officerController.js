@@ -2,7 +2,9 @@ const db = require('../config/db');
 const exportController = require('./exportcontroller');
 const { sendAnnouncementNotifyEmails } = require('../utils/notifyHelpers');
 const { logComplianceIncident, clampCompliance } = require('../utils/complianceLogger');
-const { applyOfficerYearLevelFilter } = require('../utils/officerAssignments');
+const { applyOfficerYearLevelFilter, normalizeYearLevel, yearLevelSqlExpression } = require('../utils/officerAssignments');
+const submissionController = require('./submissionController');
+const { logPrivacyAccess } = require('../middleware/privacyAccess');
 
 const formatDate = (value) => {
     if (!value) return null;
@@ -294,7 +296,7 @@ exports.getComplianceSummary = (req, res) => {
             SELECT
                 scholar_id,
                 COUNT(*) AS total_submissions,
-                SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved,
+                SUM(CASE WHEN status IN ('approved', 'archived') THEN 1 ELSE 0 END) AS approved,
                 SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
                 AVG(quality_score) AS avg_quality,
                 MAX(submitted_at) AS last_submission,
@@ -408,135 +410,168 @@ exports.getComplianceSummary = (req, res) => {
     }).catch(() => res.status(500).json({ error: 'Failed to resolve officer assignments.' }));
 };
 
-// ─── GET MONTHLY REPORT SUBMISSIONS (for Officer review table) ────────
-// NOTE: `course`, `school`, `age` ay INAASSUME kong columns sa `users` table.
-// Kung wala 'to sa schema mo, alisin mo muna 'yung mga linyang 'yun sa SELECT
-// at sa mapping sa baba, o baguhin sa tamang column name.
-exports.getMonthlySubmissions = (req, res) => {
+// ─── MONTHLY LETTER REVIEW ────────────────────────────────────────────
+exports.getMonthlySubmissions = async (req, res) => {
     const { year_level, month, date_from, date_to } = req.query;
-    const conditions = ['s.submission_type = \'letter\''];
+    const conditions = [
+        "s.submission_type = 'letter'",
+        'COALESCE(s.archived_at, s.archive_at) IS NULL',
+    ];
     const values = [];
-    applyOfficerYearLevelFilter(req, conditions, values).then(() => {
+    const validDate = value => {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value || ''))) return false;
+        const date = new Date(`${value}T00:00:00.000Z`);
+        return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+    };
 
-    if (year_level) {
-        conditions.push('u.year_level = ?');
-        values.push(year_level);
+    if (month && !/^\d{4}-(0[1-9]|1[0-2])$/.test(String(month))) {
+        return res.status(400).json({ error: 'Month must use YYYY-MM format.' });
     }
-    if (month) {
-        conditions.push("DATE_FORMAT(COALESCE(s.service_date, s.submitted_at), '%Y-%m') = ?");
-        values.push(month);
+    if ((date_from && !validDate(date_from)) || (date_to && !validDate(date_to))) {
+        return res.status(400).json({ error: 'Date filters must use YYYY-MM-DD format.' });
     }
-    if (date_from) {
-        conditions.push('DATE(COALESCE(s.service_date, s.submitted_at)) >= ?');
-        values.push(date_from);
-    }
-    if (date_to) {
-        conditions.push('DATE(COALESCE(s.service_date, s.submitted_at)) <= ?');
-        values.push(date_to);
+    if (date_from && date_to && date_from > date_to) {
+        return res.status(400).json({ error: 'The start date must not be after the end date.' });
     }
 
-    const sql = `
-        SELECT s.id, s.scholar_id, s.letter_content, s.sentiment_label, s.quality_score, s.quality_status,
-               s.status, s.officer_comment AS staff_comment, s.submitted_at, s.reviewed_at, s.service_date,
-               u.full_name, u.year_level,
-               GROUP_CONCAT(
-                   CONCAT_WS('||', IFNULL(sm.file_path, ''), IFNULL(sm.description, ''))
-                   SEPARATOR ';;'
-               ) AS media_raw
-        FROM submissions s
-        LEFT JOIN users u ON s.scholar_id = u.scholar_id
-        LEFT JOIN submission_media sm ON s.id = sm.submission_id
-        WHERE ${conditions.join(' AND ')}
-        GROUP BY s.id, s.scholar_id, s.letter_content, s.sentiment_label, s.quality_score, s.quality_status,
-                 s.status, s.officer_comment, s.submitted_at, s.reviewed_at, s.service_date,
-                 u.full_name, u.year_level
-        ORDER BY s.submitted_at DESC
-    `;
+    try {
+        await applyOfficerYearLevelFilter(req, conditions, values, 'u.year_level');
 
-    console.log('DEBUG monthly submissions query', { sql: sql.trim().replace(/\s+/g, ' '), values });
-    db.query(sql, values, (err, rows) => {
-        if (err) {
-            console.error('Error fetching monthly submissions:', err, { sql, values });
-            return res.status(500).json({ error: 'Error fetching monthly submissions' });
+        if (year_level) {
+            conditions.push(`${yearLevelSqlExpression('u.year_level')} = ?`);
+            values.push(normalizeYearLevel(year_level));
         }
-        console.log('DEBUG monthly submissions rows', rows.length);
+        if (month) {
+            conditions.push("DATE_FORMAT(s.submitted_at, '%Y-%m') = ?");
+            values.push(month);
+        }
+        if (date_from) {
+            conditions.push('DATE(COALESCE(s.service_date, s.submitted_at)) >= ?');
+            values.push(date_from);
+        }
+        if (date_to) {
+            conditions.push('DATE(COALESCE(s.service_date, s.submitted_at)) <= ?');
+            values.push(date_to);
+        }
 
-        const qualityStatusMap = { accepted: 'accepted', medium_risk: 'medium-risk', high_risk: 'high-risk' };
-        const staffActionMap   = { approved: 'approved', rejected: 'rejected', needs_revision: 'needs-revision' };
+        const sql = `
+            SELECT
+                s.id,
+                s.scholar_id,
+                s.submission_type,
+                s.letter_content,
+                s.quality_score,
+                s.quality_status,
+                s.quality_label,
+                s.content_score,
+                s.content_breakdown,
+                s.sentiment_score,
+                s.sentiment_label,
+                s.status AS review_status,
+                s.officer_comment AS staff_comment,
+                s.submitted_at,
+                s.service_date,
+                s.reviewed_at,
+                s.approved_at,
+                s.returned_at,
+                s.finalized_at,
+                s.export_available_at,
+                u.full_name,
+                u.year_level,
+                (
+                    SELECT GROUP_CONCAT(
+                        CONCAT_WS('||', IFNULL(sm.file_path, ''), IFNULL(sm.description, ''))
+                        SEPARATOR ';;'
+                    )
+                    FROM submission_media sm
+                    WHERE sm.submission_id = s.id
+                ) AS media_raw
+            FROM submissions s
+            INNER JOIN users u ON u.scholar_id = s.scholar_id
+            WHERE ${conditions.join(' AND ')}
+            ORDER BY s.submitted_at DESC, s.id DESC
+        `;
+        db.query(sql, values, (err, rows) => {
+            if (err) {
+                console.error('Error fetching monthly letter submissions:', err);
+                return res.status(500).json({ error: 'Error fetching monthly letter submissions.' });
+            }
 
-        const results = rows.map(row => {
-            const photos = (row.media_raw || '')
-                .split(';;')
-                .filter(Boolean)
-                .map(chunk => {
-                    const [url, description] = chunk.split('||');
-                    return { url, description };
-                });
-
-            const wordCount = (row.letter_content || '').trim().split(/\s+/).filter(Boolean).length;
-
-            const checklistResults = [
-                { label: 'Letter body (50+ words)',        passed: wordCount >= 50 },
-                { label: 'Minimum length (150+ words)',    passed: wordCount >= 150 },
-                { label: 'At least 1 photo',               passed: photos.length > 0 },
-                { label: 'All photos have descriptions',   passed: photos.length > 0 && photos.every(p => p.description && p.description.trim()) },
-            ];
-
-            return {
-                id: row.id,
-                scholarName: row.full_name,
-                studentId: row.scholar_id,
-                course: '—',
-                school: '—',
-                year: row.year_level || '—',
-                age: '—',
-                date: row.service_date || row.submitted_at,
-                submittedAt: row.submitted_at,
-                reviewedAt: row.reviewed_at,
-                sentimentLabel: row.sentiment_label || 'Neutral',
-                status: qualityStatusMap[row.quality_status] || 'pending',
-                qualityScore: row.quality_score || 0,
-                reportScore: row.quality_score || 0,
-                body: row.letter_content,
-                checklistResults,
-                photos,
-                staffAction: staffActionMap[row.status] || null,
-                staffFeedback: row.staff_comment || '',
+            const qualityStatusMap = { accepted: 'accepted', medium_risk: 'medium-risk', high_risk: 'high-risk' };
+            const staffActionMap = {
+                approved: 'approved',
+                returned: 'needs-revision',
+                rejected: 'needs-revision',
+                needs_revision: 'needs-revision',
+                'needs-revision': 'needs-revision',
             };
+            const results = rows.map(row => {
+                const wordCount = (row.letter_content || '').trim().split(/\s+/).filter(Boolean).length;
+                const reviewStatus = row.review_status || 'pending';
+                const qualityStatus = row.quality_status || null;
+                const qualityScore = row.quality_score == null ? null : Number(row.quality_score);
+                const photos = (row.media_raw || '')
+                    .split(';;')
+                    .filter(Boolean)
+                    .map(chunk => {
+                        const [url, description] = chunk.split('||');
+                        return { url, description };
+                    });
+                return {
+                    ...row,
+                    scholarName: row.full_name,
+                    studentId: row.scholar_id,
+                    year: row.year_level || '—',
+                    date: row.service_date || row.submitted_at,
+                    submittedAt: row.submitted_at,
+                    reviewedAt: row.reviewed_at,
+                    sentimentLabel: row.sentiment_label || 'Neutral',
+                    status: qualityStatusMap[qualityStatus] || 'pending',
+                    qualityScore,
+                    reportScore: qualityScore,
+                    body: row.letter_content,
+                    checklistResults: [
+                        { label: 'Letter body (50+ words)', passed: wordCount >= 50 },
+                        { label: 'Minimum length (150+ words)', passed: wordCount >= 150 },
+                        { label: 'At least 1 photo', passed: photos.length > 0 },
+                        { label: 'All photos have descriptions', passed: photos.length > 0 && photos.every(photo => photo.description && photo.description.trim()) },
+                    ],
+                    photos,
+                    staffAction: staffActionMap[reviewStatus] || null,
+                    staffFeedback: row.staff_comment || '',
+                    approvedAt: row.approved_at,
+                    finalizedAt: row.finalized_at,
+                    exportAvailableAt: row.export_available_at,
+                };
+            });
+            res.json(results);
         });
-
-        res.json(results);
-    });
-    }).catch(() => res.status(500).json({ error: 'Failed to resolve officer assignments.' }));
-};
-// ─── REVIEW A MONTHLY SUBMISSION (Approve / Reject / Needs Revision) ───
-// IMPORTANT: kung ENUM ang `submissions.status` column mo sa MySQL at
-// 'needs_revision' ay wala pang kasama, kailangan mo munang i-ALTER TABLE:
-//   ALTER TABLE submissions MODIFY status
-//     ENUM('pending','approved','rejected','needs_revision') DEFAULT 'pending';
-// Kung TEXT/VARCHAR naman siya, ok lang agad, walang kailangan gawin.
-exports.reviewMonthlySubmission = (req, res) => {
-    const { id } = req.params;
-    const { action, feedback } = req.body; // action: 'approved' | 'rejected' | 'needs-revision'
-
-    const statusMap = { approved: 'approved', rejected: 'rejected', 'needs-revision': 'needs_revision' };
-    const dbStatus = statusMap[action];
-
-    if (!dbStatus) {
-        return res.status(400).json({ error: "Invalid action. Must be 'approved', 'rejected', or 'needs-revision'." });
+    } catch (error) {
+        console.error('Failed to resolve officer assignments for monthly letters:', error);
+        return res.status(500).json({ error: 'Failed to resolve officer assignments.' });
     }
-
-    const sql = `UPDATE submissions SET status = ?, officer_comment = ?, reviewed_at = NOW() WHERE id = ?`;
-    db.query(sql, [dbStatus, feedback || null, id], (err, result) => {
-        if (err) {
-            console.error('Error reviewing monthly submission:', err);
-            return res.status(500).json({ error: 'Error updating submission' });
-        }
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ error: 'Submission not found' });
-        }
-        res.json({ message: 'Submission reviewed successfully' });
-    });
+};
+// Keep monthly report decisions on the same lifecycle and assignment checks
+// as Manual Validation.
+exports.reviewMonthlySubmission = (req, res) => {
+    const action = typeof req.body?.action === 'string'
+        ? req.body.action.trim().toLowerCase()
+        : '';
+    const status = {
+        approve: 'approved',
+        approved: 'approved',
+        return: 'returned',
+        rejected: 'returned',
+        returned: 'returned',
+        'needs-revision': 'returned',
+        needs_revision: 'returned',
+        'needs revision': 'returned',
+    }[action];
+    if (!status) {
+        return res.status(400).json({ error: "Invalid action. Must be 'approve' or 'return'." });
+    }
+    req.body = { status, staff_comment: req.body?.comment ?? req.body?.feedback ?? null };
+    return submissionController.reviewSubmission(req, res);
 };
 
 // ─── GET TASK COMPLETION SUMMARY ───────────────────────────────
@@ -573,26 +608,41 @@ exports.getTaskCompletionSummary = (req, res) => {
                 };
                 const typeMap = { 'Monthly Report': 'letter', 'Report Card': 'report_card', 'COR Upload': 'cor' };
 
-                const approvedSubmissionsSql = `SELECT scholar_id, submission_type, submitted_at FROM submissions WHERE scholar_id IN (${placeholders}) AND status = 'approved'`;
-                db.query(approvedSubmissionsSql, scholarIds, (submissionErr, submissions) => {
+                const submissionsSql = `SELECT scholar_id, submission_type, status, submitted_at FROM submissions WHERE scholar_id IN (${placeholders})`;
+                db.query(submissionsSql, scholarIds, (submissionErr, submissions) => {
                     if (submissionErr) return res.status(500).json({ error: 'Failed to fetch task completion records.' });
-                    const approvedGradesSql = `SELECT scholar_id, created_at AS submitted_at FROM grades WHERE scholar_id IN (${placeholders}) AND verification_status = 'approved'`;
-                    db.query(approvedGradesSql, scholarIds, (gradeErr, grades) => {
+                    const gradesSql = `SELECT scholar_id, 'grades' AS submission_type, verification_status AS status, created_at AS submitted_at FROM grades WHERE scholar_id IN (${placeholders})`;
+                    db.query(gradesSql, scholarIds, (gradeErr, grades) => {
                         if (gradeErr) return res.status(500).json({ error: 'Failed to fetch task completion records.' });
-                        const approved = [...submissions, ...grades];
+                        const scholarRecords = [...submissions, ...grades];
+                        const today = new Date();
+                        today.setHours(0, 0, 0, 0);
                         const results = scholars.map(scholar => {
                             const assigned = tasks.filter(task => {
                                 const levels = parseLevels(task.target_year_levels);
                                 return !levels.length || levels.includes(scholar.year_level);
                             });
-                            const completed = assigned.filter(task => {
+                            const recordsForTask = task => {
                                 const submissionType = typeMap[task.type];
-                                if (!submissionType) return false;
+                                if (!submissionType) return [];
                                 const taskTime = new Date(task.created_at || 0).getTime();
-                                return approved.some(record => record.scholar_id === scholar.scholar_id && (!record.submission_type || record.submission_type === submissionType) && new Date(record.submitted_at || 0).getTime() >= taskTime);
+                                return scholarRecords.filter(record => {
+                                    const matchesType = record.submission_type === submissionType || (task.type === 'Report Card' && record.submission_type === 'grades');
+                                    return record.scholar_id === scholar.scholar_id && matchesType && new Date(record.submitted_at || 0).getTime() >= taskTime;
+                                });
+                            };
+                            const completedTasks = assigned.filter(task => recordsForTask(task).some(record => ['approved', 'archived'].includes(record.status)));
+                            const missingTasks = assigned.filter(task => {
+                                if (!task.due_date || recordsForTask(task).length) return false;
+                                const dueDate = task.due_date instanceof Date
+                                    ? new Date(task.due_date.getFullYear(), task.due_date.getMonth(), task.due_date.getDate())
+                                    : new Date(`${String(task.due_date).slice(0, 10)}T00:00:00`);
+                                return !Number.isNaN(dueDate.getTime()) && dueDate < today;
                             }).length;
+                            const completed = completedTasks.length;
+                            const pendingTasks = assigned.length - completed - missingTasks;
                             const completionRate = assigned.length ? Math.round((completed / assigned.length) * 100) : 0;
-                            return { id: scholar.id, name: scholar.full_name, studentId: scholar.scholar_id, year_level: scholar.year_level || 'N/A', assignedTasks: assigned.length, completedTasks: completed, pendingTasks: assigned.length - completed, completionRate, riskStatus: completionRate >= 80 ? 'excellent' : completionRate >= 50 ? 'good' : 'at-risk' };
+                            return { id: scholar.id, name: scholar.full_name, studentId: scholar.scholar_id, year_level: scholar.year_level || 'N/A', assignedTasks: assigned.length, completedTasks: completed, missingTasks, pendingTasks, completionRate, riskStatus: completionRate >= 80 ? 'excellent' : completionRate >= 50 ? 'good' : 'at-risk' };
                         });
                         const filtered = results.filter(row => scholar_group !== 'At Risk Only' || row.riskStatus === 'at-risk');
                         res.json(filtered.sort((a, b) => a.completionRate - b.completionRate));
@@ -606,7 +656,33 @@ exports.getTaskCompletionSummary = (req, res) => {
 // ─── GET SCHOLAR SUBMISSION SUMMARY ───────────────────────────
 exports.getScholarSubmissionSummary = (req, res) => {
     const { report_type, period, date_from, date_to, scholar_group, scholar_id } = req.query;
-    const submissionTypeMap = { 'Monthly Letter': 'letter', 'Report Cards': 'report_card', 'Grades': null, 'COR': 'cor', 'Other Documents': 'other' };
+    const supportedReportTypes = new Set([
+        'Monthly Letter',
+        'Report Cards',
+        'Grades',
+        'Report Cards & Grades',
+        'COR',
+        'Other Documents',
+    ]);
+    if (!supportedReportTypes.has(report_type)) {
+        return res.status(400).json({ error: 'A supported report type is required.' });
+    }
+    if (req.user?.role === 'officer') {
+        logPrivacyAccess(req, {
+            action: report_type === 'Monthly Letter' ? 'VIEW_LETTER' : 'VIEW_SCHOLAR',
+            resourceType: 'submission_report',
+            resourceId: report_type,
+            status: 'allowed',
+        }).catch((auditError) => console.error('Failed to log scholar report summary access:', auditError));
+    }
+    const submissionTypeMap = {
+        'Monthly Letter': 'letter',
+        'Report Cards': 'report_card',
+        'Grades': null,
+        'Report Cards & Grades': 'report_card',
+        'COR': 'cor',
+        'Other Documents': 'other',
+    };
     const selectedType = submissionTypeMap[report_type];
     const includesGrades = report_type === 'Grades' || report_type === 'Report Cards & Grades';
     const range = buildPeriodRange(period, date_from, date_to);
@@ -615,8 +691,8 @@ exports.getScholarSubmissionSummary = (req, res) => {
 
     applyOfficerYearLevelFilter(req, scholarConditions, scholarValues).then(() => {
         if (scholar_group && scholar_group !== 'All Scholars') {
-            scholarConditions.push('u.year_level = ?');
-            scholarValues.push(scholar_group);
+            scholarConditions.push(`${yearLevelSqlExpression('u.year_level')} = ?`);
+            scholarValues.push(normalizeYearLevel(scholar_group));
         }
         if (scholar_id) {
             scholarConditions.push('u.scholar_id = ?');
@@ -629,7 +705,7 @@ exports.getScholarSubmissionSummary = (req, res) => {
             const placeholders = scholarIds.map(() => '?').join(', ');
             const values = [...scholarIds];
             const taskType = { 'Monthly Letter': 'Monthly Report', 'Report Cards': 'Report Card', 'Grades': 'Report Card', 'COR': 'COR Upload', 'Other Documents': 'Other Documents' }[report_type];
-            let sql = `SELECT scholar_id, status, submitted_at, reviewed_at, quality_status FROM submissions WHERE scholar_id IN (${placeholders})`;
+            let sql = `SELECT id, scholar_id, status, submitted_at, reviewed_at, quality_status, export_available_at FROM submissions WHERE scholar_id IN (${placeholders})`;
             if (selectedType) { sql += ' AND submission_type = ?'; values.push(selectedType); }
             if (report_type === 'Grades') sql += " AND 1 = 0";
             if (range) { sql += ' AND DATE(submitted_at) BETWEEN ? AND ?'; values.push(range.start, range.end); }
@@ -643,7 +719,7 @@ exports.getScholarSubmissionSummary = (req, res) => {
                     return res.status(500).json({ error: 'Failed to fetch scholar submissions.' });
                 }
                 const gradeValues = [...scholarIds];
-                let gradeSql = `SELECT scholar_id, verification_status AS status, created_at AS submitted_at FROM grades WHERE scholar_id IN (${placeholders})`;
+                let gradeSql = `SELECT id, scholar_id, verification_status AS status, created_at AS submitted_at, export_available_at FROM grades WHERE scholar_id IN (${placeholders})`;
                 if (includesGrades && range) { gradeSql += ' AND DATE(created_at) BETWEEN ? AND ?'; gradeValues.push(range.start, range.end); }
                 if (!includesGrades) return res.json(buildRows(scholars, submissions, [], deadline));
                 db.query(gradeSql, gradeValues, (gradeErr, grades) => {
@@ -672,13 +748,18 @@ exports.getScholarSubmissionSummary = (req, res) => {
     function buildRows(scholars, submissions, grades, deadline) {
         return scholars.map(scholar => {
             const records = [...submissions, ...grades].filter(row => row.scholar_id === scholar.scholar_id);
-            const approved = records.filter(row => row.status === 'approved').length;
+            const approved = records.filter(row => ['approved', 'archived'].includes(row.status)).length;
             const submitted = records.length;
-            const pending = Math.max(0, submitted - approved);
+            const pending = records.length - approved;
             const completionRate = submitted ? Math.round((approved / submitted) * 100) : 0;
             const latest = records.slice().sort((a, b) => new Date(b.submitted_at || 0) - new Date(a.submitted_at || 0))[0];
-            const latestApproved = records.filter(row => row.status === 'approved').sort((a, b) => new Date(b.reviewed_at || 0) - new Date(a.reviewed_at || 0))[0];
-            return { id: scholar.id, name: scholar.full_name, studentId: scholar.scholar_id, year_level: scholar.year_level || 'N/A', submitted, approved, pending, completionRate, latestSubmittedAt: latest?.submitted_at || null, reviewedAt: latestApproved?.reviewed_at || null, deadline, qualityStatus: latest?.quality_status || null, riskStatus: completionRate >= 80 ? 'excellent' : completionRate >= 50 ? 'good' : 'at-risk' };
+            const latestApproved = records.filter(row => ['approved', 'archived'].includes(row.status)).sort((a, b) => new Date(b.reviewed_at || 0) - new Date(a.reviewed_at || 0))[0];
+            const exportAvailableAt = records.reduce((latestDate, row) => {
+                if (!row.export_available_at) return latestDate;
+                const value = new Date(row.export_available_at);
+                return !latestDate || value > latestDate ? value : latestDate;
+            }, null);
+            return { id: scholar.id, name: scholar.full_name, studentId: scholar.scholar_id, year_level: scholar.year_level || 'N/A', submitted, approved, pending, completionRate, latestSubmittedAt: latest?.submitted_at || null, reviewedAt: latestApproved?.reviewed_at || null, exportAvailableAt: exportAvailableAt?.toISOString() || null, deadline, qualityStatus: latest?.quality_status || null, riskStatus: completionRate >= 80 ? 'excellent' : completionRate >= 50 ? 'good' : 'at-risk' };
         }).sort((a, b) => {
             const aSubmitted = a.submitted > 0 ? 1 : 0;
             const bSubmitted = b.submitted > 0 ? 1 : 0;

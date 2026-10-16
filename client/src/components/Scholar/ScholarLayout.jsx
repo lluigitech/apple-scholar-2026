@@ -1,55 +1,148 @@
 import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
+import { Menu } from 'lucide-react';
 import ScholarSidebar from './ScholarSidebar';
+import appleLogo from '../../assets/logo/applelogo.png';
 
-// ── Token system — shared across the Scholar Portal ──
-const MAROON = '#7f2d3a';
-const MAROON_DEEP = '#4f1620';
-const GOLD = '#b98b4e';
-const IVORY = '#FBF7F2';
+// ── Unified Apple Scholar tokens (same as Admin / Officer / Staff portals) ──
+const BG = '#F7F4EE';
+const SURFACE = '#FFFDF9';
+const BORDER = '#E7D8C7';
+const PRIMARY = '#6D2140';
 
 const ScholarLayout = () => {
     const [sidebarOpen, setSidebarOpen] = useState(false);
 
     return (
-        <div className="flex h-screen overflow-hidden" style={{ background: IVORY }}>
+        <div className="flex h-screen overflow-hidden" style={{ background: BG }}>
+            {/* Shared bento building blocks for Scholar pages.
+                Pages opt in by using these classes; nothing here restyles
+                existing page markup, and desktop layouts are untouched. */}
+            <style>{`
+                .sb-grid {
+                    display: grid;
+                    grid-template-columns: minmax(0, 1fr);
+                    gap: 12px;
+                    padding: 0 16px 24px;
+                    min-width: 0;
+                }
+                @media (min-width: 375px) {
+                    .sb-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+                    .sb-span-2 { grid-column: span 2; }
+                }
+                @media (min-width: 768px) {
+                    .sb-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; padding: 0 24px 28px; }
+                    .sb-span-2 { grid-column: span 2; }
+                    .sb-span-3 { grid-column: span 3; }
+                }
+                @media (min-width: 1024px) {
+                    .sb-grid { gap: 16px; padding: 0 32px 32px; }
+                }
+
+                .sb-card {
+                    background: ${SURFACE};
+                    border: 1px solid ${BORDER};
+                    border-radius: 18px;
+                    padding: 16px 18px;
+                    box-shadow: 0 1px 3px rgba(74, 23, 48, 0.04);
+                    min-width: 0;
+                }
+                .sb-card--hero {
+                    background: linear-gradient(160deg, #6D2140 0%, #4A1730 100%);
+                    border-color: #4A1730;
+                    color: #fff;
+                    padding: 22px 20px;
+                    box-shadow: 0 8px 24px rgba(74, 23, 48, 0.18);
+                }
+                .sb-card--tint {
+                    background: rgba(109, 33, 64, 0.06);
+                    border-color: rgba(109, 33, 64, 0.14);
+                }
+                .sb-label {
+                    font-family: 'Inter', 'Segoe UI', sans-serif;
+                    font-size: 0.64rem;
+                    font-weight: 700;
+                    letter-spacing: 0.14em;
+                    text-transform: uppercase;
+                    color: #A9784E;
+                }
+                .sb-card--hero .sb-label { color: rgba(255, 255, 255, 0.72); }
+                .sb-title {
+                    font-family: 'Playfair Display', Georgia, serif;
+                    font-weight: 700;
+                    color: #241512;
+                    line-height: 1.15;
+                }
+                .sb-card--hero .sb-title { color: #fff; font-size: 1.6rem; }
+                .sb-stat {
+                    font-family: 'Playfair Display', Georgia, serif;
+                    font-size: 1.9rem;
+                    font-weight: 700;
+                    color: #6D2140;
+                    line-height: 1;
+                    margin-top: 10px;
+                }
+                .sb-muted {
+                    font-family: 'Inter', 'Segoe UI', sans-serif;
+                    font-size: 0.78rem;
+                    color: #8A7A68;
+                }
+            `}</style>
+
             <ScholarSidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
-            <main className="flex-1 overflow-y-auto w-full min-w-0">
-                {/* Mobile hamburger */}
+            <main className="flex-1 min-w-0 w-full overflow-y-auto overflow-x-hidden" style={{ background: BG }}>
+                {/* Mobile / tablet header — hamburger + centered logo only */}
                 <div
-                    className="sticky top-0 z-10 flex items-center gap-3 px-4 py-3 backdrop-blur-md lg:hidden"
-                    style={{ background: 'rgba(251,247,242,0.85)', borderBottom: '1px solid #ecdfe1' }}
+                    className="sticky top-0 z-10 flex items-center px-4 backdrop-blur-md lg:hidden"
+                    style={{
+                        height: 70,
+                        background: 'rgba(247, 244, 238, 0.94)',
+                        borderBottom: `1px solid ${BORDER}`,
+                    }}
                 >
                     <button
                         onClick={() => setSidebarOpen(true)}
-                        className="p-2 rounded-xl"
-                        style={{ background: '#fff', border: '1px solid #ecdfe1', boxShadow: '0 2px 6px rgba(36,21,18,0.06)', color: MAROON }}
+                        aria-label="Open navigation"
+                        className="relative z-10 flex items-center justify-center shrink-0 rounded-xl transition-colors duration-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6D2140]"
+                        style={{
+                            width: 42,
+                            height: 42,
+                            background: SURFACE,
+                            border: `1px solid ${BORDER}`,
+                            boxShadow: '0 1px 4px rgba(36, 21, 18, 0.06)',
+                            color: PRIMARY,
+                            cursor: 'pointer',
+                        }}
                     >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
-                        </svg>
+                        <Menu size={20} strokeWidth={2} />
                     </button>
-                    <div className="flex items-center gap-2">
-                        <div
-                            className="w-6 h-6 rounded-lg flex items-center justify-center"
-                            style={{ background: `linear-gradient(135deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)` }}
-                        >
-                            {/* our own apple silhouette mark — same one used across every hero band,
-                                not the Apple Inc. logo */}
-                            <svg viewBox="0 0 200 200" className="w-3.5 h-3.5" fill="none">
-                                <path
-                                    d="M100 62c-6-14-20-24-36-24-4 0-8 1-8 1s-2 10 4 22c5 10 15 18 26 19-4 12-6 26-6 38 0 34 18 62 40 62 8 0 12-4 20-4s12 4 20 4c22 0 40-30 40-64 0-24-12-42-30-42-8 0-14 4-20 4s-10-3-16-6c2-11 8-20 16-25-2-1-6-2-10-2-16 0-30 8-40 17z"
-                                    fill={GOLD}
-                                />
-                                <path d="M100 62c2-16 10-30 22-38" stroke={GOLD} strokeWidth="10" strokeLinecap="round" />
-                            </svg>
-                        </div>
-                        <span className="text-sm font-bold uppercase tracking-widest italic" style={{ fontFamily: "'Playfair Display', serif", color: MAROON }}>
-                            Apple Scholar
-                        </span>
-                    </div>
+
+                    {/* Official Apple Scholar logo — centered, proportional, uncropped.
+                        Height scales 32px (320px phones) → 42px (≈440px+). */}
+                    <img
+                        src={appleLogo}
+                        alt="Apple Scholar"
+                        draggable={false}
+                        style={{
+                            position: 'absolute',
+                            left: '50%',
+                            top: '50%',
+                            transform: 'translate(-50%, -50%)',
+                            display: 'block',
+                            height: 'clamp(32px, 9.5vw, 42px)',
+                            width: 'auto',
+                            maxWidth: 170,
+                            objectFit: 'contain',
+                            mixBlendMode: 'multiply',
+                            userSelect: 'none',
+                            pointerEvents: 'none',
+                        }}
+                    />
                 </div>
+
+                {/* 16px breathing room between header and page content (mobile/tablet only) */}
+                <div className="lg:hidden" style={{ height: 16 }} aria-hidden />
 
                 <Outlet />
             </main>

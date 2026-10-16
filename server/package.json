@@ -14,7 +14,8 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
+    "archiver": "^8.0.0",
+    "axios": "^1.9.0",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^1.41.3",
     "cors": "^2.8.6",
@@ -33,7 +34,8 @@
     "pizzip": "^3.2.0",
     "puppeteer": "^25.8.0",
     "qrcode": "^1.5.4",
-    "sentiment": "^5.0.2"
+    "sentiment": "^5.0.2",
+    "unzipper": "^0.12.5"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

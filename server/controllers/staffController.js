@@ -1,12 +1,59 @@
 const db = require('../config/db');
 const dutyController = require('./dutyController');
+const { markEndedDutyAbsences } = require('../services/dutyAbsenceService');
 const { sendAnnouncementNotifyEmails } = require('../utils/notifyHelpers');
 const { applyOfficerYearLevelFilter } = require('../utils/officerAssignments');
+
+const applyStaffGroupFilter = (req, conditions, values, scholarColumn) => {
+    if (req.user?.role !== 'staff') return;
+
+    conditions.push(`EXISTS (
+        SELECT 1
+        FROM scholar_group_members scoped_members
+        JOIN scholar_groups scoped_groups ON scoped_groups.id = scoped_members.group_id
+        WHERE scoped_members.scholar_id = ${scholarColumn}
+          AND scoped_groups.assigned_staff_id = ?
+    )`);
+    values.push(req.user.id);
+};
+
+exports.getMakeupRequestData = async (req, res) => {
+    const staffId = req.user.id;
+    try {
+        await markEndedDutyAbsences();
+    } catch (error) {
+        console.error('[duty-absence] failed to prepare makeup request data:', error.message || error);
+        return res.status(500).json({ error: 'Unable to update ended duty attendance.' });
+    }
+
+    db.query(`
+        SELECT DISTINCT u.scholar_id, u.full_name AS scholar_name,
+               d.id AS source_duty_id, d.title AS source_duty_title, d.duty_date AS source_duty_date,
+               da.status AS source_status
+        FROM duties d
+        JOIN duty_group_assignments dga ON dga.duty_id = d.id
+        JOIN scholar_groups g ON g.id = dga.group_id AND g.assigned_staff_id = ?
+        JOIN scholar_group_members gm ON gm.group_id = g.id
+        JOIN users u ON u.scholar_id = gm.scholar_id AND u.role = 'scholar' AND u.status = 'active'
+        LEFT JOIN duty_attendance da ON da.duty_id = d.id AND da.scholar_id = u.scholar_id
+        LEFT JOIN duty_makeup_permissions p
+            ON p.source_duty_id = d.id AND p.scholar_id = u.scholar_id
+            AND p.status IN ('pending', 'approved', 'used')
+        WHERE da.status IN ('absent', 'excused')
+          AND d.duty_date >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)
+          AND p.id IS NULL
+        ORDER BY d.duty_date DESC, u.full_name ASC
+    `, [staffId], (sourceErr, sources) => {
+        if (sourceErr) return res.status(500).json({ error: 'Error fetching makeup request candidates' });
+        res.json({ sources });
+    });
+};
 
 // ─── SCHOLARS ─────────────────────────────────────────────────
 exports.getPendingScholars = (req, res) => {
     const conditions = ["u.role = 'scholar'"];
     const values = [];
+    applyStaffGroupFilter(req, conditions, values, 'u.scholar_id');
     applyOfficerYearLevelFilter(req, conditions, values).then(() => {
     const sql = `
         SELECT id, scholar_id, full_name, email, role, year_level, status, created_at
@@ -47,18 +94,19 @@ exports.getAnnouncements = (req, res) => {
 };
 
 exports.createAnnouncement = (req, res) => {
-    const { title, content, priority = 'info', created_by, target_levels = [] } = req.body;
+    const { title, content, priority = 'info', target_levels = [] } = req.body;
 
-    if (!title || !content || !created_by) {
-        return res.status(400).json({ error: 'title, content, and created_by are required.' });
+    if (!title || !content) {
+        return res.status(400).json({ error: 'title and content are required.' });
     }
 
-    const creatorId = created_by === undefined || created_by === null || created_by === '' ? null : Number(created_by);
+    const creatorId = req.user?.id || null;
+    const creatorRole = req.user?.role || 'staff';
     const sql = `
         INSERT INTO announcements (title, content, priority, target_roles, target_levels, created_by, created_by_role, is_active, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'staff', 1, NOW())
+        VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW())
     `;
-    db.query(sql, [title, content, priority, JSON.stringify(['scholar']), JSON.stringify(target_levels), creatorId], (err, result) => {
+    db.query(sql, [title, content, priority, JSON.stringify(['scholar']), JSON.stringify(target_levels), creatorId, creatorRole], (err, result) => {
         if (err) {
             console.error('Error creating staff announcement:', err);
             return res.status(500).json({ error: 'Failed to create announcement.' });
@@ -274,24 +322,33 @@ exports.getAttendanceSummary = (req, res) => {
 
 // ─── REPORTS ──────────────────────────────────────────────────
 exports.reportDutyAttendance = (req, res) => {
-    const { scholar_id, date_from, date_to, status } = req.query;
+    const { scholar_id, date_from, date_to, month, status } = req.query;
     const conditions = [];
     const values     = [];
 
     if (scholar_id) { conditions.push('da.scholar_id = ?');          values.push(scholar_id); }
-    if (date_from)  { conditions.push('DATE(da.marked_at) >= ?');    values.push(date_from); }
-    if (date_to)    { conditions.push('DATE(da.marked_at) <= ?');    values.push(date_to); }
+    if (date_from)  { conditions.push('DATE(COALESCE(d.duty_date, da.marked_at)) >= ?');    values.push(date_from); }
+    if (date_to)    { conditions.push('DATE(COALESCE(d.duty_date, da.marked_at)) <= ?');    values.push(date_to); }
+    if (month)      { conditions.push("DATE_FORMAT(COALESCE(d.duty_date, da.marked_at), '%Y-%m') = ?"); values.push(month); }
     if (status)     { conditions.push('da.status = ?');               values.push(status); }
+    applyStaffGroupFilter(req, conditions, values, 'da.scholar_id');
 
     applyOfficerYearLevelFilter(req, conditions, values).then(() => {
     const sql = `
         SELECT u.full_name AS scholar, u.scholar_id, u.year_level,
             d.title AS duty, d.duty_date AS date, d.location,
-            da.status, da.method, da.marked_at
+            da.status, da.method, da.marked_at,
+            COALESCE(g.group_name, 'Unassigned') AS group_name,
+            COALESCE(assigned_staff.full_name, 'Unassigned') AS assigned_staff
         FROM duty_attendance da
         JOIN users u ON u.scholar_id = da.scholar_id
         JOIN duties d ON d.id = da.duty_id
+        LEFT JOIN scholar_group_members gm ON gm.scholar_id = da.scholar_id
+            AND gm.group_id IN (SELECT group_id FROM duty_group_assignments WHERE duty_id = d.id)
+        LEFT JOIN scholar_groups g ON g.id = gm.group_id
+        LEFT JOIN users assigned_staff ON assigned_staff.id = g.assigned_staff_id AND LOWER(assigned_staff.role) = 'staff'
         ${conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''}
+        GROUP BY da.id, u.full_name, u.scholar_id, u.year_level, d.title, d.duty_date, d.location, da.status, da.method, da.marked_at, g.group_name, assigned_staff.full_name
         ORDER BY da.marked_at DESC, u.full_name
     `;
     console.log('[DEBUG] reportDutyAttendance req.query=', req.query, 'sql=', sql, 'values=', values);
@@ -307,9 +364,11 @@ exports.reportSubmissions = (req, res) => {
     const conditions = [];
     const values     = [];
 
+    if (req.user?.role === 'officer') conditions.push("s.submission_type = 'letter'");
     if (scholar_id) { conditions.push('s.scholar_id = ?');           values.push(scholar_id); }
     if (date_from)  { conditions.push('DATE(s.submitted_at) >= ?');  values.push(date_from); }
     if (date_to)    { conditions.push('DATE(s.submitted_at) <= ?');  values.push(date_to); }
+    applyStaffGroupFilter(req, conditions, values, 's.scholar_id');
 
     applyOfficerYearLevelFilter(req, conditions, values).then(() => {
     const sql = `
@@ -336,6 +395,7 @@ exports.reportRequirements = (req, res) => {
     if (scholar_id) { conditions.push('s.scholar_id = ?');           values.push(scholar_id); }
     if (date_from)  { conditions.push('DATE(s.submitted_at) >= ?');  values.push(date_from); }
     if (date_to)    { conditions.push('DATE(s.submitted_at) <= ?');  values.push(date_to); }
+    applyStaffGroupFilter(req, conditions, values, 's.scholar_id');
 
     applyOfficerYearLevelFilter(req, conditions, values).then(() => {
     const sql = `
@@ -366,6 +426,7 @@ exports.reportActivities = (req, res) => {
     if (scholar_id) { conditions.push('da.scholar_id = ?');          values.push(scholar_id); }
     if (date_from)  { conditions.push('DATE(d.duty_date) >= ?');     values.push(date_from); }
     if (date_to)    { conditions.push('DATE(d.duty_date) <= ?');     values.push(date_to); }
+    applyStaffGroupFilter(req, conditions, values, 'da.scholar_id');
 
     applyOfficerYearLevelFilter(req, conditions, values).then(() => {
     const sql = `
@@ -396,6 +457,44 @@ exports.createGroup = (req, res) => {
     db.query(sql, [group_name, description || null, created_by], (err, result) => {
         if (err) return res.status(500).json({ error: 'Error creating group' });
         res.status(201).json({ message: 'Group created', id: result.insertId });
+    });
+};
+
+exports.updateGroup = (req, res) => {
+    const { group_id } = req.params;
+    const { group_name, description } = req.body;
+    const trimmedName = String(group_name || '').trim();
+
+    if (!trimmedName) {
+        return res.status(400).json({ error: 'Group name is required' });
+    }
+
+    db.query(
+        'UPDATE scholar_groups SET group_name = ?, description = ? WHERE id = ?',
+        [trimmedName, description ? String(description).trim() : null, group_id],
+        (err, result) => {
+            if (err) return res.status(500).json({ error: 'Error updating group' });
+            if (result.affectedRows === 0) return res.status(404).json({ error: 'Group not found' });
+            res.json({ message: 'Group updated', id: Number(group_id) });
+        }
+    );
+};
+
+exports.deleteGroup = (req, res) => {
+    const { group_id } = req.params;
+
+    db.query('DELETE FROM scholar_group_members WHERE group_id = ?', [group_id], (memberErr) => {
+        if (memberErr) return res.status(500).json({ error: 'Error removing group members' });
+
+        db.query('DELETE FROM duty_group_assignments WHERE group_id = ?', [group_id], (dutyErr) => {
+            if (dutyErr) return res.status(500).json({ error: 'Error removing duty assignments for this group' });
+
+            db.query('DELETE FROM scholar_groups WHERE id = ?', [group_id], (err, result) => {
+                if (err) return res.status(500).json({ error: 'Error deleting group' });
+                if (result.affectedRows === 0) return res.status(404).json({ error: 'Group not found' });
+                res.json({ message: 'Group deleted', id: Number(group_id) });
+            });
+        });
     });
 };
 

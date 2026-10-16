@@ -101,11 +101,8 @@ async function generateLetterPdf(submissionId) {
   // Try to fetch user profile fields, but log the exact result and any failures.
   let userProfile = { full_name: '', age: '', year_level: '', course: '', school: '' };
   const [uRows] = await promiseDb.query('SELECT full_name, age, year_level, course, school FROM users WHERE scholar_id = ? LIMIT 1', [sub.scholar_id]);
-  console.log('DEBUG userProfile query result', JSON.stringify(uRows, null, 2));
   if (uRows && uRows.length > 0) {
     userProfile = { ...userProfile, ...uRows[0] };
-  } else {
-    console.warn('DEBUG no matching user profile found for scholar_id', sub.scholar_id);
   }
 
   // merge user profile into sub-like object used below
@@ -135,7 +132,6 @@ async function generateLetterPdf(submissionId) {
     documentation2_caption: mediaRows?.[1]?.description || '',
     additional_attachments_caption: (sub.report_card_path || sub.cor_path) ? 'Report Card/COR attached' : '',
   };
-  console.log('DEBUG docxtemplater data', JSON.stringify(data, null, 2));
 
   // Fetch up to two photo buffers for the final print layout.
   const imageBuffers = {
@@ -169,18 +165,13 @@ async function generateLetterPdf(submissionId) {
   const zip = new PizZip(content);
 
   // Image module expects getImage to return a Buffer synchronously.
-  console.log('DEBUG photo1', !!data.photo1, data.photo1 ? data.photo1.length : null);
-  console.log('DEBUG photo2', !!data.photo2, data.photo2 ? data.photo2.length : null);
-
   const imageModule = new ImageModule({
     getImage: function(tagValue, tagName) {
       if (!tagValue) return TRANSPARENT_PNG;
       const buffer = imageBuffers[tagValue] || (tagValue === 'photo2' ? TRANSPARENT_PNG : TRANSPARENT_PNG);
-      console.log('DEBUG getImage', tagValue, buffer && buffer.length);
       return buffer;
     },
     getSize: function(img, tagValue) {
-      console.log('DEBUG getSize', img && img.length, tagValue);
       if (tagValue === 'photo2') return [200, 150];
       return [200, 150];
     }

@@ -1,0 +1,17 @@
+{
+  "name": "Apple Scholar Portal",
+  "short_name": "Apple Scholar",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FBF7F2",
+  "theme_color": "#7f2d3a",
+  "description": "Kalinga Foundation scholar compliance portal",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

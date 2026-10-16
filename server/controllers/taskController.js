@@ -1,5 +1,5 @@
 const db = require('../config/db');
-const { getAssignedYearLevels } = require('../utils/officerAssignments');
+const { getAssignedYearLevels, getAllAssignedYearLevels } = require('../utils/officerAssignments');
 const { buildTaskComplianceHTML } = require('../services/taskComplianceTemplate');
 const { generateReportPdf } = require('../services/reportPdfService');
 
@@ -14,20 +14,50 @@ const parseTargetLevels = (value) => {
   }
 };
 
+const normalizeYearLevel = (value) => {
+  const normalized = String(value || '').trim().toLowerCase().replace(/_/g, ' ');
+  const aliases = {
+    'grade 7': 'grade 7', 'grade7': 'grade 7', 'grade 8': 'grade 8', 'grade8': 'grade 8',
+    'grade 9': 'grade 9', 'grade9': 'grade 9', 'grade 10': 'grade 10', 'grade10': 'grade 10',
+    'grade 11': 'grade 11', 'grade11': 'grade 11', 'grade 12': 'grade 12', 'grade12': 'grade 12',
+    'college 1': 'college 1', '1st year': 'college 1', '1st year college': 'college 1',
+    'college 2': 'college 2', '2nd year': 'college 2', '2nd year college': 'college 2',
+    'college 3': 'college 3', '3rd year': 'college 3', '3rd year college': 'college 3',
+    'college 4': 'college 4', '4th year': 'college 4', '4th year college': 'college 4',
+    'college 5': 'college 5', '5th year': 'college 5', '5th year college': 'college 5',
+  };
+  return aliases[normalized] || normalized;
+};
+
+const getAssignedOfficers = (targetLevels) => new Promise((resolve, reject) => {
+  if (!Array.isArray(targetLevels) || targetLevels.length === 0) return resolve([]);
+  db.query(
+    `SELECT DISTINCT u.id, u.full_name, u.scholar_id, oya.year_level
+     FROM officer_year_level_assignments oya
+     JOIN users u ON u.id = oya.officer_id
+    WHERE u.role = 'officer' AND u.status = 'active'
+     ORDER BY u.full_name, oya.year_level`,
+      (err, rows) => err ? reject(err) : resolve(rows.filter(row => targetLevels.some(level => normalizeYearLevel(level) === normalizeYearLevel(row.year_level))))
+  );
+});
+
 const visibleToUser = async (req, task) => {
   const targetLevels = parseTargetLevels(task.target_year_levels);
   if (!targetLevels?.length || ['admin', 'staff'].includes(req.user?.role)) return true;
 
   if (req.user?.role === 'officer') {
     const assignedLevels = await getAssignedYearLevels(req.user.id);
-    return targetLevels.some(level => assignedLevels.includes(level));
+    return targetLevels.some(level => assignedLevels.some(assigned => normalizeYearLevel(level) === normalizeYearLevel(assigned)));
   }
 
   if (req.user?.role === 'scholar') {
     return new Promise((resolve, reject) => {
       db.query('SELECT year_level FROM users WHERE id = ? AND role = \'scholar\'', [req.user.id], (err, rows) => {
         if (err) return reject(err);
-        resolve(Boolean(rows[0]?.year_level && targetLevels.includes(rows[0].year_level)));
+        resolve(Boolean(
+          rows[0]?.year_level
+          && targetLevels.some(level => normalizeYearLevel(level) === normalizeYearLevel(rows[0].year_level))
+        ));
       });
     });
   }
@@ -48,7 +78,18 @@ exports.getAllTasks = async (req, res) => {
   db.query(sql, async (err, rows) => {
     if (err) return res.status(500).json({ error: 'Error fetching tasks' });
     try {
-      const visibleTasks = await Promise.all(rows.map(async task => ({ task, visible: await visibleToUser(req, task) })));
+      const visibleTasks = await Promise.all(rows.map(async task => {
+        const targetLevels = parseTargetLevels(task.target_year_levels) || [];
+        const assignedOfficers = await getAssignedOfficers(targetLevels);
+        return {
+          task: {
+            ...task,
+            assigned_officers: assignedOfficers,
+            assigned_officer_names: [...new Set(assignedOfficers.map(officer => officer.full_name))],
+          },
+          visible: await visibleToUser(req, task),
+        };
+      }));
       res.json(visibleTasks.filter(item => item.visible).map(item => item.task));
     } catch (visibilityError) {
       res.status(500).json({ error: 'Error resolving task visibility', detail: visibilityError.message });
@@ -117,7 +158,7 @@ exports.exportTaskPdf = async (req, res) => {
 };
 
 exports.createTask = async (req, res) => {
-  const { title, type, dueDate, recurring, instructions, source } = req.body;
+  const { title, type, dueDate, recurring, instructions, source, targetYearLevels: requestedTargetYearLevels } = req.body;
   if (!title || !type) return res.status(400).json({ error: 'Missing required fields: title and type' });
 
   const createdBy = req.user && req.user.id ? req.user.id : null;
@@ -128,6 +169,17 @@ exports.createTask = async (req, res) => {
     targetYearLevels = await getAssignedYearLevels(createdBy);
     if (!targetYearLevels.length) {
       return res.status(400).json({ error: 'You must have assigned year levels before creating a task' });
+    }
+  }
+  if (createdRole === 'admin') {
+    const requestedLevels = Array.isArray(requestedTargetYearLevels)
+      ? [...new Set(requestedTargetYearLevels.map(String).map(level => level.trim()).filter(Boolean))]
+      : [];
+    const assignedLevels = await getAllAssignedYearLevels();
+    const assignedLevelKeys = new Set(assignedLevels.map(normalizeYearLevel));
+    targetYearLevels = requestedLevels.filter(level => assignedLevelKeys.has(normalizeYearLevel(level)));
+    if (!targetYearLevels.length) {
+      return res.status(400).json({ error: 'Select at least one year level with an assigned officer' });
     }
   }
 
@@ -143,9 +195,9 @@ exports.createTask = async (req, res) => {
 
 exports.updateTask = (req, res) => {
   const { id } = req.params;
-  const { title, type, dueDate, recurring, instructions, is_active } = req.body;
-  const sql = `UPDATE tasks SET title = ?, type = ?, due_date = ?, recurring = ?, instructions = ?, is_active = ? WHERE id = ?`;
-  db.query(sql, [title, type, dueDate || null, recurring || null, instructions || null, is_active === undefined ? 1 : (is_active ? 1 : 0), id], (err, result) => {
+  const { title, type, dueDate, recurring, instructions, is_active, source, targetYearLevels } = req.body;
+  const sql = `UPDATE tasks SET title = ?, type = ?, due_date = ?, recurring = ?, instructions = ?, source = ?, target_year_levels = ?, is_active = ? WHERE id = ?`;
+  db.query(sql, [title, type, dueDate || null, recurring || null, instructions || null, source || 'manual', JSON.stringify(Array.isArray(targetYearLevels) ? targetYearLevels : []), is_active === undefined ? 1 : (is_active ? 1 : 0), id], (err, result) => {
     if (err) return res.status(500).json({ error: 'Error updating task' });
     if (result.affectedRows === 0) return res.status(404).json({ error: 'Task not found' });
     res.json({ message: 'Task updated' });

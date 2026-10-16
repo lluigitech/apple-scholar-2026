@@ -8,9 +8,9 @@ router.get('/', verifyToken, taskCtrl.getAllTasks);
 router.post('/:id/export-pdf', verifyToken, taskCtrl.exportTaskPdf);
 router.get('/:id', verifyToken, taskCtrl.getTask);
 
-// Protected: create/update/delete by staff/officer/admin
-router.post('/', verifyToken, requireRole(['admin', 'officer', 'staff']), taskCtrl.createTask);
-router.put('/:id', verifyToken, requireRole(['admin', 'officer', 'staff']), taskCtrl.updateTask);
-router.delete('/:id', verifyToken, requireRole(['admin', 'officer', 'staff']), taskCtrl.deleteTask);
+// Task creation and lifecycle are centrally managed by the admin.
+router.post('/', verifyToken, requireRole(['admin']), taskCtrl.createTask);
+router.put('/:id', verifyToken, requireRole(['admin']), taskCtrl.updateTask);
+router.delete('/:id', verifyToken, requireRole(['admin']), taskCtrl.deleteTask);
 
 module.exports = router;

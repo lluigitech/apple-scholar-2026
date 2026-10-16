@@ -6,7 +6,7 @@ const path   = require('path');
 const { sendAnnouncementNotifyEmails, sendWelcomeEmail } = require('../utils/notifyHelpers');
 const { logAuditEvent } = require('../utils/auditLogger');
 const { getAssignedYearLevels } = require('../utils/officerAssignments');
-const { logComplianceIncident, clampCompliance, getComplianceSettings, calculateCurrentCompliance, resolveGradeScale } = require('../utils/complianceLogger');
+const { logComplianceIncident, clampCompliance, getComplianceSettings, calculateCurrentCompliance, calculateComplianceScore, resolveGradeScale } = require('../utils/complianceLogger');
 
 exports.getPrivacyRequests = (req, res) => {
     db.query(
@@ -18,6 +18,277 @@ exports.getPrivacyRequests = (req, res) => {
         (err, rows) => {
             if (err) return res.status(500).json({ error: 'Failed to load privacy requests.' });
             res.json(rows);
+        }
+    );
+};
+
+exports.getAdminProfile = (req, res) => {
+    db.query(
+        `SELECT id, full_name, email FROM users WHERE id = ? AND role = 'admin' LIMIT 1`,
+        [req.user.id],
+        (err, rows) => {
+            if (err) return res.status(500).json({ error: 'Failed to load administrator profile.' });
+            if (!rows.length) return res.status(404).json({ error: 'Administrator profile not found.' });
+            res.json({ displayName: rows[0].full_name, email: rows[0].email });
+        }
+    );
+};
+
+exports.updateAdminProfile = (req, res) => {
+    const displayName = String(req.body?.displayName || '').trim();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    if (!displayName || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ error: 'Enter a valid administrator name and email address.' });
+    }
+
+    db.query(
+        `UPDATE users SET full_name = ?, email = ? WHERE id = ? AND role = 'admin'`,
+        [displayName, email, req.user.id],
+        (err) => {
+            if (err) {
+                if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'That email address is already in use.' });
+                console.error('Failed to update administrator profile:', err);
+                return res.status(500).json({ error: 'Failed to save administrator profile.' });
+            }
+            db.query(
+                `SELECT id FROM users WHERE id = ? AND role = 'admin' LIMIT 1`,
+                [req.user.id],
+                (lookupError, rows) => {
+                    if (lookupError) return res.status(500).json({ error: 'Profile was saved but could not be verified.' });
+                    if (!rows.length) return res.status(404).json({ error: 'Administrator profile not found.' });
+
+                    logAuditEvent({
+                        req,
+                        action: 'edit',
+                        module: 'Administrator Settings',
+                        details: 'Updated administrator profile',
+                        result: 'success',
+                    });
+                    res.json({ displayName, email });
+                }
+            );
+        }
+    );
+};
+
+const DEFAULT_ADMIN_PREFERENCES = {
+    language: 'English (Philippines)',
+    timezone: '(GMT+8) Manila, Philippines',
+    dateFormat: 'MMMM DD, YYYY',
+    tableDensity: 'comfortable',
+    compactTables: false,
+    emailNotifications: true,
+    inAppNotifications: true,
+    autoRefresh: true,
+    sessionTimeout: '30',
+    requireReauth: true,
+    securityAlerts: true,
+    logAdminActivity: true,
+};
+
+const ADMIN_PREFERENCE_KEYS = Object.keys(DEFAULT_ADMIN_PREFERENCES);
+
+exports.getAdminSettings = (req, res) => {
+    db.query(
+        `SELECT u.full_name AS displayName, u.email,
+                p.settings_json AS preferences,
+                s.scheduled_backups AS scheduledBackups,
+                s.backup_interval_hours AS backupIntervalHours,
+                s.backup_retention_count AS backupRetentionCount
+         FROM users u
+         LEFT JOIN admin_preferences p ON p.user_id = u.id
+         LEFT JOIN admin_system_settings s ON s.id = 1
+         WHERE u.id = ? AND u.role = 'admin' LIMIT 1`,
+        [req.user.id],
+        (err, rows) => {
+            if (err) {
+                console.error('Failed to load administrator settings:', err);
+                return res.status(500).json({ error: 'Failed to load administrator settings.' });
+            }
+            if (!rows.length) return res.status(404).json({ error: 'Administrator profile not found.' });
+
+            let preferences = {};
+            try {
+                preferences = rows[0].preferences ? JSON.parse(rows[0].preferences) : {};
+            } catch (parseError) {
+                console.error('Invalid stored administrator preferences:', parseError);
+                return res.status(500).json({ error: 'Saved administrator preferences are invalid.' });
+            }
+            res.json({
+                displayName: rows[0].displayName,
+                email: rows[0].email,
+                ...DEFAULT_ADMIN_PREFERENCES,
+                ...preferences,
+                scheduledBackups: rows[0].scheduledBackups == null ? process.env.ENABLE_SCHEDULED_BACKUPS !== 'false' : Boolean(rows[0].scheduledBackups),
+                backupIntervalHours: String(rows[0].backupIntervalHours || process.env.BACKUP_INTERVAL_HOURS || 24),
+                backupRetentionCount: String(rows[0].backupRetentionCount || process.env.BACKUP_DAILY_RETENTION || 14),
+                backupTime: process.env.BACKUP_TIME || '23:59',
+                backupTimezone: process.env.BACKUP_TIMEZONE || 'Asia/Manila',
+                backupFullRetention: String(process.env.BACKUP_FULL_RETENTION || 4),
+            });
+        }
+    );
+};
+
+exports.updateAdminSettings = (req, res) => {
+    const displayName = String(req.body?.displayName || '').trim();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const incoming = req.body?.preferences;
+    const settings = {};
+
+    if (!displayName || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return res.status(400).json({ error: 'Enter a valid administrator name and email address.' });
+    }
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+        return res.status(400).json({ error: 'Administrator preferences are required.' });
+    }
+    for (const key of ADMIN_PREFERENCE_KEYS) {
+        const value = incoming[key];
+        if (typeof DEFAULT_ADMIN_PREFERENCES[key] === 'boolean' && typeof value !== 'boolean') {
+            return res.status(400).json({ error: `Invalid value for ${key}.` });
+        }
+        if (typeof DEFAULT_ADMIN_PREFERENCES[key] === 'string' && typeof value !== 'string') {
+            return res.status(400).json({ error: `Invalid value for ${key}.` });
+        }
+        settings[key] = value;
+    }
+
+    const validOptions = {
+        language: ['English (Philippines)', 'English (US)', 'Filipino'],
+        timezone: ['(GMT+8) Manila, Philippines', '(GMT+0) UTC', '(GMT+9) Tokyo, Japan', '(GMT-5) New York, USA'],
+        dateFormat: ['MMMM DD, YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD'],
+        tableDensity: ['comfortable', 'compact', 'condensed'],
+        sessionTimeout: ['15', '30', '60', '120'],
+    };
+    for (const [key, options] of Object.entries(validOptions)) {
+        if (!options.includes(settings[key])) return res.status(400).json({ error: `Invalid value for ${key}.` });
+    }
+    settings.compactTables = settings.tableDensity !== 'comfortable';
+    const intervalHours = Number.parseInt(req.body.backupIntervalHours, 10);
+    const retentionCount = Number.parseInt(req.body.backupRetentionCount, 10);
+    if (!Number.isInteger(intervalHours) || intervalHours < 1 || intervalHours > 8760) {
+        return res.status(400).json({ error: 'Backup interval must be between 1 and 8760 hours.' });
+    }
+    if (!Number.isInteger(retentionCount) || retentionCount < 1 || retentionCount > 1000) {
+        return res.status(400).json({ error: 'Backup retention must be between 1 and 1000 backups.' });
+    }
+    if (typeof req.body.scheduledBackups !== 'boolean') {
+        return res.status(400).json({ error: 'Invalid scheduled-backup setting.' });
+    }
+
+    const serialized = JSON.stringify(settings);
+    db.query(
+        `SELECT u.password, p.settings_json AS preferences
+         FROM users u LEFT JOIN admin_preferences p ON p.user_id = u.id
+         WHERE u.id = ? AND u.role = 'admin' LIMIT 1`,
+        [req.user.id],
+        async (reauthLookupError, rows) => {
+            if (reauthLookupError) {
+                console.error('Failed to verify administrator settings request:', reauthLookupError);
+                return res.status(500).json({ error: 'Failed to verify administrator identity.' });
+            }
+            if (!rows.length) return res.status(404).json({ error: 'Administrator profile not found.' });
+            let currentPreferences = {};
+            try {
+                currentPreferences = rows[0].preferences ? JSON.parse(rows[0].preferences) : {};
+            } catch (parseError) {
+                console.error('Invalid stored administrator preferences:', parseError);
+                return res.status(500).json({ error: 'Saved administrator preferences are invalid.' });
+            }
+            if (currentPreferences.requireReauth !== false) {
+                const password = String(req.body.currentPassword || '');
+                const passwordMatches = rows[0].password?.startsWith('$2')
+                    ? await bcrypt.compare(password, rows[0].password)
+                    : password === String(rows[0].password || '');
+                if (!passwordMatches) return res.status(401).json({ error: 'Enter your current password to save administrator settings.' });
+            }
+
+    db.getConnection((connectionError, connection) => {
+        if (connectionError) {
+            console.error('Failed to save administrator settings:', connectionError);
+            return res.status(500).json({ error: 'Failed to save administrator settings.' });
+        }
+        connection.beginTransaction((transactionError) => {
+            if (transactionError) {
+                connection.release();
+                console.error('Failed to start administrator settings transaction:', transactionError);
+                return res.status(500).json({ error: 'Failed to save administrator settings.' });
+            }
+
+            const rollback = (error, message, status = 500) => connection.rollback(() => {
+                connection.release();
+                if (error) console.error('Failed to save administrator settings:', error);
+                res.status(status).json({ error: message });
+            });
+            connection.query(
+                `UPDATE users SET full_name = ?, email = ? WHERE id = ? AND role = 'admin'`,
+                [displayName, email, req.user.id],
+                (profileError, result) => {
+                    if (profileError) {
+                        if (profileError.code === 'ER_DUP_ENTRY') return rollback(null, 'That email address is already in use.', 409);
+                        return rollback(profileError, 'Failed to save administrator profile.');
+                    }
+                    if (!result.affectedRows) {
+                        return connection.query('SELECT id FROM users WHERE id = ? AND role = \'admin\' LIMIT 1', [req.user.id], (lookupError, rows) => {
+                            if (lookupError) return rollback(lookupError, 'Failed to verify administrator profile.');
+                            if (!rows.length) return rollback(null, 'Administrator profile not found.', 404);
+                            savePreferences();
+                        });
+                    }
+                    savePreferences();
+                }
+            );
+
+            const savePreferences = () => connection.query(
+                `INSERT INTO admin_preferences (user_id, settings_json)
+                 VALUES (?, ?)
+                 ON DUPLICATE KEY UPDATE settings_json = VALUES(settings_json)`,
+                [req.user.id, serialized],
+                (preferenceError) => {
+                    if (preferenceError) return rollback(preferenceError, 'Failed to save administrator preferences.');
+                    connection.query(
+                        `INSERT INTO admin_system_settings (id, scheduled_backups, backup_interval_hours, backup_retention_count)
+                         VALUES (1, ?, ?, ?)
+                         ON DUPLICATE KEY UPDATE
+                           scheduled_backups = VALUES(scheduled_backups),
+                           backup_interval_hours = VALUES(backup_interval_hours),
+                           backup_retention_count = VALUES(backup_retention_count)`,
+                        [req.body.scheduledBackups, intervalHours, retentionCount],
+                        (systemError) => {
+                            if (systemError) return rollback(systemError, 'Failed to save system backup settings.');
+                            connection.commit(async (commitError) => {
+                                connection.release();
+                                if (commitError) {
+                                    console.error('Failed to commit administrator settings:', commitError);
+                                    return res.status(500).json({ error: 'Failed to save administrator settings.' });
+                                }
+                                process.emit('admin-backup-settings-updated', {
+                                    enabled: req.body.scheduledBackups,
+                                    intervalHours,
+                                    retentionCount,
+                                });
+                                await logAuditEvent({
+                                    req,
+                                    action: 'edit',
+                                    module: 'Administrator Settings',
+                                    details: 'Updated administrator and system preferences',
+                                    result: 'success',
+                                });
+                                res.json({
+                                    displayName,
+                                    email,
+                                    ...settings,
+                                    scheduledBackups: req.body.scheduledBackups,
+                                    backupIntervalHours: String(intervalHours),
+                                    backupRetentionCount: String(retentionCount),
+                                });
+                            });
+                        }
+                    );
+                }
+            );
+        });
+    });
         }
     );
 };
@@ -42,36 +313,49 @@ exports.updatePrivacyRequest = async (req, res) => {
 };
 
 // ─── ID Generators ────────────────────────────────────────────
-const generateId = (prefix, padLength, cb) => {
+const prefixMap = {
+    scholar: 'SCH',
+    officer: 'OFF',
+    staff:   'STF',
+    admin:   'ADM',
+};
+
+const generateId = (role, cb) => {
     const year = new Date().getFullYear();
+    const prefix = prefixMap[role] || 'SCH';
     const like = `${prefix}-${year}-`;
+
     db.query(
-        `SELECT scholar_id FROM users WHERE scholar_id LIKE ? ORDER BY scholar_id DESC LIMIT 1`,
-        [`${like}%`],
+        `SELECT scholar_id FROM users WHERE role = ? AND scholar_id LIKE ? ORDER BY scholar_id DESC LIMIT 1`,
+        [role, `${like}%`],
         (err, data) => {
             if (err) return cb(err, null);
+
             let nextNum = 1;
             if (data.length > 0) {
-                const parts = data[0].scholar_id.split('-');
-                const num   = parseInt(parts[parts.length - 1], 10);
+                const parts = String(data[0].scholar_id || '').split('-');
+                const num = parseInt(parts[parts.length - 1], 10);
                 if (!isNaN(num)) nextNum = num + 1;
             }
-            cb(null, `${like}${String(nextNum).padStart(padLength, '0')}`);
+
+            const generated = `${like}${String(nextNum).padStart(4, '0')}`;
+            cb(null, generated);
         }
     );
 };
 
-const generateScholarId = (cb) => generateId('AS', 6, cb);
-const generateOfficerId = (cb) => generateId('AO', 3, cb);
-const generateStaffId   = (cb) => generateId('AK', 3, cb);
+const generateScholarId = (cb) => generateId('scholar', cb);
+const generateOfficerId = (cb) => generateId('officer', cb);
+const generateStaffId   = (cb) => generateId('staff', cb);
+const generateAdminId   = (cb) => generateId('admin', cb);
 
 const getIdGenerator = (role) => {
     switch (role) {
         case 'scholar': return generateScholarId;
         case 'officer': return generateOfficerId;
-        case 'staff':
-        case 'admin':
-        default:        return generateStaffId;
+        case 'staff':   return generateStaffId;
+        case 'admin':   return generateAdminId;
+        default:        return generateScholarId;
     }
 };
 
@@ -79,12 +363,90 @@ const getIdGenerator = (role) => {
 exports.getAllUsers = (req, res) => {
     const sql = `
         SELECT id, scholar_id, full_name, email, role, year_level, status, created_at
-        FROM users ORDER BY created_at DESC
+        FROM users
+        WHERE NOT (role = 'scholar' AND COALESCE(status, '') = 'archived')
+        ORDER BY created_at DESC
     `;
     db.query(sql, (err, data) => {
         if (err) return res.status(500).json({ error: 'Error fetching users' });
         res.json(data);
     });
+};
+
+exports.archiveScholar = (req, res) => {
+    const userId = String(req.params.id || '');
+    if (!/^[1-9]\d*$/.test(userId) || !Number.isSafeInteger(Number(userId))) {
+        return res.status(400).json({ error: 'A valid scholar user ID is required.' });
+    }
+
+    db.query(
+        'SELECT id, scholar_id, full_name, role, status FROM users WHERE id = ? LIMIT 1',
+        [userId],
+        (lookupError, rows) => {
+            if (lookupError) {
+                console.error('Failed to look up scholar for archival:', lookupError);
+                return res.status(500).json({ error: 'Unable to archive scholar.' });
+            }
+            if (!rows.length) return res.status(404).json({ error: 'User not found.' });
+
+            const scholar = rows[0];
+            if (scholar.role !== 'scholar') {
+                return res.status(400).json({ error: 'Only scholar accounts can be archived.' });
+            }
+
+            const respondArchived = () => {
+                res.json({
+                    message: 'Scholar archived successfully',
+                    userId: Number(userId),
+                });
+            };
+
+            if (String(scholar.status || '').toLowerCase() === 'archived') {
+                return respondArchived();
+            }
+
+            db.query(
+                "UPDATE users SET status = 'archived' WHERE id = ? AND role = 'scholar'",
+                [userId],
+                async (updateError, result) => {
+                    if (updateError) {
+                        console.error('Failed to archive scholar:', updateError);
+                        return res.status(500).json({ error: 'Unable to archive scholar.' });
+                    }
+
+                    if (!result.affectedRows) {
+                        return db.query(
+                            'SELECT role, status FROM users WHERE id = ? LIMIT 1',
+                            [userId],
+                            (verifyError, currentRows) => {
+                                if (verifyError) {
+                                    console.error('Failed to verify scholar archive state:', verifyError);
+                                    return res.status(500).json({ error: 'Unable to verify scholar archive state.' });
+                                }
+                                if (!currentRows.length) return res.status(404).json({ error: 'User not found.' });
+                                if (currentRows[0].role !== 'scholar') {
+                                    return res.status(400).json({ error: 'Only scholar accounts can be archived.' });
+                                }
+                                if (String(currentRows[0].status || '').toLowerCase() !== 'archived') {
+                                    return res.status(409).json({ error: 'Scholar archive state changed. Refresh and try again.' });
+                                }
+                                respondArchived();
+                            }
+                        );
+                    }
+
+                    await logAuditEvent({
+                        req,
+                        action: 'archive',
+                        module: 'User Management',
+                        details: `Archived scholar ${scholar.full_name} (${scholar.scholar_id || userId})`,
+                        result: 'success',
+                    });
+                    respondArchived();
+                }
+            );
+        }
+    );
 };
 
 exports.createUser = async (req, res) => {
@@ -105,21 +467,14 @@ exports.createUser = async (req, res) => {
             if (err) return res.status(500).json({ error: 'Error generating ID' });
 
             try {
-                let qrCode = null;
-                // Only generate QR codes for scholars (used for events/participation)
-                if (role === 'scholar') {
-                    const qrPayload = JSON.stringify({ id: generatedId, full_name, role });
-                    qrCode = await QRCode.toDataURL(qrPayload);
-                }
-
                 const finalYearLevel = (role === 'scholar' || role === 'officer')
                     ? (year_level || null) : null;
 
                 const sql = `
-                    INSERT INTO users (scholar_id, full_name, email, password, role, year_level, qr_code, must_change_password)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, 1)
+                    INSERT INTO users (scholar_id, full_name, email, password, role, year_level, must_change_password)
+                    VALUES (?, ?, ?, ?, ?, ?, 1)
                 `;
-                db.query(sql, [generatedId, full_name, email, hashedPassword, role, finalYearLevel, qrCode], (insertErr, result) => {
+                db.query(sql, [generatedId, full_name, email, hashedPassword, role, finalYearLevel], (insertErr, result) => {
                     if (insertErr) {
                         if (insertErr.code === 'ER_DUP_ENTRY')
                             return res.status(409).json({ error: 'Email or ID already exists' });
@@ -148,13 +503,12 @@ exports.createUser = async (req, res) => {
                     res.status(201).json({
                         message: 'User created successfully',
                         userId: result.insertId,
-                        qrCode,
                         generatedId,
                         [responseKey]: generatedId,
                     });
                 });
-            } catch (qrErr) {
-                res.status(500).json({ error: 'Error generating QR code' });
+            } catch (err) {
+                res.status(500).json({ error: 'Error creating user' });
             }
         });
     } catch (hashErr) {
@@ -242,20 +596,6 @@ exports.deleteUser = (req, res) => {
         });
         res.json({ message: 'User marked inactive (soft-deleted)' });
     });
-};
-
-exports.getUserQR = (req, res) => {
-    db.query(
-        'SELECT qr_code, full_name, scholar_id, role FROM users WHERE id = ?',
-        [req.params.id],
-        (err, data) => {
-            if (err || data.length === 0) return res.status(404).json({ error: 'User not found' });
-            const user = data[0];
-            // Only scholars have QR codes
-            if (user.role !== 'scholar') return res.status(403).json({ error: 'Only scholar accounts have QR codes' });
-            res.json(user);
-        }
-    );
 };
 
 // ─── SCHOLAR PROFILE ──────────────────────────────────────────
@@ -376,8 +716,10 @@ exports.getScholarGrades = (req, res) => {
                     units: row.units,
                     grade: parseFloat(row.grade),
                 });
-                semMap[key].total_units += row.units;
-                semMap[key].weighted_sum += row.units * parseFloat(row.grade);
+                const units = Number(row.units) || 0;
+                const grade = Number(row.grade);
+                semMap[key].total_units += units;
+                semMap[key].weighted_sum += units * grade;
             });
 
             const semesters = Object.values(semMap).map(sem => ({
@@ -511,7 +853,6 @@ exports.upsertComplianceSettings = (req, res) => {
         service_hour_shortfall_deduction,
         absent_duty_deduction,
         late_submission_deduction,
-        negative_letter_deduction,
         quality_drop_deduction,
         extra_service_bonus,
         good_maintenance_bonus,
@@ -533,7 +874,6 @@ exports.upsertComplianceSettings = (req, res) => {
         service_hour_shortfall_deduction,
         absent_duty_deduction,
         late_submission_deduction,
-        negative_letter_deduction,
         quality_drop_deduction,
         missed_submission_grace_count,
         late_submission_grace_count,
@@ -571,7 +911,6 @@ exports.upsertComplianceSettings = (req, res) => {
         service_hour_shortfall_deduction:  parseInt(service_hour_shortfall_deduction ?? 1, 10),
         absent_duty_deduction:            parseInt(absent_duty_deduction ?? 2, 10),
         late_submission_deduction:        parseInt(late_submission_deduction ?? 1, 10),
-        negative_letter_deduction:        parseInt(negative_letter_deduction ?? 1, 10),
         quality_drop_deduction:           parseFloat(quality_drop_deduction ?? 0.5),
         extra_service_bonus:              parseInt(extra_service_bonus ?? 2, 10),
         good_maintenance_bonus:           parseInt(good_maintenance_bonus ?? 5, 10),
@@ -626,7 +965,7 @@ exports.upsertComplianceSettings = (req, res) => {
             service_hour_shortfall_deduction = VALUES(service_hour_shortfall_deduction),
             absent_duty_deduction = VALUES(absent_duty_deduction),
             late_submission_deduction = VALUES(late_submission_deduction),
-            negative_letter_deduction = VALUES(negative_letter_deduction),
+            negative_letter_deduction = 0,
             quality_drop_deduction = VALUES(quality_drop_deduction),
             extra_service_bonus = VALUES(extra_service_bonus),
             good_maintenance_bonus = VALUES(good_maintenance_bonus),
@@ -650,7 +989,7 @@ exports.upsertComplianceSettings = (req, res) => {
         parsedPenalties.service_hour_shortfall_deduction,
         parsedPenalties.absent_duty_deduction,
         parsedPenalties.late_submission_deduction,
-        parsedPenalties.negative_letter_deduction,
+        0,
         parsedPenalties.quality_drop_deduction,
         parsedPenalties.extra_service_bonus,
         parsedPenalties.good_maintenance_bonus,
@@ -688,7 +1027,7 @@ exports.getScholarComplianceSummary = (req, res) => {
             (subErr, subData) => {
                 if (subErr) return res.status(500).json({ error: 'Error fetching submissions' });
 
-                const approvedSubs = subData.filter(s => s.status === 'approved').length;
+                const approvedSubs = subData.filter(s => ['approved', 'archived'].includes(s.status)).length;
                 const pendingSubs  = subData.filter(s => s.status === 'pending').length;
                 const rejectedSubs = subData.filter(s => s.status === 'rejected').length;
 
@@ -875,7 +1214,7 @@ exports.reviewCompliance = (req, res) => {
 };
 
 // ─── ADMIN REPORTS: COMPLIANCE SUMMARY ─────────────────────
-// Returns compliance overview for all active scholars
+// Uses the same compliance-credit formula as the flagged scholar and scholar profile views.
 exports.getComplianceSummary = (req, res) => {
     const scholarSql = `
         SELECT id, scholar_id, full_name, email, year_level, status
@@ -894,11 +1233,14 @@ exports.getComplianceSummary = (req, res) => {
             SELECT
                 scholar_id,
                 COUNT(*) AS total_submissions,
-                SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) AS approved,
+                SUM(CASE WHEN status IN ('approved', 'archived') THEN 1 ELSE 0 END) AS approved,
                 SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) AS rejected,
                 AVG(quality_score) AS avg_quality,
                 MAX(submitted_at) AS last_submission,
-                SUM(CASE WHEN sentiment_label LIKE '%Negative%' THEN 1 ELSE 0 END) AS negative_letters
+                SUM(CASE WHEN service_hours IS NOT NULL THEN service_hours ELSE 0 END) AS total_service_hours,
+                SUM(CASE WHEN sentiment_label LIKE '%Negative%' THEN 1 ELSE 0 END) AS negative_letters,
+                SUM(CASE WHEN submission_type = 'letter' AND submitted_at <= DATE_SUB(LAST_DAY(submitted_at), INTERVAL 7 DAY) THEN 1 ELSE 0 END) AS early_submissions,
+                GROUP_CONCAT(DISTINCT DATE_FORMAT(submitted_at, '%Y-%m') ORDER BY DATE_FORMAT(submitted_at, '%Y-%m') SEPARATOR ',') AS early_submission_months
             FROM submissions
             WHERE scholar_id IN (${placeholders})
             GROUP BY scholar_id
@@ -908,71 +1250,48 @@ exports.getComplianceSummary = (req, res) => {
             SELECT
                 scholar_id,
                 COUNT(*) AS total_duties,
-                SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) AS present
+                SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) AS present,
+                SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) AS absent
             FROM duty_attendance
             WHERE scholar_id IN (${placeholders})
             GROUP BY scholar_id
         `;
 
-        db.query(submissionSql, scholarIds, (err, subStats) => {
-            if (err) return res.status(500).json({ error: 'Failed to fetch submission stats.' });
+        getComplianceSettings((settingsErr, settings) => {
+            if (settingsErr) return res.status(500).json({ error: 'Failed to load compliance settings.' });
 
-            db.query(attendanceSql, scholarIds, (err, attStats) => {
-                if (err) return res.status(500).json({ error: 'Failed to fetch attendance stats.' });
+            db.query(submissionSql, scholarIds, (err, subStats) => {
+                if (err) return res.status(500).json({ error: 'Failed to fetch submission stats.' });
 
-                const subMap = {};
-                subStats.forEach(s => { subMap[s.scholar_id] = s; });
-                const attMap = {};
-                attStats.forEach(a => { attMap[a.scholar_id] = a; });
+                db.query(attendanceSql, scholarIds, (err, attStats) => {
+                    if (err) return res.status(500).json({ error: 'Failed to fetch attendance stats.' });
 
-                const today = new Date();
-                const results = scholars.map(scholar => {
-                    const sub = subMap[scholar.scholar_id] || null;
-                    const att = attMap[scholar.scholar_id] || null;
+                    const subMap = {};
+                    subStats.forEach(s => { subMap[s.scholar_id] = s; });
+                    const attMap = {};
+                    attStats.forEach(a => { attMap[a.scholar_id] = a; });
 
-                    const lastSub = sub?.last_submission ? new Date(sub.last_submission) : null;
-                    const daysSinceSubmission = lastSub
-                        ? Math.floor((today - lastSub) / (1000 * 60 * 60 * 24))
-                        : 999;
+                    const results = scholars.map(scholar => {
+                        const sub = subMap[scholar.scholar_id] || {};
+                        const att = attMap[scholar.scholar_id] || {};
+                        const score = calculateComplianceScore({ sub, att, settings, today: new Date() });
+                        const overallCompliance = Number(score?.overallCompliance ?? 0);
+                        const riskStatus = overallCompliance >= 70 ? 'low' : overallCompliance >= 50 ? 'medium' : 'high';
 
-                    const totalDuties  = att?.total_duties || 0;
-                    const presentCount = att?.present || 0;
-                    const attendanceRate = totalDuties > 0
-                        ? Math.round((presentCount / totalDuties) * 100)
-                        : 0;
+                        return {
+                            id: scholar.id,
+                            name: scholar.full_name,
+                            studentId: scholar.scholar_id,
+                            completionRate: overallCompliance,
+                            credits: overallCompliance,
+                            riskStatus,
+                            year_level: scholar.year_level || 'N/A',
+                        };
+                    });
 
-                    const avgQuality      = sub?.avg_quality ? Math.round(sub.avg_quality) : 0;
-                    const negativeLetters = sub?.negative_letters || 0;
-                    const totalSubs       = sub?.total_submissions || 0;
-
-                    let riskScore = 0;
-                    if (daysSinceSubmission >= 60)      riskScore += 40;
-                    else if (daysSinceSubmission >= 30) riskScore += 30;
-                    else if (daysSinceSubmission >= 14) riskScore += 15;
-
-                    if (attendanceRate === 0)     riskScore += 25;
-                    else if (attendanceRate < 50) riskScore += 20;
-                    else if (attendanceRate < 75) riskScore += 10;
-
-                    if (avgQuality < 40)      riskScore += 20;
-                    else if (avgQuality < 60) riskScore += 10;
-
-                    riskScore += Math.min(negativeLetters * 5, 15);
-                    if (totalSubs === 0) riskScore += 20;
-                    riskScore = Math.min(riskScore, 100);
-
-                    return {
-                        id: scholar.id,
-                        name: scholar.full_name,
-                        studentId: scholar.scholar_id,
-                        completionRate: Math.max(0, 100 - riskScore),
-                        riskStatus: riskScore >= 40 ? 'at-risk' : riskScore >= 20 ? 'good' : 'excellent',
-                        year_level: scholar.year_level || 'N/A',
-                    };
+                    results.sort((a, b) => b.completionRate - a.completionRate);
+                    res.json(results);
                 });
-
-                results.sort((a, b) => b.completionRate - a.completionRate);
-                res.json(results);
             });
         });
     });
@@ -983,15 +1302,44 @@ exports.getComplianceSummary = (req, res) => {
 exports.getMonthlySubmissions = (req, res) => {
     const { year_level, month } = req.query;
 
+    const normalizeYearLevel = (value) => String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[_-]/g, ' ')
+        .replace(/\s+/g, ' ');
+
+    const yearLevelAliases = new Set();
+    if (year_level) {
+        const raw = String(year_level).trim();
+        const aliases = [
+            raw,
+            raw.replace(/\s*college\s*$/i, ''),
+            raw.replace(/\s*year\s*$/i, ''),
+            raw.replace(/\s*college\s*$/i, ' College'),
+            raw.replace(/\s*college\s*$/i, ''),
+        ];
+        aliases.forEach(value => {
+            const normalized = normalizeYearLevel(value);
+            if (normalized) yearLevelAliases.add(normalized);
+        });
+    }
+
     let sql = `
         SELECT
             s.id,
+            s.submission_type AS submissionType,
             s.scholar_id,
+            u.id AS userId,
             u.full_name AS scholarName,
             u.year_level,
+            COALESCE(
+                GROUP_CONCAT(DISTINCT ou.full_name ORDER BY ou.full_name SEPARATOR ', '),
+                'Unassigned'
+            ) AS assigned_officers,
             s.submitted_at AS submittedAt,
             s.status,
             s.quality_score AS qualityScore,
+            s.generated_pdf_path AS generatedPdfPath,
             u.email,
             s.letter_content AS body,
             s.service_activity,
@@ -999,7 +1347,12 @@ exports.getMonthlySubmissions = (req, res) => {
             s.sentiment_label
         FROM submissions s
         INNER JOIN users u ON u.scholar_id = s.scholar_id
-        WHERE 1=1
+        LEFT JOIN officer_year_level_assignments oya
+            ON LOWER(REPLACE(REPLACE(TRIM(oya.year_level), '_', ' '), '-', ' '))
+               = LOWER(REPLACE(REPLACE(TRIM(u.year_level), '_', ' '), '-', ' '))
+        LEFT JOIN users ou ON ou.id = oya.officer_id
+        WHERE s.status = 'approved'
+          AND COALESCE(s.archived_at, s.archive_at) IS NULL
     `;
     const values = [];
 
@@ -1009,12 +1362,13 @@ exports.getMonthlySubmissions = (req, res) => {
         values.push(parseInt(year), parseInt(monthStr));
     }
 
-    if (year_level) {
-        sql += ` AND u.year_level = ?`;
-        values.push(year_level);
+    if (yearLevelAliases.size) {
+        const normalizedList = [...yearLevelAliases];
+        sql += ` AND LOWER(REPLACE(REPLACE(TRIM(u.year_level), '_', ' '), '-', ' ')) IN (${normalizedList.map(() => '?').join(', ')})`;
+        values.push(...normalizedList);
     }
 
-    sql += ` ORDER BY s.submitted_at DESC LIMIT 500`;
+    sql += ` GROUP BY s.id, s.submission_type, s.scholar_id, u.full_name, u.year_level, s.submitted_at, s.status, s.quality_score, s.generated_pdf_path, u.email, s.letter_content, s.service_activity, s.service_hours, s.sentiment_label ORDER BY s.submitted_at DESC LIMIT 500`;
 
     db.query(sql, values, (err, submissions) => {
         if (err) {
@@ -1046,6 +1400,12 @@ exports.getMonthlySubmissions = (req, res) => {
 
             const enrichedSubmissions = submissions.map(s => ({
                 ...s,
+                userId: s.userId || s.user_id || null,
+                year: s.year_level || '—',
+                assignedOfficer: s.assigned_officers === 'Unassigned' ? 'Unassigned' : s.assigned_officers,
+                assignedOfficerNames: s.assigned_officers && s.assigned_officers !== 'Unassigned'
+                    ? s.assigned_officers.split(', ').filter(Boolean)
+                    : [],
                 photos: photoMap[s.id] || [],
                 staffAction: null,
                 staffFeedback: '',

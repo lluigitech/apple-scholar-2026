@@ -1,13 +1,13 @@
-import TaskAssignmentBoard from '../../components/shared/TaskAssignmentBoard';
+import TaskAssignmentBoard from './TaskAssignment/TaskAssignmentBoard';
 
 const OfficerTaskAssignment = () => {
   return (
     <TaskAssignmentBoard
       title="Officer Task Center"
-      subtitle="Review submission progress and manage compliance follow-up tasks"
+      subtitle="Follow the submission process and review which scholars have passed their requirements"
       role="Officer"
       storageKey="officer-task-board"
-      canManageTasks={true}
+      canManageTasks={false}
     />
   );
 };

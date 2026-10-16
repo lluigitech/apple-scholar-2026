@@ -2,23 +2,105 @@
 import axios from 'axios';
 import {
     Lock, Eye, EyeOff,
-    ShieldCheck, Bell, User, ChevronRight, KeyRound,
+    ShieldCheck, Bell, User, ChevronRight, KeyRound, Download, Trash2,
 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:5000/api';
 
-// ── Token system — shared across the Scholar Portal ──
-const MAROON = '#7f2d3a';
-const MAROON_DEEP = '#4f1620';
-const GOLD = '#b98b4e';
-const IVORY = '#FBF7F2';
+// ── Scholar Portal design system — same tokens as ScholarProfile /
+// ScholarNotification, so this page reads as one continuous workspace. ──
+const BG = '#F7F4EE';
+const SURFACE = '#FFFDF9';
+const BORDER = '#E7D8C7';
+const PRIMARY = '#6D2140';
+const PRIMARY_DARK = '#4A1730';
+const BRONZE = '#A9784E';
+const SUCCESS = '#6B8F71';
+const WARNING = '#C08A3E';
+const DANGER = '#C0473F';
 const INK = '#241512';
-const ROSE = '#F5E8EA';
+const MUTED = '#8A7A68';
+const RADIUS = 18;
+
+const display = { fontFamily: "'Playfair Display', Georgia, serif" };
+const body = { fontFamily: "'Inter', -apple-system, 'Segoe UI', sans-serif" };
 
 const authHeader = () => {
     const token = localStorage.getItem('token');
     return token ? { Authorization: `Bearer ${token}` } : {};
 };
+
+// Password-strength dial — same semi-circle gauge motif used for the
+// compliance score on the Profile page, recolored for this context.
+const StrengthDial = ({ level, color }) => {
+    const angle = -60 + (level / 4) * 120;
+    return (
+        <svg viewBox="0 0 120 70" style={{ width: 76, height: 44, flexShrink: 0 }}>
+            {[0, 1, 2, 3, 4].map((i) => {
+                const a = (-60 + (i / 4) * 120 - 90) * (Math.PI / 180);
+                const x1 = 60 + 46 * Math.cos(a);
+                const y1 = 60 + 46 * Math.sin(a);
+                const x2 = 60 + 54 * Math.cos(a);
+                const y2 = 60 + 54 * Math.sin(a);
+                return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} stroke={BORDER} strokeWidth="2.5" />;
+            })}
+            <path d="M14,60 A46,46 0 0 1 106,60" fill="none" stroke={BORDER} strokeWidth="4" />
+            <line
+                x1="60" y1="60"
+                x2={60 + 40 * Math.cos((angle - 90) * (Math.PI / 180))}
+                y2={60 + 40 * Math.sin((angle - 90) * (Math.PI / 180))}
+                stroke={color || MUTED} strokeWidth="3" strokeLinecap="round"
+                style={{ transition: 'all 0.3s ease' }}
+            />
+            <circle cx="60" cy="60" r="4.5" fill={color || MUTED} />
+        </svg>
+    );
+};
+
+// Section tabs — doubles as this page's "toolbar" row, since there is no
+// searchable record list here to filter.
+const SectionTabs = ({ tabs, active, onSelect }) => (
+    <div className="inline-flex flex-wrap" style={{ background: BG, border: `1px solid ${BORDER}`, borderRadius: 999, padding: 3, gap: 2 }}>
+        {tabs.map((tab) => {
+            const isActive = active === tab.key;
+            return (
+                <button
+                    key={tab.key}
+                    onClick={() => onSelect(tab.key)}
+                    className="flex items-center gap-1.5 transition-all"
+                    style={{
+                        ...body, fontSize: '0.78rem', fontWeight: 600,
+                        padding: '8px 14px', borderRadius: 999, border: 'none', cursor: 'pointer',
+                        color: isActive ? '#fff' : MUTED,
+                        background: isActive ? `linear-gradient(120deg, ${PRIMARY} 0%, ${PRIMARY_DARK} 100%)` : 'transparent',
+                        whiteSpace: 'nowrap',
+                    }}
+                >
+                    <tab.icon size={13} />
+                    {tab.label}
+                </button>
+            );
+        })}
+    </div>
+);
+
+const ToggleSwitch = ({ checked, onChange }) => (
+    <button
+        onClick={onChange}
+        className="relative transition-all duration-300"
+        style={{ width: 42, height: 24, borderRadius: 999, background: checked ? PRIMARY : BORDER, border: 'none', cursor: 'pointer', flexShrink: 0 }}
+    >
+        <span
+            className="absolute top-1 transition-all duration-300"
+            style={{ width: 16, height: 16, borderRadius: '50%', boxShadow: '0 1px 2px rgba(36,21,18,0.3)', left: checked ? 22 : 4, background: '#fff' }}
+        />
+    </button>
+);
+
+const fieldLabelStyle = { ...body, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.04em', color: MUTED, marginBottom: 6, display: 'block' };
+const inputStyle = { width: '100%', paddingBottom: 10, border: 'none', borderBottom: `1.5px solid ${BORDER}`, background: 'none', outline: 'none', ...body, fontSize: '0.85rem', color: INK };
+const onInputFocus = (e) => (e.target.style.borderBottom = `1.5px solid ${PRIMARY}`);
+const onInputBlur = (e) => (e.target.style.borderBottom = `1.5px solid ${BORDER}`);
 
 const ScholarSettings = () => {
     const userId = localStorage.getItem('id');
@@ -105,8 +187,6 @@ const ScholarSettings = () => {
         loadSettings();
     }, [userId]);
 
-    // Recolored onto the shared ledger palette instead of arbitrary
-    // red/amber/blue/emerald Tailwind tones.
     const getPasswordStrength = (pass) => {
         if (!pass) return { level: 0, label: '', color: '' };
         let score = 0;
@@ -115,18 +195,13 @@ const ScholarSettings = () => {
         if (/[0-9]/.test(pass)) score++;
         if (/[^A-Za-z0-9]/.test(pass)) score++;
 
-        if (score <= 1) return { level: 1, label: 'Weak', color: '#991b1b' };
-        if (score === 2) return { level: 2, label: 'Fair', color: '#92400e' };
-        if (score === 3) return { level: 3, label: 'Good', color: GOLD };
-        return { level: 4, label: 'Strong', color: '#15803d' };
+        if (score <= 1) return { level: 1, label: 'Weak', color: DANGER };
+        if (score === 2) return { level: 2, label: 'Fair', color: WARNING };
+        if (score === 3) return { level: 3, label: 'Good', color: BRONZE };
+        return { level: 4, label: 'Strong', color: SUCCESS };
     };
 
     const strength = getPasswordStrength(newPassword);
-
-    const inputClass = "w-full pb-2.5 outline-none transition-colors bg-transparent placeholder:text-slate-300";
-    const inputStyle = { color: INK, borderBottom: '1.5px solid #e9dfd8' };
-    const onInputFocus = (e) => (e.target.style.borderBottom = `1.5px solid ${MAROON}`);
-    const onInputBlur = (e) => (e.target.style.borderBottom = '1.5px solid #e9dfd8');
 
     const handleSaveProfile = () => {
         setProfileError('');
@@ -147,10 +222,6 @@ const ScholarSettings = () => {
         setPasswordError('');
         setPasswordSuccess('');
 
-        if (!profile.email) {
-            setPasswordError('Email not available for password verification.');
-            return;
-        }
         if (!currentPassword || !newPassword || !confirmPassword) {
             setPasswordError('Please fill in all fields.');
             return;
@@ -170,18 +241,8 @@ const ScholarSettings = () => {
 
         try {
             setPasswordLoading(true);
-            const verifyRes = await axios.post('http://localhost:5000/api/login', {
-                email: profile.email,
-                password: currentPassword,
-            });
-
-            if (verifyRes.data.status !== 'Success') {
-                setPasswordError('Current password is incorrect.');
-                return;
-            }
-
             await axios.post('http://localhost:5000/api/change-password', {
-                email: profile.email,
+                current_password: currentPassword,
                 new_password: newPassword,
             }, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
 
@@ -191,7 +252,7 @@ const ScholarSettings = () => {
             setConfirmPassword('');
             setTimeout(() => setPasswordSuccess(''), 4000);
         } catch (err) {
-            setPasswordError(err.response?.data?.message || 'Current password is incorrect.');
+            setPasswordError(err.response?.data?.error || err.response?.data?.message || 'Unable to change password. Please try again.');
         } finally {
             setPasswordLoading(false);
         }
@@ -222,9 +283,8 @@ const ScholarSettings = () => {
         setConsentMessage('');
         try {
             await axios.post(`${API_BASE}/scholar/privacy-requests`, { request_type: requestType }, { headers: authHeader() });
-            setConsentMessage(requestType === 'export'
-                ? 'Data export request recorded for administrator review.'
-                : 'Data deletion request recorded for administrator review.');
+            const label = requestType === 'export' ? 'data export' : 'account deletion';
+            setConsentMessage(`Your ${label} request has been submitted and is now pending admin review.`);
         } catch (err) {
             setConsentMessage(err.response?.data?.error || 'Unable to create privacy request.');
         } finally {
@@ -251,398 +311,323 @@ const ScholarSettings = () => {
         }
     };
 
-    // Toggle switch recolored to the maroon/gold pair — reads as a small
-    // brass-and-lacquer control rather than a generic default switch.
-    const ToggleSwitch = ({ checked, onChange }) => (
-        <button
-            onClick={onChange}
-            className="relative w-11 h-6 rounded-full transition-all duration-300"
-            style={{ background: checked ? MAROON : '#e9dfd8' }}
-        >
-            <span
-                className="absolute top-1 w-4 h-4 rounded-full shadow transition-all duration-300"
-                style={{ left: checked ? 26 : 4, background: checked ? GOLD : '#fff' }}
-            />
-        </button>
-    );
-
     const displayName = profile.fullName || localStorage.getItem('name') || 'Scholar';
     const displayEmail = profile.email || localStorage.getItem('email') || 'you@example.com';
 
-    const serif = { fontFamily: "'Playfair Display', serif" };
-    const sans = { fontFamily: "'DM Sans', sans-serif" };
+    // Quick-overview figures — existing values only, no new calculations.
+    const notifOnCount = Object.values(notifSettings).filter(Boolean).length;
 
     return (
-        <div style={{ ...sans, background: IVORY, minHeight: '100vh' }}>
-            {loading && <div className="px-4 pt-3 text-center text-xs" style={{ color: GOLD }}>Loading account settings...</div>}
+        <div style={{ ...body, background: BG, minHeight: '100vh' }}>
+            <style>{`
+                @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Inter:wght@400;500;600;700&display=swap');
+                .settings-toolbar { position: sticky; top: 12px; z-index: 5; box-shadow: 0 12px 28px -18px rgba(36,21,18,0.25); }
+            `}</style>
 
-            {/* ── Hero band ─────────────────────────────────────── */}
-            <div
-                className="relative overflow-hidden px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 pb-14 sm:pb-16"
-                style={{ background: `linear-gradient(135deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)` }}
-            >
-                <svg
-                    className="absolute -right-8 -top-10 w-52 h-52 sm:-right-6 sm:-top-8 sm:w-64 sm:h-64 opacity-[0.14] pointer-events-none"
-                    viewBox="0 0 200 200"
-                    fill="none"
+            <div className="w-full px-4 sm:px-6 lg:p-8">
+
+                {/* ── 1. Scholar header ─────────────────────────────────── */}
+                <div className="flex items-start justify-between gap-4 flex-wrap" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '20px 24px', marginBottom: 20 }}>
+                    <div>
+                        <p style={{ ...body, fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.08em', color: BRONZE }}>SCHOLAR PORTAL</p>
+                        <h1 style={{ ...display, fontSize: '1.6rem', fontWeight: 600, color: INK, marginTop: 4 }}>Account Settings</h1>
+                        <p style={{ ...body, fontSize: '0.84rem', color: MUTED, marginTop: 6, maxWidth: 480 }}>
+                            Manage your profile details, password, and notification preferences in one place.
+                        </p>
+                    </div>
+                    <span style={{ ...body, fontSize: '0.76rem', fontWeight: 600, color: PRIMARY, background: `${PRIMARY}12`, border: `1px solid ${BORDER}`, borderRadius: 999, padding: '7px 16px', flexShrink: 0 }}>
+                        {profile.status || 'Active'}
+                    </span>
+                </div>
+
+                {loading && (
+                    <p className="mb-4" style={{ ...body, fontSize: '0.8rem', color: MUTED }}>Loading account settings…</p>
+                )}
+                {error && (
+                    <div className="mb-5" style={{ background: `${DANGER}0d`, color: DANGER, border: `1px solid ${DANGER}33`, borderRadius: 12, padding: 14, ...body, fontSize: '0.82rem' }}>
+                        {error}
+                    </div>
+                )}
+
+                {/* ── 2. Hero information card (burgundy) ───────────────── */}
+                <div
+                    className="flex flex-col sm:flex-row sm:items-center gap-6"
+                    style={{ background: `linear-gradient(135deg, ${PRIMARY} 0%, ${PRIMARY_DARK} 100%)`, borderRadius: RADIUS, padding: '24px 26px', marginBottom: 20, color: '#fff' }}
                 >
-                    <path
-                        d="M100 62c-6-14-20-24-36-24-4 0-8 1-8 1s-2 10 4 22c5 10 15 18 26 19-4 12-6 26-6 38 0 34 18 62 40 62 8 0 12-4 20-4s12 4 20 4c22 0 40-30 40-64 0-24-12-42-30-42-8 0-14 4-20 4s-10-3-16-6c2-11 8-20 16-25-2-1-6-2-10-2-16 0-30 8-40 17z"
-                        fill={GOLD}
+                    <div className="flex items-center gap-4 flex-shrink-0">
+                        <div className="flex items-center justify-center flex-shrink-0" style={{ width: 54, height: 54, borderRadius: '50%', background: 'rgba(255,255,255,0.14)', border: `2px solid ${BRONZE}` }}>
+                            <span style={{ ...display, fontSize: '1.2rem', fontWeight: 700, color: '#fff' }}>{displayName.charAt(0).toUpperCase()}</span>
+                        </div>
+                        <div className="min-w-0">
+                            <p style={{ ...body, fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.7)' }}>FEATURED INFORMATION</p>
+                            <p style={{ ...display, fontSize: '1.15rem', fontWeight: 600, color: '#fff', marginTop: 2 }} className="truncate">{displayName}</p>
+                            <p style={{ ...body, fontSize: '0.76rem', color: 'rgba(255,255,255,0.75)' }} className="truncate">{displayEmail}</p>
+                        </div>
+                    </div>
+
+                    <div className="flex-1 min-w-0" style={{ borderLeft: '1px solid rgba(255,255,255,0.2)', paddingLeft: 24 }}>
+                        <div className="flex items-center gap-2 mb-1">
+                            <ShieldCheck size={13} style={{ color: '#fff' }} />
+                            <span style={{ ...body, fontSize: '0.72rem', fontWeight: 700, color: 'rgba(255,255,255,0.85)' }}>VERIFIED SCHOLAR</span>
+                        </div>
+                        <p style={{ ...body, fontSize: '0.82rem', color: 'rgba(255,255,255,0.9)', lineHeight: 1.5 }}>
+                            {dataConsent.consented
+                                ? `Data consent given${dataConsent.consented_at ? ` on ${new Date(dataConsent.consented_at).toLocaleDateString('en-PH')}` : ''}.`
+                                : 'Data collection consent has not been recorded yet.'}
+                        </p>
+                    </div>
+
+                    <button
+                        onClick={() => setActiveTab('profile')}
+                        className="flex-shrink-0 transition-opacity hover:opacity-90"
+                        style={{ ...body, fontSize: '0.8rem', fontWeight: 700, color: PRIMARY, background: '#fff', border: 'none', borderRadius: 10, padding: '11px 22px', cursor: 'pointer' }}
+                    >
+                        Manage Privacy
+                    </button>
+                </div>
+
+                {/* ── 3. Quick overview — 3 KPI cards ───────────────────── */}
+                <div className="grid grid-cols-3 gap-3 sm:gap-4" style={{ marginBottom: 20 }}>
+                    <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '16px 16px 14px' }}>
+                        <div className="flex items-center justify-center" style={{ width: 30, height: 30, borderRadius: 9, background: `${PRIMARY}14` }}>
+                            <Bell size={14} style={{ color: PRIMARY }} />
+                        </div>
+                        <p style={{ ...display, fontSize: '1.35rem', fontWeight: 600, color: INK, marginTop: 10 }}>{notifOnCount}/4</p>
+                        <p style={{ ...body, fontSize: '0.74rem', color: MUTED, marginTop: 2 }}>Notifications On</p>
+                    </div>
+                    <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '16px 16px 14px' }}>
+                        <div className="flex items-center justify-center" style={{ width: 30, height: 30, borderRadius: 9, background: `${dataConsent.consented ? SUCCESS : WARNING}14` }}>
+                            <ShieldCheck size={14} style={{ color: dataConsent.consented ? SUCCESS : WARNING }} />
+                        </div>
+                        <p style={{ ...display, fontSize: '1.1rem', fontWeight: 600, color: INK, marginTop: 10 }}>{dataConsent.consented ? 'Given' : 'Not Given'}</p>
+                        <p style={{ ...body, fontSize: '0.74rem', color: MUTED, marginTop: 2 }}>Data Consent</p>
+                    </div>
+                    <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '16px 16px 14px' }}>
+                        <div className="flex items-center justify-center" style={{ width: 30, height: 30, borderRadius: 9, background: `${BRONZE}14` }}>
+                            <User size={14} style={{ color: BRONZE }} />
+                        </div>
+                        <p style={{ ...display, fontSize: '1.1rem', fontWeight: 600, color: INK, marginTop: 10 }}>{profile.status || 'Active'}</p>
+                        <p style={{ ...body, fontSize: '0.74rem', color: MUTED, marginTop: 2 }}>Account Status</p>
+                    </div>
+                </div>
+
+                {/* ── 4. Section toolbar (tabs, in place of search/filter — no record list exists on this page) ── */}
+                <div className="settings-toolbar flex items-center justify-between flex-wrap gap-3" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: 14, marginBottom: 20 }}>
+                    <SectionTabs
+                        tabs={[
+                            { key: 'profile', label: 'Profile', icon: User },
+                            { key: 'password', label: 'Password', icon: Lock },
+                            { key: 'notifications', label: 'Notifications', icon: Bell },
+                        ]}
+                        active={activeTab}
+                        onSelect={setActiveTab}
                     />
-                    <path d="M100 62c2-16 10-30 22-38" stroke={GOLD} strokeWidth="6" strokeLinecap="round" />
-                </svg>
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                            onClick={() => window.location.href = '/scholar/checklist'}
+                            className="flex items-center gap-1.5 transition-colors"
+                            style={{ ...body, fontSize: '0.78rem', fontWeight: 600, color: INK, background: BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '8px 14px', cursor: 'pointer' }}
+                        >
+                            Checklist <ChevronRight size={13} style={{ color: PRIMARY }} />
+                        </button>
+                        <button
+                            onClick={() => window.location.href = '/scholar/duties'}
+                            className="flex items-center gap-1.5 transition-colors"
+                            style={{ ...body, fontSize: '0.78rem', fontWeight: 600, color: INK, background: BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '8px 14px', cursor: 'pointer' }}
+                        >
+                            Duties <ChevronRight size={13} style={{ color: PRIMARY }} />
+                        </button>
+                    </div>
+                </div>
 
-                <p className="relative text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.2em] sm:tracking-[0.25em] mb-2" style={{ color: GOLD }}>
-                    Scholar Portal
-                </p>
-                <h1 className="relative text-2xl sm:text-3xl md:text-4xl font-bold text-white" style={serif}>Account Preferences</h1>
-                <p className="relative text-xs mt-2 max-w-md" style={{ color: '#e9c9a8' }}>
-                    Manage your profile details, password, and notification preferences in one place.
-                </p>
-            </div>
-
-            <div className="px-4 sm:px-6 lg:p-8 lg:pt-0">
-                <div className="max-w-6xl mx-auto">
-                    <div className="relative -mt-8 sm:-mt-10 grid gap-6 lg:grid-cols-[280px_1fr]">
-                        <aside className="space-y-5">
-                            {/* ── Member card — a wallet ID card, not a generic profile box ── */}
-                            <div
-                                className="rounded-2xl overflow-hidden"
-                                style={{ background: `linear-gradient(135deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)`, boxShadow: '0 12px 30px -12px rgba(79,22,32,0.3)' }}
-                            >
-                                <div className="p-5">
-                                    <div className="flex items-center gap-4">
-                                        <div className="flex h-14 w-14 items-center justify-center rounded-full text-xl font-bold flex-shrink-0" style={{ background: 'rgba(255,255,255,0.12)', border: `2px solid ${GOLD}`, color: GOLD }}>
-                                            {displayName.charAt(0).toUpperCase()}
-                                        </div>
-                                        <div className="min-w-0">
-                                            <p className="font-bold text-white truncate" style={serif}>{displayName}</p>
-                                            <p className="text-xs truncate" style={{ color: '#e9c9a8' }}>{displayEmail}</p>
-                                        </div>
-                                    </div>
-                                    <div className="mt-4 pt-4 flex items-center gap-2" style={{ borderTop: '1px solid rgba(255,255,255,0.15)' }}>
-                                        <ShieldCheck size={14} style={{ color: GOLD }} />
-                                        <span className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: GOLD }}>Verified Scholar</span>
-                                    </div>
-                                </div>
+                {/* ── 5. Section content, styled as premium cards ───────── */}
+                {activeTab === 'profile' && (
+                    <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '22px 24px', marginBottom: 20 }}>
+                        <h3 style={{ ...display, fontSize: '1.15rem', fontWeight: 600, color: INK, marginBottom: 18 }}>Profile Settings</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-5">
+                            <div>
+                                <label style={fieldLabelStyle}>FULL NAME</label>
+                                <input type="text" value={profile.fullName} onChange={(e) => setProfile({ ...profile, fullName: e.target.value })} style={inputStyle} onFocus={onInputFocus} onBlur={onInputBlur} />
                             </div>
+                            <div>
+                                <label style={fieldLabelStyle}>EMAIL</label>
+                                <input type="email" value={profile.email} onChange={(e) => setProfile({ ...profile, email: e.target.value })} style={inputStyle} onFocus={onInputFocus} onBlur={onInputBlur} />
+                            </div>
+                            <div>
+                                <label style={fieldLabelStyle}>PHONE</label>
+                                <input type="tel" value={profile.phone} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} style={inputStyle} onFocus={onInputFocus} onBlur={onInputBlur} />
+                            </div>
+                            <div>
+                                <label style={fieldLabelStyle}>STUDENT ID</label>
+                                <input type="text" value={profile.studentId} disabled style={{ width: '100%', padding: '10px 12px', borderRadius: 10, ...body, fontSize: '0.85rem', color: MUTED, background: BG, border: `1px solid ${BORDER}`, outline: 'none' }} />
+                            </div>
+                        </div>
 
-                            <div className="rounded-2xl bg-white p-5" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)' }}>
-                                <p className="text-[10px] font-bold uppercase tracking-[0.22em] mb-4" style={{ color: '#a56475' }}>Quick Links</p>
-                                <div className="space-y-1.5">
-                                    {[
-                                        { label: 'Requirement Checklist', path: '/scholar/checklist' },
-                                        { label: 'Scholar Duties', path: '/scholar/duties' },
-                                    ].map((item) => (
-                                        <button
-                                            key={item.path}
-                                            onClick={() => window.location.href = item.path}
-                                            className="w-full flex items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-medium transition-colors"
-                                            style={{ color: INK, background: IVORY }}
-                                        >
-                                            {item.label}
-                                            <ChevronRight size={14} style={{ color: MAROON }} />
+                        {profileError && <div className="mt-5" style={{ background: `${DANGER}0d`, color: DANGER, borderRadius: 10, padding: '10px 14px', ...body, fontSize: '0.8rem' }}>{profileError}</div>}
+                        {profileSuccess && <div className="mt-5" style={{ background: `${SUCCESS}0d`, color: SUCCESS, borderRadius: 10, padding: '10px 14px', ...body, fontSize: '0.8rem' }}>{profileSuccess}</div>}
+
+                        <button
+                            onClick={handleSaveProfile}
+                            className="w-full mt-5 transition-opacity hover:opacity-90"
+                            style={{ padding: '12px 0', borderRadius: 12, border: 'none', cursor: 'pointer', ...body, fontSize: '0.82rem', fontWeight: 700, color: '#fff', background: `linear-gradient(120deg, ${PRIMARY} 0%, ${PRIMARY_DARK} 100%)` }}
+                        >
+                            Save Profile
+                        </button>
+
+                        {/* Privacy consent — styled as a registry-card row: left icon+desc, right status+action */}
+                        <div className="mt-6 pt-6" style={{ borderTop: `1px solid ${BORDER}` }}>
+                            <div className="flex items-start gap-3" style={{ background: BG, borderRadius: 14, padding: 18 }}>
+                                <span className="flex items-center justify-center flex-shrink-0" style={{ width: 34, height: 34, borderRadius: 10, background: `${PRIMARY}14` }}>
+                                    <ShieldCheck size={16} style={{ color: PRIMARY }} />
+                                </span>
+                                <div className="flex-1 min-w-0">
+                                    <p style={{ ...body, fontSize: '0.86rem', fontWeight: 700, color: INK }}>Data Privacy Consent</p>
+                                    <p style={{ ...body, fontSize: '0.78rem', color: MUTED, marginTop: 4, lineHeight: 1.55 }}>
+                                        I consent to the collection and processing of my scholar profile, submissions, attendance, grades, and uploaded documents for scholarship monitoring and reporting. No external AI service is used to evaluate this data.
+                                    </p>
+                                    <div className="mt-3 flex flex-col xs:flex-row sm:flex-row items-start sm:items-center justify-between gap-3">
+                                        <span style={{ ...body, fontSize: '0.72rem', fontWeight: 700, color: dataConsent.consented ? SUCCESS : WARNING }}>
+                                            {dataConsent.consented ? `Consented${dataConsent.consented_at ? ` on ${new Date(dataConsent.consented_at).toLocaleDateString('en-PH')}` : ''}` : 'Consent not recorded'}
+                                        </span>
+                                        <button onClick={handleConsentChange} disabled={consentLoading}
+                                            style={{ padding: '8px 16px', borderRadius: 10, border: 'none', cursor: 'pointer', ...body, fontSize: '0.76rem', fontWeight: 700, color: '#fff', background: dataConsent.consented ? DANGER : PRIMARY, opacity: consentLoading ? 0.6 : 1, flexShrink: 0 }}>
+                                            {consentLoading ? 'Saving…' : dataConsent.consented ? 'Revoke Consent' : 'Give Consent'}
                                         </button>
-                                    ))}
+                                    </div>
+                                    {consentMessage && <p style={{ ...body, fontSize: '0.76rem', color: MUTED, marginTop: 8 }}>{consentMessage}</p>}
+                                    <div className="mt-4 flex flex-wrap gap-2" style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 12 }}>
+                                        <button type="button" onClick={handleDataExport} disabled={privacyRequestLoading}
+                                            className="flex items-center gap-1.5"
+                                            style={{ padding: '8px 14px', borderRadius: 999, border: `1.5px solid ${BRONZE}`, background: 'none', cursor: 'pointer', ...body, fontSize: '0.74rem', fontWeight: 700, color: PRIMARY, opacity: privacyRequestLoading ? 0.6 : 1 }}>
+                                            <Download size={13} /> Download My Data
+                                        </button>
+                                        <button type="button" onClick={() => handlePrivacyRequest('deletion')} disabled={privacyRequestLoading}
+                                            className="flex items-center gap-1.5"
+                                            style={{ padding: '8px 14px', borderRadius: 999, border: `1.5px solid ${DANGER}88`, background: 'none', cursor: 'pointer', ...body, fontSize: '0.74rem', fontWeight: 700, color: DANGER, opacity: privacyRequestLoading ? 0.6 : 1 }}>
+                                            <Trash2 size={13} /> Request Data Deletion
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                )}
 
-                            {/* Security tips — a small brass plate note */}
-                            <div className="rounded-2xl p-5" style={{ background: ROSE }}>
-                                <div className="flex items-center gap-2 mb-3">
-                                    <KeyRound size={13} style={{ color: MAROON }} />
-                                    <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: MAROON_DEEP }}>Security Tips</p>
+                {activeTab === 'password' && (
+                    <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '22px 24px', marginBottom: 20 }}>
+                        <h3 style={{ ...display, fontSize: '1.15rem', fontWeight: 600, color: INK, marginBottom: 18 }}>Change Password</h3>
+                        <div className="grid gap-5 lg:grid-cols-[1fr_220px]">
+                            <div className="space-y-5">
+                                <div>
+                                    <label style={fieldLabelStyle}>CURRENT PASSWORD</label>
+                                    <div className="relative">
+                                        <input type={showCurrent ? 'text' : 'password'} value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} placeholder="Enter current password" style={{ ...inputStyle, paddingRight: 28 }} onFocus={onInputFocus} onBlur={onInputBlur} />
+                                        <button onClick={() => setShowCurrent(!showCurrent)} className="absolute right-0 top-0" style={{ background: 'none', border: 'none', cursor: 'pointer', color: MUTED }}>
+                                            {showCurrent ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
                                 </div>
-                                <ul className="space-y-2.5 text-sm" style={{ color: '#a56475' }}>
+                                <div>
+                                    <label style={fieldLabelStyle}>NEW PASSWORD</label>
+                                    <div className="relative">
+                                        <input type={showNew ? 'text' : 'password'} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Enter new password" style={{ ...inputStyle, paddingRight: 28 }} onFocus={onInputFocus} onBlur={onInputBlur} />
+                                        <button onClick={() => setShowNew(!showNew)} className="absolute right-0 top-0" style={{ background: 'none', border: 'none', cursor: 'pointer', color: MUTED }}>
+                                            {showNew ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
+                                    {newPassword && (
+                                        <div className="flex items-center gap-3 mt-3 flex-wrap">
+                                            <StrengthDial level={strength.level} color={strength.color} />
+                                            <p style={{ ...body, fontSize: '0.76rem', fontWeight: 700, color: strength.color }}>Password strength: {strength.label}</p>
+                                        </div>
+                                    )}
+                                </div>
+                                <div>
+                                    <label style={fieldLabelStyle}>CONFIRM NEW PASSWORD</label>
+                                    <div className="relative">
+                                        <input type={showConfirm ? 'text' : 'password'} value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Re-enter new password" style={{ ...inputStyle, paddingRight: 28 }} onFocus={onInputFocus} onBlur={onInputBlur} />
+                                        <button onClick={() => setShowConfirm(!showConfirm)} className="absolute right-0 top-0" style={{ background: 'none', border: 'none', cursor: 'pointer', color: MUTED }}>
+                                            {showConfirm ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {(passwordError || passwordSuccess) && (
+                                    <div style={{ borderRadius: 10, padding: '10px 14px', ...body, fontSize: '0.8rem', color: passwordError ? DANGER : SUCCESS, background: passwordError ? `${DANGER}0d` : `${SUCCESS}0d` }}>
+                                        {passwordError || passwordSuccess}
+                                    </div>
+                                )}
+
+                                <button
+                                    onClick={handleChangePassword}
+                                    disabled={passwordLoading}
+                                    className="w-full transition-opacity hover:opacity-90"
+                                    style={{ padding: '12px 0', borderRadius: 12, border: 'none', cursor: 'pointer', ...body, fontSize: '0.82rem', fontWeight: 700, color: '#fff', background: `linear-gradient(120deg, ${PRIMARY} 0%, ${PRIMARY_DARK} 100%)`, opacity: passwordLoading ? 0.6 : 1 }}
+                                >
+                                    {passwordLoading ? 'Updating…' : 'Update Password'}
+                                </button>
+                            </div>
+
+                            <div style={{ background: BG, borderRadius: 14, padding: 16, borderLeft: `3px solid ${PRIMARY}`, height: 'fit-content' }}>
+                                <div className="flex items-center gap-2 mb-2.5">
+                                    <KeyRound size={13} style={{ color: PRIMARY }} />
+                                    <p style={{ ...body, fontSize: '0.72rem', fontWeight: 700, color: PRIMARY_DARK }}>SECURITY TIPS</p>
+                                </div>
+                                <ul className="space-y-1.5 list-disc pl-4" style={{ ...body, fontSize: '0.78rem', color: MUTED }}>
                                     <li>Use at least 8 characters.</li>
                                     <li>Mix uppercase and lowercase.</li>
                                     <li>Add numbers and symbols.</li>
                                     <li>Never share your password.</li>
                                 </ul>
                             </div>
-                        </aside>
-
-                        <section className="space-y-6">
-                            <div className="rounded-2xl bg-white p-5 sm:p-6" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)' }}>
-                                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                                    <div>
-                                        <p className="text-[10px] font-bold uppercase tracking-[0.22em]" style={{ color: '#a56475' }}>Settings</p>
-                                        <h2 className="mt-1 text-xl sm:text-2xl font-bold" style={{ ...serif, color: INK }}>Update your account</h2>
-                                    </div>
-                                    <div className="flex gap-6 border-b" style={{ borderColor: '#f0e6e0' }}>
-                                        {[
-                                            { key: 'profile', label: 'Profile', icon: User },
-                                            { key: 'password', label: 'Password', icon: Lock },
-                                            { key: 'notifications', label: 'Notifications', icon: Bell },
-                                        ].map((tab) => (
-                                            <button
-                                                key={tab.key}
-                                                onClick={() => setActiveTab(tab.key)}
-                                                className="flex items-center gap-1.5 pb-2.5 text-sm font-semibold transition-colors"
-                                                style={{
-                                                    color: activeTab === tab.key ? MAROON : '#c9b3b8',
-                                                    borderBottom: activeTab === tab.key ? `2px solid ${MAROON}` : '2px solid transparent',
-                                                    marginBottom: -1,
-                                                }}
-                                            >
-                                                <tab.icon className="h-3.5 w-3.5" />
-                                                {tab.label}
-                                            </button>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-
-                            {error && (
-                                <div className="rounded-2xl p-4 text-sm" style={{ background: '#FBE9E9', color: '#991b1b', border: '1px solid #f3c6c6' }}>
-                                    {error}
-                                </div>
-                            )}
-
-                            {activeTab === 'profile' && (
-                                <div className="rounded-2xl bg-white p-6 sm:p-8" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)', borderTop: `2px solid ${GOLD}` }}>
-                                    <h3 className="text-lg font-bold mb-6" style={{ ...serif, color: INK }}>Profile Settings</h3>
-                                    <div className="space-y-6">
-                                        <div>
-                                            <label className="mb-2 block text-[10px] font-bold uppercase tracking-wider" style={{ color: '#a56475' }}>Full Name</label>
-                                            <input
-                                                type="text"
-                                                value={profile.fullName}
-                                                onChange={(e) => setProfile({ ...profile, fullName: e.target.value })}
-                                                className={inputClass}
-                                                style={inputStyle}
-                                                onFocus={onInputFocus} onBlur={onInputBlur}
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="mb-2 block text-[10px] font-bold uppercase tracking-wider" style={{ color: '#a56475' }}>Email</label>
-                                            <input
-                                                type="email"
-                                                value={profile.email}
-                                                onChange={(e) => setProfile({ ...profile, email: e.target.value })}
-                                                className={inputClass}
-                                                style={inputStyle}
-                                                onFocus={onInputFocus} onBlur={onInputBlur}
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="mb-2 block text-[10px] font-bold uppercase tracking-wider" style={{ color: '#a56475' }}>Phone</label>
-                                            <input
-                                                type="tel"
-                                                value={profile.phone}
-                                                onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
-                                                className={inputClass}
-                                                style={inputStyle}
-                                                onFocus={onInputFocus} onBlur={onInputBlur}
-                                            />
-                                        </div>
-                                        <div>
-                                            <label className="mb-2 block text-[10px] font-bold uppercase tracking-wider" style={{ color: '#a56475' }}>Student ID</label>
-                                            <input
-                                                type="text"
-                                                value={profile.studentId}
-                                                disabled
-                                                className="w-full px-4 py-2.5 rounded-xl text-sm outline-none"
-                                                style={{ background: IVORY, color: '#a89890', border: '1px solid #e9dfd8' }}
-                                            />
-                                        </div>
-
-                                        {profileError && (
-                                            <div className="rounded-xl px-4 py-3 text-sm" style={{ background: '#FBE9E9', color: '#991b1b' }}>
-                                                {profileError}
-                                            </div>
-                                        )}
-                                        {profileSuccess && (
-                                            <div className="rounded-xl px-4 py-3 text-sm" style={{ background: '#EAF3EC', color: '#15803d' }}>
-                                                {profileSuccess}
-                                            </div>
-                                        )}
-
-                                        <button
-                                            onClick={handleSaveProfile}
-                                            className="w-full rounded-full px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-white transition-opacity hover:opacity-90"
-                                            style={{ background: `linear-gradient(120deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)` }}
-                                        >
-                                            Save Profile
-                                        </button>
-                                        <div className="rounded-xl p-4" style={{ background: IVORY, border: '1px solid #e9dfd8' }}>
-                                            <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: '#a56475' }}>Data Privacy Consent</p>
-                                            <p className="mt-2 text-xs leading-relaxed" style={{ color: '#6b6058' }}>
-                                                I consent to the collection and processing of my scholar profile, submissions, attendance, grades, and uploaded documents for scholarship monitoring and reporting.
-                                            </p>
-                                            <div className="mt-3 flex items-center justify-between gap-3">
-                                                <span className="text-xs font-bold" style={{ color: dataConsent.consented ? '#15803d' : '#991b1b' }}>
-                                                    {dataConsent.consented ? `Consented${dataConsent.consented_at ? ` on ${new Date(dataConsent.consented_at).toLocaleDateString('en-PH')}` : ''}` : 'Consent not recorded'}
-                                                </span>
-                                                <button onClick={handleConsentChange} disabled={consentLoading}
-                                                    className="rounded-full px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
-                                                    style={{ background: dataConsent.consented ? '#991b1b' : MAROON }}>
-                                                    {consentLoading ? 'Saving...' : dataConsent.consented ? 'Revoke Consent' : 'Give Consent'}
-                                                </button>
-                                            </div>
-                                            {consentMessage && <p className="mt-2 text-xs" style={{ color: '#6b6058' }}>{consentMessage}</p>}
-                                            <div className="mt-4 flex flex-wrap gap-2 border-t pt-3" style={{ borderColor: '#e9dfd8' }}>
-                                                <button type="button" onClick={handleDataExport} disabled={privacyRequestLoading}
-                                                    className="rounded-full border px-3 py-2 text-xs font-bold disabled:opacity-50" style={{ borderColor: GOLD, color: MAROON }}>
-                                                    Download My Data
-                                                </button>
-                                                <button type="button" onClick={() => handlePrivacyRequest('deletion')} disabled={privacyRequestLoading}
-                                                    className="rounded-full border px-3 py-2 text-xs font-bold disabled:opacity-50" style={{ borderColor: '#d9a0a0', color: '#991b1b' }}>
-                                                    Request Data Deletion
-                                                </button>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            )}
-
-                            {activeTab === 'password' && (
-                                <div className="rounded-2xl bg-white p-6 sm:p-8" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)', borderTop: `2px solid ${GOLD}` }}>
-                                    <h3 className="text-lg font-bold mb-6" style={{ ...serif, color: INK }}>Change Password</h3>
-                                    <div className="space-y-6">
-                                        <div>
-                                            <label className="mb-2 block text-[10px] font-bold uppercase tracking-wider" style={{ color: '#a56475' }}>Current Password</label>
-                                            <div className="relative">
-                                                <input
-                                                    type={showCurrent ? 'text' : 'password'}
-                                                    value={currentPassword}
-                                                    onChange={(e) => setCurrentPassword(e.target.value)}
-                                                    placeholder="Enter current password"
-                                                    className={inputClass}
-                                                    style={inputStyle}
-                                                    onFocus={onInputFocus} onBlur={onInputBlur}
-                                                />
-                                                <button
-                                                    onClick={() => setShowCurrent(!showCurrent)}
-                                                    className="absolute right-0 top-0 text-slate-400 hover:text-slate-600"
-                                                >
-                                                    {showCurrent ? <EyeOff size={16} /> : <Eye size={16} />}
-                                                </button>
-                                            </div>
-                                        </div>
-                                        <div>
-                                            <label className="mb-2 block text-[10px] font-bold uppercase tracking-wider" style={{ color: '#a56475' }}>New Password</label>
-                                            <div className="relative">
-                                                <input
-                                                    type={showNew ? 'text' : 'password'}
-                                                    value={newPassword}
-                                                    onChange={(e) => setNewPassword(e.target.value)}
-                                                    placeholder="Enter new password"
-                                                    className={inputClass}
-                                                    style={inputStyle}
-                                                    onFocus={onInputFocus} onBlur={onInputBlur}
-                                                />
-                                                <button
-                                                    onClick={() => setShowNew(!showNew)}
-                                                    className="absolute right-0 top-0 text-slate-400 hover:text-slate-600"
-                                                >
-                                                    {showNew ? <EyeOff size={16} /> : <Eye size={16} />}
-                                                </button>
-                                            </div>
-                                            {newPassword && (
-                                                <div className="mt-3">
-                                                    <div className="flex gap-1 mb-2">
-                                                        {[1, 2, 3, 4].map((i) => (
-                                                            <span
-                                                                key={i}
-                                                                className="h-1.5 flex-1 rounded-full"
-                                                                style={{ background: i <= strength.level ? strength.color : '#e9dfd8' }}
-                                                            />
-                                                        ))}
-                                                    </div>
-                                                    <p className="text-xs font-semibold" style={{ color: strength.color }}>
-                                                        Password strength: {strength.label}
-                                                    </p>
-                                                </div>
-                                            )}
-                                        </div>
-                                        <div>
-                                            <label className="mb-2 block text-[10px] font-bold uppercase tracking-wider" style={{ color: '#a56475' }}>Confirm New Password</label>
-                                            <div className="relative">
-                                                <input
-                                                    type={showConfirm ? 'text' : 'password'}
-                                                    value={confirmPassword}
-                                                    onChange={(e) => setConfirmPassword(e.target.value)}
-                                                    placeholder="Re-enter new password"
-                                                    className={inputClass}
-                                                    style={inputStyle}
-                                                    onFocus={onInputFocus} onBlur={onInputBlur}
-                                                />
-                                                <button
-                                                    onClick={() => setShowConfirm(!showConfirm)}
-                                                    className="absolute right-0 top-0 text-slate-400 hover:text-slate-600"
-                                                >
-                                                    {showConfirm ? <EyeOff size={16} /> : <Eye size={16} />}
-                                                </button>
-                                            </div>
-                                        </div>
-
-                                        {(passwordError || passwordSuccess) && (
-                                            <div className="rounded-xl px-4 py-3 text-sm" style={passwordError ? { background: '#FBE9E9', color: '#991b1b' } : { background: '#EAF3EC', color: '#15803d' }}>
-                                                {passwordError || passwordSuccess}
-                                            </div>
-                                        )}
-
-                                        <button
-                                            onClick={handleChangePassword}
-                                            disabled={passwordLoading}
-                                            className="w-full rounded-full px-5 py-3 text-sm font-bold uppercase tracking-[0.18em] text-white transition-opacity hover:opacity-90 disabled:opacity-50"
-                                            style={{ background: `linear-gradient(120deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)` }}
-                                        >
-                                            {passwordLoading ? 'Updating...' : 'Update Password'}
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-
-                            {activeTab === 'notifications' && (
-                                <div className="rounded-2xl bg-white p-6 sm:p-8" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)', borderTop: `2px solid ${GOLD}` }}>
-                                    <h3 className="text-lg font-bold mb-6" style={{ ...serif, color: INK }}>Notification Preferences</h3>
-                                    <div className="space-y-3">
-                                        {[
-                                            { key: 'deadline_reminders', label: 'Deadline Reminders', desc: 'Get notified before submission deadlines' },
-                                            { key: 'submission_updates', label: 'Submission Status Updates', desc: 'Get notified when staff reviews your submission' },
-                                            { key: 'announcement_alerts', label: 'Announcement Alerts', desc: 'Get notified for new foundation announcements' },
-                                            { key: 'duty_reminders', label: 'Duty Reminders', desc: 'Get notified for upcoming duty assignments' },
-                                        ].map((item) => (
-                                            <div key={item.key} className="flex items-center justify-between rounded-xl p-4" style={{ background: IVORY }}>
-                                                <div className="min-w-0 pr-4">
-                                                    <p className="font-semibold text-sm" style={{ color: INK }}>{item.label}</p>
-                                                    <p className="text-xs mt-0.5" style={{ color: '#a89890' }}>{item.desc}</p>
-                                                </div>
-                                                <ToggleSwitch
-                                                    checked={notifSettings[item.key]}
-                                                    onChange={() => setNotifSettings(prev => ({
-                                                        ...prev,
-                                                        [item.key]: !prev[item.key]
-                                                    }))}
-                                                />
-                                            </div>
-                                        ))}
-                                    </div>
-
-                                    {notifSuccess && (
-                                        <div className="mt-4 rounded-xl px-4 py-3 text-sm" style={{ background: '#EAF3EC', color: '#15803d' }}>
-                                            {notifSuccess}
-                                        </div>
-                                    )}
-
-                                    <button
-                                        onClick={handleSaveNotifications}
-                                        className="mt-6 w-full rounded-full px-5 py-3 text-sm font-semibold transition-colors"
-                                        style={{ color: MAROON, border: `1.5px solid ${MAROON}`, background: '#fff' }}
-                                    >
-                                        Save Preferences
-                                    </button>
-                                </div>
-                            )}
-
-                            <div className="rounded-2xl bg-white p-6 text-center text-sm" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)', color: '#a89890' }}>
-                                Apple Scholar · Academic Year 2026 — Scholarship Management System
-                            </div>
-                        </section>
+                        </div>
                     </div>
+                )}
+
+                {activeTab === 'notifications' && (
+                    <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '22px 24px', marginBottom: 20 }}>
+                        <h3 style={{ ...display, fontSize: '1.15rem', fontWeight: 600, color: INK, marginBottom: 18 }}>Notification Preferences</h3>
+                        <div className="space-y-2.5">
+                            {[
+                                { key: 'deadline_reminders', label: 'Deadline Reminders', desc: 'Get notified before submission deadlines', icon: Lock },
+                                { key: 'submission_updates', label: 'Submission Status Updates', desc: 'Get notified when staff reviews your submission', icon: ShieldCheck },
+                                { key: 'announcement_alerts', label: 'Announcement Alerts', desc: 'Get notified for new foundation announcements', icon: Bell },
+                                { key: 'duty_reminders', label: 'Duty Reminders', desc: 'Get notified for upcoming duty assignments', icon: User },
+                            ].map((item) => (
+                                <div key={item.key} className="flex items-start gap-3" style={{ background: BG, borderRadius: 14, padding: '14px 16px' }}>
+                                    <span className="flex items-center justify-center flex-shrink-0" style={{ width: 32, height: 32, borderRadius: 10, background: `${PRIMARY}14`, marginTop: 1 }}>
+                                        <item.icon size={14} style={{ color: PRIMARY }} />
+                                    </span>
+                                    <div className="flex-1 min-w-0">
+                                        <p style={{ ...body, fontSize: '0.84rem', fontWeight: 700, color: INK }}>{item.label}</p>
+                                        <p style={{ ...body, fontSize: '0.74rem', color: MUTED, marginTop: 2 }}>{item.desc}</p>
+                                    </div>
+                                    <ToggleSwitch
+                                        checked={notifSettings[item.key]}
+                                        onChange={() => setNotifSettings(prev => ({ ...prev, [item.key]: !prev[item.key] }))}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+
+                        {notifSuccess && (
+                            <div className="mt-4" style={{ background: `${SUCCESS}0d`, color: SUCCESS, borderRadius: 10, padding: '10px 14px', ...body, fontSize: '0.8rem' }}>
+                                {notifSuccess}
+                            </div>
+                        )}
+
+                        <button
+                            onClick={handleSaveNotifications}
+                            className="w-full transition-colors"
+                            style={{ marginTop: 18, padding: '11px 0', borderRadius: 12, border: `1.5px solid ${PRIMARY}`, background: '#fff', cursor: 'pointer', ...body, fontSize: '0.82rem', fontWeight: 700, color: PRIMARY }}
+                        >
+                            Save Preferences
+                        </button>
+                    </div>
+                )}
+
+                <div className="text-center mb-10" style={{ ...body, fontSize: '0.72rem', color: MUTED }}>
+                    Apple Scholar · Academic Year 2026 — Scholarship Management System
                 </div>
             </div>
         </div>

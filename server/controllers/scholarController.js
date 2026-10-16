@@ -3,6 +3,16 @@ const ExcelJS = require('exceljs');
 const { logAuditEvent } = require('../utils/auditLogger');
 const { calculateComplianceScore, getAcademicTier, normalizeAcademicGrade } = require('../utils/complianceLogger');
 
+const calculateAge = (birthDate) => {
+    if (!birthDate) return null;
+    const birth = new Date(`${birthDate}T00:00:00`);
+    if (Number.isNaN(birth.getTime())) return null;
+    const today = new Date();
+    let age = today.getFullYear() - birth.getFullYear();
+    if (today.getMonth() < birth.getMonth() || (today.getMonth() === birth.getMonth() && today.getDate() < birth.getDate())) age -= 1;
+    return age >= 0 && age <= 120 ? age : null;
+};
+
 const ALL_LEVELS = [
     'grade_7', 'grade_8', 'grade_9', 'grade_10',
     'grade_11', 'grade_12',
@@ -56,9 +66,11 @@ const normalizeYearLevel = (value) => {
 
 // ─── GET SCHOLAR PROFILE ─────────────────────────────────────
 exports.getProfile = (req, res) => {
+    if (Number(req.user?.id) !== Number(req.params.id)) {
+        return res.status(403).json({ error: 'You can only view your own profile.' });
+    }
     const sql = `
-        SELECT id, scholar_id, full_name, email, role, year_level, age, course, school, phone, address, status, created_at,
-               qr_code
+        SELECT id, scholar_id, full_name, email, role, year_level, birth_date, age, course, school, phone, address, status, created_at
         FROM users WHERE id = ?
     `;
     db.query(sql, [req.params.id], (err, data) => {
@@ -77,7 +89,7 @@ exports.updateProfile = (req, res) => {
         return res.status(403).json({ error: 'You can only update your own profile.' });
     }
 
-    const allowedFields = ['full_name', 'email', 'year_level', 'age', 'phone', 'address', 'course', 'school', 'qr_code'];
+    const allowedFields = ['full_name', 'email', 'year_level', 'birth_date', 'age', 'phone', 'address', 'course', 'school'];
     const updates = {};
 
     allowedFields.forEach((field) => {
@@ -95,6 +107,14 @@ exports.updateProfile = (req, res) => {
                 value = null;
             } else {
                 value = Math.max(0, Math.min(120, ageNum));
+            }
+        }
+
+        if (field === 'birth_date') {
+            if (value === null || value === '') {
+                value = null;
+            } else if (!/^\d{4}-\d{2}-\d{2}$/.test(String(value))) {
+                return res.status(400).json({ error: 'Birth date must use the YYYY-MM-DD format.' });
             }
         }
 
@@ -124,6 +144,9 @@ exports.updateProfile = (req, res) => {
     if (normalizedYearLevel) {
         updates.year_level = normalizedYearLevel;
     }
+    if (Object.prototype.hasOwnProperty.call(updates, 'birth_date')) {
+        updates.age = calculateAge(updates.birth_date);
+    }
 
     const sql = `UPDATE users SET ${Object.keys(updates).map((field) => `${field} = ?`).join(', ')} WHERE id = ?`;
     const params = [...Object.values(updates), requestedId];
@@ -132,8 +155,7 @@ exports.updateProfile = (req, res) => {
         if (err) return res.status(500).json({ error: 'Error updating profile.' });
 
         const fetchSql = `
-            SELECT id, scholar_id, full_name, email, role, year_level, age, course, school, phone, address, status, created_at,
-                   qr_code
+            SELECT id, scholar_id, full_name, email, role, year_level, birth_date, age, course, school, phone, address, status, created_at
             FROM users WHERE id = ?
         `;
 
@@ -146,6 +168,107 @@ exports.updateProfile = (req, res) => {
 };
 
 // ─── GET ANNOUNCEMENTS ────────────────────────────────────────
+const resolveNotificationSource = (type = '') => {
+    const t = String(type).toLowerCase();
+    if (t.includes('duty')) return 'duty';
+    if (t.includes('submission') || t.includes('review') || t.includes('letter')) return 'submission';
+    if (t.includes('task') || t.includes('deadline') || t.includes('reminder')) return 'task';
+    return 'announcement';
+};
+
+const resolveNotificationType = (type = '', status = '') => {
+    const t = String(type).toLowerCase();
+    const normalizedStatus = String(status || '').toLowerCase();
+
+    if (t.includes('deadline') || t.includes('reminder')) return 'reminder';
+    if (t.includes('deadline')) return 'deadline';
+    if (normalizedStatus === 'sent') return 'info';
+    if (normalizedStatus === 'failed') return 'critical';
+    if (t.includes('approval') || t.includes('approved')) return 'approved';
+    if (t.includes('rejected') || t.includes('returned')) return 'rejected';
+    if (t.includes('duty')) return 'important';
+    if (t.includes('submission')) return 'pending';
+    return 'info';
+};
+
+exports.getScholarNotifications = (req, res) => {
+    const scholar_id = req.user?.scholar_id;
+    if (!scholar_id) return res.status(401).json({ error: 'Scholar identity is missing from the authentication token.' });
+
+    const sql = `
+        SELECT id, scholar_id, recipient, channel, type, status, detail, is_read, read_at, created_at
+        FROM notification_logs
+        WHERE scholar_id = ?
+        ORDER BY created_at DESC
+    `;
+
+    db.query(sql, [scholar_id], (err, rows) => {
+        if (err) {
+            console.error('Error fetching scholar notifications:', err);
+            return res.status(500).json({ error: 'Error fetching notification feed.' });
+        }
+
+        const results = rows.map(row => ({
+            id: row.id,
+            source: resolveNotificationSource(row.type),
+            type: resolveNotificationType(row.type, row.status),
+            title: String(row.type || 'Notification').replace(/[_-]+/g, ' '),
+            message: row.detail || 'You have a new notification.',
+            date: row.created_at,
+            read: Number(row.is_read) === 1,
+            channel: row.channel,
+            recipient: row.recipient,
+            status: row.status,
+            created_at: row.created_at,
+        }));
+
+        return res.json(results);
+    });
+};
+
+exports.markAllNotificationsRead = (req, res) => {
+    const scholar_id = req.user?.scholar_id;
+    if (!scholar_id) return res.status(401).json({ error: 'Scholar identity is missing from the authentication token.' });
+
+    const sql = `
+        UPDATE notification_logs
+        SET is_read = 1, read_at = CURRENT_TIMESTAMP
+        WHERE scholar_id = ? AND COALESCE(is_read, 0) = 0
+    `;
+
+    db.query(sql, [scholar_id], (err, result) => {
+        if (err) {
+            console.error('Error marking scholar notifications read:', err);
+            return res.status(500).json({ error: 'Unable to mark notifications as read.' });
+        }
+
+        return res.json({ ok: true, updated: result.affectedRows || 0 });
+    });
+};
+
+exports.markNotificationRead = (req, res) => {
+    const scholar_id = req.user?.scholar_id;
+    if (!scholar_id) return res.status(401).json({ error: 'Scholar identity is missing from the authentication token.' });
+
+    const notificationId = Number(req.params.id);
+    if (!notificationId) return res.status(400).json({ error: 'Notification id is required.' });
+
+    const sql = `
+        UPDATE notification_logs
+        SET is_read = 1, read_at = CURRENT_TIMESTAMP
+        WHERE id = ? AND scholar_id = ?
+    `;
+
+    db.query(sql, [notificationId, scholar_id], (err, result) => {
+        if (err) {
+            console.error('Error marking scholar notification read:', err);
+            return res.status(500).json({ error: 'Unable to mark the notification as read.' });
+        }
+
+        return res.json({ ok: true, updated: result.affectedRows || 0 });
+    });
+};
+
 exports.getAnnouncements = (req, res) => {
     const { year_level } = req.query;
 
@@ -379,6 +502,7 @@ exports.getMyDuties = (req, res) => {
         SELECT DISTINCT d.id, d.title, d.description,
             d.duty_date, d.time_start, d.time_end, d.location, d.status,
             g.group_name,
+            assigned_staff.full_name AS assigned_staff_name,
             da.status AS attendance_status, da.method, da.marked_at, da.is_makeup,
             CASE
                 WHEN da.status = 'present' THEN 'completed'
@@ -387,13 +511,17 @@ exports.getMyDuties = (req, res) => {
             END AS computed_status
         FROM duties d
         JOIN duty_group_assignments dga ON dga.duty_id = d.id
-        JOIN scholar_group_members m ON m.group_id = dga.group_id
-        JOIN scholar_groups g ON g.id = dga.group_id
-        LEFT JOIN duty_attendance da ON da.duty_id = d.id AND da.scholar_id = m.scholar_id
-        WHERE m.scholar_id = ?
+        LEFT JOIN scholar_group_members m ON m.group_id = dga.group_id AND m.scholar_id = ?
+        LEFT JOIN scholar_groups g ON g.id = dga.group_id
+        LEFT JOIN users assigned_staff ON assigned_staff.id = g.assigned_staff_id
+            AND LOWER(assigned_staff.role) IN ('staff', 'officer')
+        LEFT JOIN duty_makeup_permissions p ON p.makeup_duty_id = d.id
+            AND p.scholar_id = ? AND p.status = 'approved' AND p.used_at IS NULL
+        LEFT JOIN duty_attendance da ON da.duty_id = d.id AND da.scholar_id = ?
+        WHERE (m.scholar_id = ? OR p.scholar_id = ? OR da.scholar_id = ?)
         ORDER BY d.duty_date DESC
     `;
-    db.query(sql, [scholar_id], (err, data) => {
+    db.query(sql, [scholar_id, scholar_id, scholar_id, scholar_id, scholar_id, scholar_id], (err, data) => {
         if (err) {
             console.error('Error fetching duties (getMyDuties):', err);
             return res.status(500).json({ error: 'Error fetching your duties' });
@@ -416,7 +544,16 @@ exports.checkInToDuty = (req, res) => {
         return res.status(400).json({ error: 'qr_token is required' });
 
     // Step 1: Hanapin yung duty base sa QR token
-    const dutySql = `SELECT id, title, duty_date, time_start, time_end FROM duties WHERE qr_token = ?`;
+    const dutySql = `
+        SELECT id, title, duty_date, time_start, time_end,
+               TIMESTAMP(duty_date, COALESCE(time_end, '23:59:59')) <= NOW() AS duty_ended,
+               time_start IS NOT NULL AND NOW() > DATE_ADD(
+                   TIMESTAMP(duty_date, time_start),
+                   INTERVAL 30 MINUTE
+               ) AS is_late
+        FROM duties
+        WHERE qr_token = ?
+    `;
     db.query(dutySql, [qr_token], (err, dutyRows) => {
         if (err) return res.status(500).json({ error: 'Database error' });
         if (dutyRows.length === 0)
@@ -440,30 +577,32 @@ exports.checkInToDuty = (req, res) => {
         const logMakeupAttendance = () => {
             logAttendanceNotification('attendance_makeup', `Makeup attendance recorded for duty "${duty.title || 'Duty'}" (duty_id=${duty.id}).`);
         };
-        const LATE_GRACE_MINUTES = 30;
-        const parseDutyStart = (dutyDate, dutyTime) => {
-            if (!dutyDate) return null;
-            if (!dutyTime) return new Date(`${dutyDate}T00:00:00`);
-            const isoCandidate = `${dutyDate}T${dutyTime}`;
-            const parsed = new Date(isoCandidate);
-            return Number.isNaN(parsed.getTime()) ? new Date(`${dutyDate}T00:00:00`) : parsed;
-        };
+        if (Boolean(duty.duty_ended)) {
+            return res.status(410).json({ error: 'Duty has ended. Contact staff to arrange a makeup duty.' });
+        }
 
-        // Step 2: Verify na member siya ng group na naka-assign sa duty na ito
+        // Step 2: Verify normal group membership or an approved one-duty makeup permission.
         const verifySql = `
-            SELECT 1
-            FROM duty_group_assignments dga
-            JOIN scholar_group_members m ON m.group_id = dga.group_id
-            WHERE dga.duty_id = ? AND m.scholar_id = ?
-            LIMIT 1
+            SELECT MAX(is_group_member) AS is_group_member, MAX(has_makeup_permission) AS has_makeup_permission
+            FROM (
+                SELECT 1 AS is_group_member, 0 AS has_makeup_permission
+                FROM duty_group_assignments dga
+                JOIN scholar_group_members m ON m.group_id = dga.group_id
+                WHERE dga.duty_id = ? AND m.scholar_id = ?
+                UNION ALL
+                SELECT 0 AS is_group_member, 1 AS has_makeup_permission
+                FROM duty_makeup_permissions p
+                WHERE p.makeup_duty_id = ? AND p.scholar_id = ?
+                  AND p.status = 'approved' AND p.used_at IS NULL
+            ) access_check
         `;
-        db.query(verifySql, [duty.id, scholar_id], (err, check) => {
+        db.query(verifySql, [duty.id, scholar_id, duty.id, scholar_id], (err, check) => {
             if (err) return res.status(500).json({ error: 'Database error' });
 
-            if (check.length === 0) {
-                // Hindi siya member ng naka-assign na group -- reject kahit valid ang QR
+            if (!check.length || (!check[0].is_group_member && !check[0].has_makeup_permission)) {
                 return res.status(403).json({ error: 'This duty is not assigned to your group.' });
             }
+            const permissionUsed = Boolean(check[0].has_makeup_permission && !check[0].is_group_member);
 
             // Step 3: Prevent duplicate check-in
             const dupSql = `SELECT id FROM duty_attendance WHERE duty_id = ? AND scholar_id = ?`;
@@ -484,10 +623,8 @@ exports.checkInToDuty = (req, res) => {
                     return res.status(410).json({ error: 'Makeup window for this duty has already closed.' });
                 }
 
-                const isMakeup = today !== dutyDateStr ? 1 : 0;
-                const dutyStart = parseDutyStart(duty.duty_date, duty.time_start);
-                const now = new Date();
-                const isLate = duty.time_start && dutyStart && now.getTime() > (dutyStart.getTime() + (LATE_GRACE_MINUTES * 60 * 1000));
+                const isMakeup = permissionUsed || today !== dutyDateStr ? 1 : 0;
+                const isLate = Boolean(duty.is_late);
                 const attendanceStatus = isLate ? 'late' : 'present';
 
                 // Step 5: Insert attendance
@@ -497,6 +634,14 @@ exports.checkInToDuty = (req, res) => {
                 `;
                 db.query(insertSql, [duty.id, scholar_id, attendanceStatus, isMakeup], (err, result) => {
                     if (err) return res.status(500).json({ error: 'Error recording attendance' });
+                    if (permissionUsed) {
+                        db.query(
+                            `UPDATE duty_makeup_permissions SET status = 'used', used_at = NOW()
+                             WHERE makeup_duty_id = ? AND scholar_id = ? AND status = 'approved' AND used_at IS NULL`,
+                            [duty.id, scholar_id],
+                            () => {}
+                        );
+                    }
                     if (isLate) logLateAttendance();
                     if (isMakeup) logMakeupAttendance();
                     res.status(201).json({
@@ -622,4 +767,87 @@ exports.exportMyData = async (req, res) => {
         console.error('Scholar data export error:', err);
         res.status(500).json({ error: 'Failed to generate your data export.' });
     }
+};
+
+exports.getMakeupOptions = (req, res) => {
+    const scholarId = req.user.scholar_id;
+    const sourceDutyId = req.params.source_duty_id;
+    db.query(`
+        SELECT COALESCE(da.status, 'absent') AS source_status, d.duty_date AS source_duty_date
+        FROM duties d
+        LEFT JOIN duty_attendance da ON da.duty_id = d.id AND da.scholar_id = ?
+        WHERE d.id = ? AND da.status IN ('absent', 'excused')
+        LIMIT 1
+    `, [scholarId, sourceDutyId], (sourceErr, sourceRows) => {
+        if (sourceErr) return res.status(500).json({ error: 'Error checking duty attendance' });
+        if (!sourceRows.length) return res.status(400).json({ error: 'Only absent or excused duties can request makeup' });
+
+        db.query(`
+            SELECT id, title, duty_date, time_start, time_end, location
+            FROM duties
+            WHERE duty_date > ? AND duty_date <= DATE_ADD(?, INTERVAL 14 DAY)
+              AND status <> 'cancelled'
+              AND id <> ?
+            ORDER BY duty_date ASC
+        `, [sourceRows[0].source_duty_date, sourceRows[0].source_duty_date, sourceDutyId], (err, rows) => {
+            if (err) return res.status(500).json({ error: 'Error fetching makeup duties' });
+            res.json({ source_status: sourceRows[0].source_status, options: rows });
+        });
+    });
+};
+
+exports.getMyMakeupRequests = (req, res) => {
+    db.query(`
+        SELECT p.id, p.source_duty_id, p.makeup_duty_id, p.reason, p.status,
+               source.title AS source_duty_title, source.duty_date AS source_duty_date,
+               target.title AS makeup_duty_title, target.duty_date AS makeup_duty_date
+        FROM duty_makeup_permissions p
+        JOIN duties source ON source.id = p.source_duty_id
+        JOIN duties target ON target.id = p.makeup_duty_id
+        WHERE p.scholar_id = ?
+        ORDER BY p.created_at DESC
+    `, [req.user.scholar_id], (err, rows) => {
+        if (err) return res.status(500).json({ error: 'Error fetching makeup requests' });
+        res.json(rows);
+    });
+};
+
+exports.requestMakeup = (req, res) => {
+    const scholarId = req.user.scholar_id;
+    const { source_duty_id, makeup_duty_id, reason } = req.body;
+    if (!source_duty_id || !makeup_duty_id) {
+        return res.status(400).json({ error: 'source_duty_id and makeup_duty_id are required' });
+    }
+
+    db.query(`
+        SELECT d.duty_date AS source_duty_date
+        FROM duties d
+        LEFT JOIN duty_attendance da ON da.duty_id = d.id AND da.scholar_id = ?
+        WHERE d.id = ? AND da.status IN ('absent', 'excused')
+        LIMIT 1
+    `, [scholarId, source_duty_id], (sourceErr, sourceRows) => {
+        if (sourceErr) return res.status(500).json({ error: 'Error checking source duty' });
+        if (!sourceRows.length) return res.status(400).json({ error: 'Only absent or excused duties can request makeup' });
+
+        db.query(`
+            SELECT id FROM duties
+            WHERE id = ? AND duty_date > ? AND duty_date <= DATE_ADD(?, INTERVAL 14 DAY)
+              AND status <> 'cancelled'
+            LIMIT 1
+        `, [makeup_duty_id, sourceRows[0].source_duty_date, sourceRows[0].source_duty_date], (targetErr, targetRows) => {
+            if (targetErr) return res.status(500).json({ error: 'Error checking makeup duty' });
+            if (!targetRows.length) return res.status(400).json({ error: 'Selected duty is not a valid makeup duty' });
+
+            db.query(`
+                INSERT INTO duty_makeup_permissions
+                    (scholar_id, source_duty_id, makeup_duty_id, reason, status)
+                VALUES (?, ?, ?, ?, 'pending')
+                ON DUPLICATE KEY UPDATE
+                    reason = VALUES(reason), status = 'pending', used_at = NULL
+            `, [scholarId, source_duty_id, makeup_duty_id, reason || null], (insertErr) => {
+                if (insertErr) return res.status(500).json({ error: 'Failed to submit makeup request' });
+                res.status(201).json({ message: 'Makeup request submitted for approval' });
+            });
+        });
+    });
 };

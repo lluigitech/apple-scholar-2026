@@ -6,12 +6,61 @@ CREATE TABLE IF NOT EXISTS users (
   password VARCHAR(255) NOT NULL,
   role ENUM('admin','scholar','staff','officer') NOT NULL DEFAULT 'scholar',
   year_level VARCHAR(64) DEFAULT NULL,
+  birth_date DATE DEFAULT NULL,
   age INT DEFAULT NULL,
+  phone VARCHAR(64) DEFAULT NULL,
   qr_code VARCHAR(255) DEFAULT NULL,
   status VARCHAR(32) DEFAULT 'active',
   must_change_password TINYINT DEFAULT 1,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS admin_preferences (
+  user_id INT PRIMARY KEY,
+  settings_json LONGTEXT NOT NULL,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS admin_system_settings (
+  id TINYINT PRIMARY KEY,
+  scheduled_backups BOOLEAN NOT NULL DEFAULT TRUE,
+  backup_interval_hours INT NOT NULL DEFAULT 24,
+  backup_retention_count INT NOT NULL DEFAULT 14,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO admin_system_settings (id) VALUES (1)
+ON DUPLICATE KEY UPDATE id = id;
+
+CREATE TABLE IF NOT EXISTS privacy_settings (
+  id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+  role_based_access TINYINT(1) NOT NULL DEFAULT 1,
+  document_protection TINYINT(1) NOT NULL DEFAULT 1,
+  access_logging TINYINT(1) NOT NULL DEFAULT 1,
+  privacy_monitoring TINYINT(1) NOT NULL DEFAULT 1,
+  updated_by INT DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO privacy_settings (id) VALUES (1)
+ON DUPLICATE KEY UPDATE id = id;
+
+CREATE TABLE IF NOT EXISTS privacy_access_logs (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+  user_id INT DEFAULT NULL,
+  user_role VARCHAR(32) NOT NULL,
+  action VARCHAR(64) NOT NULL,
+  resource_type VARCHAR(64) NOT NULL,
+  resource_id VARCHAR(255) DEFAULT NULL,
+  status ENUM('allowed', 'denied') NOT NULL,
+  ip_address VARCHAR(64) DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_privacy_logs_created (created_at),
+  INDEX idx_privacy_logs_status (status),
+  INDEX idx_privacy_logs_action (action),
+  INDEX idx_privacy_logs_role (user_role)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS announcements (
@@ -37,28 +86,69 @@ CREATE TABLE IF NOT EXISTS submissions (
   staff_comment TEXT DEFAULT NULL,
   officer_comment TEXT DEFAULT NULL,
   generated_pdf_path VARCHAR(1000) DEFAULT NULL,
+  sentiment_score DECIMAL(7,2) DEFAULT NULL,
+  sentiment_label VARCHAR(64) DEFAULT NULL,
+  content_score INT DEFAULT NULL,
+  content_breakdown TEXT DEFAULT NULL,
+  quality_label VARCHAR(64) DEFAULT NULL,
+  needs_followup TINYINT(1) NOT NULL DEFAULT 0,
   submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   reviewed_at TIMESTAMP NULL DEFAULT NULL,
+  approved_at TIMESTAMP NULL DEFAULT NULL,
+  archive_at TIMESTAMP NULL DEFAULT NULL,
+  archived_at TIMESTAMP NULL DEFAULT NULL,
+  returned_at TIMESTAMP NULL DEFAULT NULL,
+  finalized_at DATETIME DEFAULT NULL,
+  export_available_at DATETIME DEFAULT NULL,
+  finalization_batch_id VARCHAR(64) DEFAULT NULL,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-CREATE TABLE IF NOT EXISTS submission_media (
+CREATE TABLE IF NOT EXISTS documents (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  scholar_id VARCHAR(64) NOT NULL,
+  category VARCHAR(64) NOT NULL,
+  file_name VARCHAR(255) NOT NULL,
+  file_path VARCHAR(1000) DEFAULT NULL,
+  file_size BIGINT UNSIGNED DEFAULT NULL,
+  mime_type VARCHAR(128) DEFAULT NULL,
+  status ENUM('Pending', 'Approved', 'Rejected') NOT NULL DEFAULT 'Pending',
+  uploaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  retention_until DATETIME NOT NULL,
+  is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+  archived_at DATETIME DEFAULT NULL,
+  source_submission_id INT DEFAULT NULL,
+  INDEX idx_documents_scholar (scholar_id),
+  INDEX idx_documents_archive (is_archived, retention_until),
+  INDEX idx_documents_category (category)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-  CREATE TABLE IF NOT EXISTS file_assets (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    scholar_id VARCHAR(64) NOT NULL,
-    file_url VARCHAR(1000) NOT NULL,
-    public_id VARCHAR(500) NOT NULL,
-    resource_type VARCHAR(32) NOT NULL DEFAULT 'image',
-    file_format VARCHAR(16) DEFAULT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uq_file_asset_url (file_url(255)),
-    INDEX idx_file_assets_scholar (scholar_id)
-  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS file_assets (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  scholar_id VARCHAR(64) NOT NULL,
+  file_url VARCHAR(1000) NOT NULL,
+  public_id VARCHAR(500) NOT NULL,
+  resource_type VARCHAR(32) NOT NULL DEFAULT 'image',
+  file_format VARCHAR(16) DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_file_asset_url (file_url(255)),
+  INDEX idx_file_assets_scholar (scholar_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS submission_media (
   id INT AUTO_INCREMENT PRIMARY KEY,
   submission_id INT NOT NULL,
   file_path VARCHAR(500) NOT NULL,
   description TEXT DEFAULT NULL,
+  approved_for_donor TINYINT(1) NOT NULL DEFAULT 0,
+  approved_at TIMESTAMP NULL DEFAULT NULL,
+  approved_by INT DEFAULT NULL,
+  photo_path VARCHAR(1000) DEFAULT NULL,
+  consent BOOLEAN NOT NULL DEFAULT FALSE,
+  uploaded_at TIMESTAMP NULL DEFAULT NULL,
+  retention_until DATETIME NULL,
+  is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+  archived_at DATETIME DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -74,6 +164,9 @@ CREATE TABLE IF NOT EXISTS grades (
   proof_path VARCHAR(500) DEFAULT NULL,
   verification_status VARCHAR(64) DEFAULT 'pending',
   officer_comment TEXT DEFAULT NULL,
+  finalized_at DATETIME DEFAULT NULL,
+  export_available_at DATETIME DEFAULT NULL,
+  finalization_batch_id VARCHAR(64) DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -146,6 +239,8 @@ CREATE TABLE IF NOT EXISTS notification_logs (
   type VARCHAR(64) DEFAULT NULL,
   status VARCHAR(32) DEFAULT NULL,
   detail TEXT,
+  is_read TINYINT(1) NOT NULL DEFAULT 0,
+  read_at TIMESTAMP NULL DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -235,6 +330,20 @@ CREATE TABLE IF NOT EXISTS duty_attendance (
   is_makeup TINYINT DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS duty_makeup_permissions (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  scholar_id VARCHAR(64) NOT NULL,
+  source_duty_id INT NOT NULL,
+  makeup_duty_id INT NOT NULL,
+  reason TEXT DEFAULT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'approved',
+  approved_by INT DEFAULT NULL,
+  approved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  used_at TIMESTAMP NULL DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_makeup_permission (scholar_id, makeup_duty_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS staff_attendance (
   id INT AUTO_INCREMENT PRIMARY KEY,
   staff_id INT DEFAULT NULL,
@@ -292,4 +401,14 @@ CREATE TABLE IF NOT EXISTS officer_year_level_assignments (
   assigned_by INT DEFAULT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY unique_officer_year_level (officer_id, year_level)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS officer_notification_preferences (
+  officer_id INT PRIMARY KEY,
+  new_submissions BOOLEAN NOT NULL DEFAULT TRUE,
+  pending_reviews BOOLEAN NOT NULL DEFAULT TRUE,
+  deadlines BOOLEAN NOT NULL DEFAULT TRUE,
+  returned_submissions BOOLEAN NOT NULL DEFAULT TRUE,
+  announcements BOOLEAN NOT NULL DEFAULT TRUE,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

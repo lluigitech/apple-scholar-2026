@@ -1,19 +1,35 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import { buildScholarChecklist } from '../../utils/scholarChecklist';
 import {
   Calendar, Check, X as XIcon, Clock3, FileWarning,
+  ClipboardList, CheckCircle2, XCircle, Circle,
+  UserRound, ArrowUpRight, PartyPopper,
 } from 'lucide-react';
 
-const API_BASE = 'http://localhost:5000/api';
+const RAW_API_BASE = (import.meta.env?.VITE_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
+const API_BASE = RAW_API_BASE.endsWith('/api') ? RAW_API_BASE : `${RAW_API_BASE}/api`;
 const SUBMISSION_API = `${API_BASE}/submission`;
 
-// ── Token system — shared with ScholarProfile / DutyParticipation ──
-const MAROON = '#7f2d3a';
-const MAROON_DEEP = '#4f1620';
-const GOLD = '#b98b4e';
-const IVORY = '#FBF7F2';
+// ── Scholar Portal design system ──
+// Same tokens as the rest of the Scholar module (dashboard, duty &
+// participation, etc.) so this page reads as one continuous workspace.
+const BG = '#F7F4EE';
+const SURFACE = '#FFFDF9';
+const BORDER = '#E7D8C7';
+const PRIMARY = '#6D2140';
+const PRIMARY_DARK = '#4A1730';
+const BRONZE = '#A9784E';
+const SUCCESS = '#6B8F71';
+const WARNING = '#C08A3E';
+const DANGER = '#C0473F';
 const INK = '#241512';
+const MUTED = '#8A7A68';
+const RADIUS = 18;
+
+const display = { fontFamily: "'Playfair Display', Georgia, serif" };
+const body = { fontFamily: "'Inter', -apple-system, 'Segoe UI', sans-serif" };
 
 const authHeader = () => {
   const token = localStorage.getItem('token');
@@ -23,13 +39,21 @@ const authHeader = () => {
 // Matches TaskAssignmentBoard.jsx's STATUS_BADGE styling/labels so the
 // scholar's checklist and the officer's task board tell the same story.
 const badgeForStatus = (status) => {
-  if (status === 'approved') return { text: 'Accepted', color: '#15803d', bg: '#EAF3EC' };
-  if (status === 'submitted') return { text: 'Submitted', color: '#92400e', bg: '#FBF0DE' };
-  if (status === 'rejected') return { text: 'Returned for Revision', color: '#991b1b', bg: '#FBE9E9' };
-  if (status === 'completed') return { text: 'Completed', color: '#15803d', bg: '#EAF3EC' };
-  if (status === 'missed') return { text: 'Missed', color: '#991b1b', bg: '#FBE9E9' };
-  if (status === 'pending_review') return { text: 'Pending Review', color: '#92400e', bg: '#FBF0DE' };
-  return { text: 'Pending', color: '#92400e', bg: '#FBF0DE' };
+  if (status === 'approved') return { text: 'Accepted', color: SUCCESS };
+  if (status === 'submitted') return { text: 'Pending Review', color: WARNING };
+  if (status === 'rejected') return { text: 'Returned for Revision', color: DANGER };
+  if (status === 'completed') return { text: 'Completed', color: SUCCESS };
+  if (status === 'missed' || status === 'missing') return { text: status === 'missing' ? 'Missing' : 'Missed', color: DANGER };
+  if (status === 'pending_review') return { text: 'Pending Review', color: WARNING };
+  return { text: 'Pending', color: WARNING };
+};
+
+// Icon that pairs with badgeForStatus's color, for the task card's status glyph.
+const getStatusIcon = (status) => {
+  if (status === 'approved' || status === 'completed') return { Icon: CheckCircle2, color: SUCCESS };
+  if (status === 'rejected' || status === 'missed' || status === 'missing') return { Icon: XCircle, color: DANGER };
+  if (status === 'submitted' || status === 'pending_review') return { Icon: Clock3, color: WARNING };
+  return { Icon: Circle, color: MUTED };
 };
 
 const formatDate = (value) => {
@@ -41,81 +65,20 @@ const formatDate = (value) => {
   }
 };
 
-// A portal task's "type" (e.g. "Monthly Report") maps to a specific
-// submission_type row in the `submissions` table. Each type needs to be
-// checked independently - otherwise submitting one type (e.g. COR) makes
-// an already-submitted different type (e.g. Monthly Report) look "undone"
-// again, since they'd both be judged off a single "latest submission overall".
-const PORTAL_TYPE_TO_SUBMISSION_TYPE = {
-  'Monthly Report': 'letter',
-  'Report Card': 'report_card',
-  'COR Upload': 'cor',
-};
+// ─── KPI card ─────────────────────────────────────────────────────────────
+const KpiCard = ({ icon: Icon, label, value, description, accent = PRIMARY }) => (
+  <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '18px 20px' }}>
+    <div className="flex items-center justify-center" style={{ width: 34, height: 34, borderRadius: 10, background: `${accent}14` }}>
+      <Icon size={16} style={{ color: accent }} />
+    </div>
+    <p style={{ ...display, fontSize: '1.7rem', fontWeight: 600, color: INK, marginTop: 14 }}>{value}</p>
+    <p style={{ ...body, fontSize: '0.78rem', fontWeight: 600, color: INK, marginTop: 2 }}>{label}</p>
+    <p style={{ ...body, fontSize: '0.72rem', color: MUTED, marginTop: 2 }}>{description}</p>
+  </div>
+);
 
-// Returns the most recent submission (by submitted_at) of a specific
-// submission_type from the scholar's full history, or null if none exists.
-const getLatestSubmissionOfType = (history, submissionType, taskCreatedAt) => {
-  const taskTime = taskCreatedAt ? new Date(taskCreatedAt).getTime() : null;
-  const matches = (history || []).filter((h) => {
-    if (h.submission_type !== submissionType) return false;
-    return taskTime === null || new Date(h.submitted_at || 0).getTime() >= taskTime;
-  });
-  if (matches.length === 0) return null;
-  return matches
-    .slice()
-    .sort((a, b) => new Date(b.submitted_at || 0) - new Date(a.submitted_at || 0))[0];
-};
-
-const getLatestGradeSubmission = (grades, taskCreatedAt) => {
-  if (!Array.isArray(grades)) return null;
-  const taskTime = taskCreatedAt ? new Date(taskCreatedAt).getTime() : null;
-  return grades
-    .filter((grade) => taskTime === null || new Date(grade.submitted_at || 0).getTime() >= taskTime)
-    .slice()
-    .sort((a, b) => new Date(b.submitted_at || 0) - new Date(a.submitted_at || 0))[0];
-};
-
-// ── The signature element: a checkmark that reads as a wax-seal / review
-// stamp for approved items — this is a review-and-approve workflow, so the
-// "stamped" idiom fits the subject rather than decorating it.
-const SealCheckbox = ({ status }) => {
-  if (status === 'completed' || status === 'approved') {
-    return (
-      <div
-        className="relative w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
-        style={{ background: '#EAF3EC', border: '1.5px solid #15803d55' }}
-      >
-        <Check size={15} strokeWidth={3} style={{ color: '#15803d' }} />
-      </div>
-    );
-  }
-  if (status === 'rejected' || status === 'missed') {
-    return (
-      <div
-        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
-        style={{ background: '#FBE9E9', border: '1.5px solid #991b1b55' }}
-      >
-        <XIcon size={14} strokeWidth={3} style={{ color: '#991b1b' }} />
-      </div>
-    );
-  }
-  if (status === 'submitted' || status === 'pending_review') {
-    return (
-      <div
-        className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0"
-        style={{ background: '#FBF0DE', border: '1.5px solid #92400e55' }}
-      >
-        <Clock3 size={14} style={{ color: '#92400e' }} />
-      </div>
-    );
-  }
-  return (
-    <div
-      className="w-8 h-8 rounded-full flex-shrink-0"
-      style={{ border: `1.5px solid #d8c9c2` }}
-    />
-  );
-};
+const KpiSkeleton = () => <div className="animate-pulse" style={{ background: `${BORDER}88`, height: 112, borderRadius: RADIUS }} />;
+const TaskSkeleton = () => <div className="animate-pulse" style={{ background: `${BORDER}88`, height: 96, borderRadius: RADIUS }} />;
 
 const RequirementsChecklist = () => {
   const navigate = useNavigate();
@@ -186,78 +149,23 @@ const RequirementsChecklist = () => {
     fetchData();
   }, [scholarId]);
 
-  const dutyTasks = duties.map((d) => ({
-    id: `duty-${d.id}`,
-    title: d.title,
-    type: 'Duty Participation',
-    description: d.description || `Attend duty at ${d.location || 'assigned location'}`,
-    Icon: Calendar,
-    done: d.computed_status === 'completed',
-    route: '/scholar/duties',
-    status: d.computed_status,
-    dueDate: d.duty_date,
-    staffComment: null,
-  }));
-
-  // Map portal tasks fetched from backend into scholar-visible tasks.
-  // These are the only tasks created by Officer/Admin/Staff.
-  // "Completed" only when the scholar's latest submission FOR THAT SPECIFIC
-  // TYPE has actually been Accepted by the officer - matches
-  // TaskAssignmentBoard.jsx's isApprovedForScholar logic, so both pages agree.
-  const mappedPortalTasks = Array.isArray(portalTasks)
-    ? portalTasks
-        .filter((t) => t && (t.source === 'manual' || (typeof t.id === 'number' || typeof t.id === 'string')))
-        .map((t) => {
-          const submissionType = PORTAL_TYPE_TO_SUBMISSION_TYPE[t.type];
-          const latest = submissionType
-            ? submissionType === 'report_card'
-              ? getLatestGradeSubmission(gradesHistory, t.created_at)
-              : getLatestSubmissionOfType(history, submissionType, t.created_at)
-            : null;
-
-          const rawStatus = latest?.status || null; // 'approved' | 'pending' | 'rejected' | null
-          const done = rawStatus === 'approved';
-          // 'submitted' means the scholar already uploaded something and is
-          // waiting for officer review; it is distinct from 'pending' (not
-          // submitted yet) and from 'completed' (approved by officer).
-          const displayStatus = done
-            ? 'completed'
-            : rawStatus === 'rejected'
-              ? 'rejected'
-              : latest
-                ? 'submitted'
-                : 'pending';
-
-          return {
-            id: `portal-${t.id}`,
-            title: t.title || 'Task',
-            type: t.type || 'Task',
-            description: t.instructions || '',
-            createdByName: t.created_by_name || t.created_by || 'System',
-            createdByRole: t.created_by_role || '',
-            createdAt: t.created_at || '',
-            Icon: null,
-            done,
-            route: t.route || '/scholar/submission',
-            status: displayStatus,
-            dueDate: t.due_date || null,
-            staffComment: rawStatus === 'rejected' ? (latest?.staff_comment || null) : null,
-          };
-        })
-    : [];
+  const checklistItems = buildScholarChecklist({ duties, history, grades: gradesHistory, tasks: portalTasks });
+  const dutyTasks = checklistItems.filter((task) => task.id.startsWith('duty-'));
+  const mappedPortalTasks = checklistItems.filter((task) => task.id.startsWith('portal-'));
 
   const pendingTasks = [
     ...dutyTasks.filter((task) => task.status !== 'completed' && task.status !== 'missed'),
-    ...mappedPortalTasks.filter((task) => !task.done),
+    ...mappedPortalTasks.filter((task) => !task.done && task.status !== 'missing' && task.status !== 'missed'),
   ];
 
   const missedTasks = [
     ...dutyTasks.filter((task) => task.status === 'missed'),
+    ...mappedPortalTasks.filter((task) => task.status === 'missing' || task.status === 'missed'),
   ];
 
   const completedTasks = [
     ...dutyTasks.filter((task) => task.status === 'completed'),
-    ...mappedPortalTasks.filter((task) => task.done),
+    ...mappedPortalTasks.filter((task) => task.done || task.status === 'completed'),
   ];
 
   const showNoTasks = !pendingTasks.length && !missedTasks.length && !completedTasks.length;
@@ -269,163 +177,167 @@ const RequirementsChecklist = () => {
     navigate(route);
   };
 
-  const serif = { fontFamily: "'Playfair Display', serif" };
-  const sans = { fontFamily: "'DM Sans', sans-serif" };
+  const activeList = activeTab === 'pending' ? pendingTasks : activeTab === 'missed' ? missedTasks : completedTasks;
+
+  const segments = [
+    { key: 'pending', label: 'Pending', count: pendingTasks.length },
+    { key: 'completed', label: 'Completed', count: completedTasks.length },
+    { key: 'missed', label: 'Missed', count: missedTasks.length },
+  ];
 
   return (
-    <div style={{ ...sans, background: IVORY, minHeight: '100vh' }}>
+    <div style={{ ...body, background: BG, minHeight: '100vh' }}>
+      <div className="w-full px-4 sm:px-6 lg:p-8">
 
-      {/* ── Hero band ─────────────────────────────────────── */}
-      <div
-        className="relative overflow-hidden px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 pb-14 sm:pb-16"
-        style={{ background: `linear-gradient(135deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)` }}
-      >
-        <svg
-          className="absolute -right-8 -top-10 w-52 h-52 sm:-right-6 sm:-top-8 sm:w-64 sm:h-64 opacity-[0.14] pointer-events-none"
-          viewBox="0 0 200 200"
-          fill="none"
-        >
-          <path
-            d="M100 62c-6-14-20-24-36-24-4 0-8 1-8 1s-2 10 4 22c5 10 15 18 26 19-4 12-6 26-6 38 0 34 18 62 40 62 8 0 12-4 20-4s12 4 20 4c22 0 40-30 40-64 0-24-12-42-30-42-8 0-14 4-20 4s-10-3-16-6c2-11 8-20 16-25-2-1-6-2-10-2-16 0-30 8-40 17z"
-            fill={GOLD}
-          />
-          <path d="M100 62c2-16 10-30 22-38" stroke={GOLD} strokeWidth="6" strokeLinecap="round" />
-        </svg>
+        {/* ── Personal header ── */}
+        <div className="flex items-start justify-between gap-4 flex-wrap" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '22px 26px', marginBottom: 20 }}>
+          <div>
+            <p style={{ ...body, fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.08em', color: BRONZE }}>SCHOLAR PORTAL</p>
+            <h1 style={{ ...display, fontSize: '1.7rem', fontWeight: 600, color: INK, marginTop: 4 }}>My Tasks &amp; Compliance</h1>
+            <p style={{ ...body, fontSize: '0.84rem', color: MUTED, marginTop: 6, maxWidth: 480 }}>
+              Complete assigned requirements, submit documents, and monitor your compliance progress.
+            </p>
+          </div>
+          <span style={{ ...body, fontSize: '0.76rem', fontWeight: 600, color: PRIMARY, background: `${PRIMARY}12`, border: `1px solid ${BORDER}`, borderRadius: 999, padding: '7px 16px', flexShrink: 0 }}>
+            1st Semester, AY 2026–2027
+          </span>
+        </div>
 
-        <p className="relative text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.2em] sm:tracking-[0.25em] mb-2" style={{ color: GOLD }}>
-          Scholar Portal
-        </p>
-        <h1 className="relative text-2xl sm:text-3xl md:text-4xl font-bold text-white" style={serif}>My Tasks &amp; Checklist</h1>
-        <p className="relative text-xs mt-2 max-w-md" style={{ color: '#e9c9a8' }}>
-          See your assigned duties and tasks from your Officer/Admin, all in one place.
-        </p>
-      </div>
-
-      <div className="px-4 sm:px-6 lg:p-8 lg:pt-0">
+        <div className="flex items-center gap-2 flex-wrap" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '10px 14px', marginBottom: 20 }}>
+          <span style={{ ...body, fontSize: '0.72rem', fontWeight: 700, color: INK, marginRight: 4 }}>Status guide:</span>
+          {[
+            ['Pending', WARNING],
+            ['Pending Review', WARNING],
+            ['Completed', SUCCESS],
+            ['Returned for Revision', DANGER],
+          ].map(([label, color]) => (
+            <span key={label} style={{ ...body, fontSize: '0.7rem', fontWeight: 600, color, background: `${color}14`, border: `1px solid ${color}30`, borderRadius: 999, padding: '5px 10px' }}>{label}</span>
+          ))}
+        </div>
 
         {loading ? (
-          <div className="relative -mt-8 sm:-mt-10 grid gap-4">
-            <div className="h-20 rounded-2xl bg-white/70 animate-pulse" />
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              {Array.from({ length: 3 }).map((_, index) => (
-                <div key={index} className="h-24 rounded-2xl bg-white/70 animate-pulse" />
-              ))}
+          <div className="space-y-5">
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              {Array.from({ length: 4 }).map((_, i) => <KpiSkeleton key={i} />)}
+            </div>
+            <div className="space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => <TaskSkeleton key={i} />)}
             </div>
           </div>
         ) : (
           <>
             {error && (
-              <div className="relative -mt-8 sm:-mt-10 mb-6 p-4 rounded-2xl" style={{ background: '#FBE9E9', color: '#991b1b' }}>
+              <div className="mb-5" style={{ padding: '14px 18px', borderRadius: RADIUS, background: `${DANGER}0d`, color: DANGER, ...body, fontSize: '0.84rem', fontWeight: 600, border: `1px solid ${DANGER}33` }}>
                 {error}
               </div>
             )}
 
-            {/* ── Docket strip — floats over the hero, a filing-tab read ── */}
-            <div
-              className="relative -mt-8 sm:-mt-10 mb-8 sm:mb-10 rounded-2xl bg-white overflow-hidden"
-              style={{ boxShadow: '0 12px 30px -12px rgba(79,22,32,0.25)' }}
-            >
-              <div className="grid grid-cols-2 sm:grid-cols-4 divide-x divide-y sm:divide-y-0 divide-slate-100">
-                {[
-                  { label: 'Assigned Tasks', value: mappedPortalTasks.length, note: 'from Officer/Admin' },
-                  { label: 'Completed', value: completedTasks.length, note: 'duties + tasks accepted' },
-                  { label: 'Pending Duties', value: pendingDutyCount, note: 'assigned this month' },
-                  { label: 'Missed Duties', value: missedDutyCount, note: 'needs attention' },
-                ].map((s) => (
-                  <div key={s.label} className="p-4 sm:p-5">
-                    <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest text-slate-400">{s.label}</p>
-                    <p className="text-2xl sm:text-3xl font-bold mt-1.5" style={{ ...serif, color: MAROON }}>{s.value}</p>
-                    <p className="text-[9px] sm:text-[10px] uppercase tracking-wider mt-1" style={{ color: '#c9b3b8' }}>{s.note}</p>
-                  </div>
-                ))}
-              </div>
+            {/* ── Compliance overview: KPI cards ── */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4" style={{ marginBottom: 20 }}>
+              <KpiCard icon={ClipboardList} label="Assigned Tasks" value={mappedPortalTasks.length} description="from Officer/Admin" accent={PRIMARY} />
+              <KpiCard icon={CheckCircle2} label="Completed" value={completedTasks.length} description="duties + tasks accepted" accent={SUCCESS} />
+              <KpiCard icon={Clock3} label="Pending" value={pendingTasks.length} description={`${pendingDutyCount} duties awaiting`} accent={WARNING} />
+              <KpiCard icon={XCircle} label="Missed" value={missedTasks.length} description={`${missedDutyCount} duties missed`} accent={DANGER} />
             </div>
 
-            {/* ── Checklist ledger ─────────────────────────────── */}
-            <section className="rounded-2xl bg-white p-5 sm:p-6 pb-8" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)' }}>
-              <div className="flex items-center justify-between gap-3 mb-5 flex-wrap">
-                <div>
-                  <h2 className="text-lg font-bold" style={{ ...serif, color: INK }}>Tasks</h2>
-                  <p className="text-xs text-slate-400 mt-1">Real duties and tasks assigned by your Officer/Admin.</p>
+            {/* ── Task filter: segmented control ── */}
+            <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 16 }}>
+              {segments.map((seg) => {
+                const isActive = activeTab === seg.key;
+                return (
+                  <button
+                    key={seg.key}
+                    onClick={() => setActiveTab(seg.key)}
+                    style={{
+                      ...body, fontSize: '0.8rem', fontWeight: 600, borderRadius: 999,
+                      padding: '9px 18px', cursor: 'pointer',
+                      border: `1px solid ${isActive ? PRIMARY : BORDER}`,
+                      background: isActive ? PRIMARY : SURFACE,
+                      color: isActive ? '#fff' : INK,
+                      transition: 'background 0.15s ease',
+                    }}
+                  >
+                    {seg.label} ({seg.count})
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* ── Task registry ── */}
+            {showNoTasks ? (
+              <div className="text-center" style={{ border: `1px dashed ${BORDER}`, background: SURFACE, borderRadius: RADIUS, padding: '64px 20px' }}>
+                <div className="mx-auto flex items-center justify-center" style={{ width: 52, height: 52, borderRadius: 16, background: `${BRONZE}14`, marginBottom: 16 }}>
+                  <FileWarning size={22} style={{ color: BRONZE }} />
                 </div>
-                {/* underline tabs — quieter than a filled pill toggle */}
-                <div className="flex items-center gap-5 border-b" style={{ borderColor: '#f0e6e0' }}>
-                  {[
-                    { key: 'pending', label: `Pending (${pendingTasks.length})` },
-                    { key: 'missed', label: `Missed (${missedTasks.length})` },
-                    { key: 'completed', label: `Completed (${completedTasks.length})` },
-                  ].map((tab) => (
-                    <button
-                      key={tab.key}
-                      onClick={() => setActiveTab(tab.key)}
-                      className="pb-2.5 text-xs font-bold uppercase tracking-wider transition-colors"
-                      style={{
-                        color: activeTab === tab.key ? MAROON : '#c9b3b8',
-                        borderBottom: activeTab === tab.key ? `2px solid ${MAROON}` : '2px solid transparent',
-                      }}
-                    >
-                      {tab.label}
-                    </button>
-                  ))}
-                </div>
+                <p style={{ ...display, fontSize: '1.05rem', fontWeight: 600, color: INK }}>No tasks found yet</p>
+                <p style={{ ...body, fontSize: '0.8rem', color: MUTED, marginTop: 4 }}>Check back once your Officer/Admin assigns a duty or task.</p>
               </div>
-
-              {showNoTasks ? (
-                <div className="rounded-2xl p-8 text-center" style={{ background: IVORY, color: '#c9b3b8' }}>
-                  <FileWarning size={28} className="mx-auto mb-2" style={{ color: '#e9d9dc' }} />
-                  No tasks found yet. Check back once your Officer/Admin assigns a duty or task.
+            ) : activeList.length === 0 ? (
+              <div className="text-center" style={{ border: `1px dashed ${BORDER}`, background: SURFACE, borderRadius: RADIUS, padding: '56px 20px' }}>
+                <div className="mx-auto flex items-center justify-center" style={{ width: 52, height: 52, borderRadius: 16, background: `${SUCCESS}14`, marginBottom: 16 }}>
+                  <PartyPopper size={22} style={{ color: SUCCESS }} />
                 </div>
-              ) : (
-                <div className="divide-y" style={{ borderColor: '#f5eee9' }}>
-                  {(activeTab === 'pending' ? pendingTasks : activeTab === 'missed' ? missedTasks : completedTasks).map((task) => {
-                    const badge = badgeForStatus(task.status);
-                    return (
-                      <div key={task.id} className="flex items-start gap-4 py-4 sm:py-5 first:pt-0 last:pb-0">
-                        <SealCheckbox status={task.status} />
-
-                        <div className="flex-1 min-w-0">
-                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-                            <div className="min-w-0">
-                              <p className="font-semibold text-sm" style={{ color: INK }}>{task.title}</p>
-                              <p className="text-[10px] font-bold uppercase tracking-wider mt-0.5" style={{ color: '#c9a9b0' }}>{task.type}</p>
-                            </div>
-                            <span
-                              className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full flex-shrink-0"
-                              style={{ color: badge.color, background: badge.bg }}
-                            >
-                              {badge.text}
-                            </span>
+                <p style={{ ...display, fontSize: '1.05rem', fontWeight: 600, color: INK }}>You're all caught up!</p>
+                <p style={{ ...body, fontSize: '0.8rem', color: MUTED, marginTop: 4 }}>No pending requirements at the moment.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {activeList.map((task) => {
+                  const badge = badgeForStatus(task.status);
+                  const { Icon: StatusIcon, color: statusColor } = getStatusIcon(task.status);
+                  return (
+                    <div key={task.id} style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '18px 22px' }}>
+                      <div className="flex items-start justify-between gap-5 flex-wrap">
+                        <div className="flex items-start gap-3 flex-1 min-w-[220px]">
+                          <div className="flex items-center justify-center flex-shrink-0" style={{ width: 34, height: 34, borderRadius: 10, background: `${statusColor}14`, marginTop: 2 }}>
+                            <StatusIcon size={16} style={{ color: statusColor }} />
                           </div>
-                          {task.description && (
-                            <p className="text-xs text-slate-400 mt-2 leading-relaxed">{task.description}</p>
-                          )}
-                          <div className="flex items-center gap-4 mt-2.5 flex-wrap">
-                            <p className="text-[10px]" style={{ color: '#c9b3b8' }}>
-                              Created by {task.createdByName || 'System'}{task.createdByRole ? ` (${task.createdByRole})` : ''}
-                            </p>
-                            {task.dueDate && (
-                              <p className="text-[10px]" style={{ color: '#c9b3b8' }}>Due {formatDate(task.dueDate)}</p>
+                          <div className="min-w-0">
+                            <p style={{ ...body, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.05em', color: MUTED }}>{task.type.toUpperCase()}</p>
+                            <h4 style={{ ...display, fontSize: '1.05rem', fontWeight: 600, color: INK, marginTop: 2 }}>{task.title}</h4>
+                            {task.description && (
+                              <p style={{ ...body, fontSize: '0.8rem', color: MUTED, marginTop: 4, lineHeight: 1.5 }}>{task.description}</p>
                             )}
+                            {task.staffComment && (
+                              <p style={{ marginTop: 10, ...body, fontSize: '0.78rem', color: DANGER, background: `${DANGER}0d`, border: `1px solid ${DANGER}22`, padding: '9px 13px', borderRadius: 12 }}>
+                                Officer feedback: {task.staffComment}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                          <span style={{ ...body, fontSize: '0.76rem', fontWeight: 600, color: badge.color, background: `${badge.color}14`, borderRadius: 999, padding: '4px 12px' }}>
+                            {badge.text}
+                          </span>
+                          {task.dueDate && (
+                            <p style={{ ...body, fontSize: '0.74rem', color: MUTED }}>Due {formatDate(task.dueDate)}</p>
+                          )}
+                          {(task.createdByName) && (
+                            <p className="flex items-center gap-1" style={{ ...body, fontSize: '0.74rem', color: MUTED }}>
+                              <UserRound size={11} />
+                              {task.createdByName}{task.createdByRole ? ` (${task.createdByRole})` : ''}
+                            </p>
+                          )}
+                          {task.route && !task.done && task.status !== 'completed' && (
+                            (task.status !== 'missed' && task.status !== 'missing') || task.type === 'Duty Participation'
+                          ) && (
                             <button
                               onClick={() => handleNavigate(task.route)}
-                              className="text-[10px] font-bold uppercase tracking-wider pb-0.5 transition-colors"
-                              style={{ color: MAROON, borderBottom: `1px solid ${MAROON}66` }}
+                              className="flex items-center gap-1.5 hover:opacity-90 transition-opacity"
+                              style={{ ...body, fontSize: '0.78rem', fontWeight: 600, color: '#fff', background: `linear-gradient(135deg, ${PRIMARY} 0%, ${PRIMARY_DARK} 100%)`, border: 'none', borderRadius: 10, padding: '8px 16px', cursor: 'pointer', marginTop: 2 }}
                             >
-                              Open →
+                              Open Task
+                              <ArrowUpRight size={13} />
                             </button>
-                          </div>
-                          {task.staffComment && (
-                            <p className="mt-2.5 text-[11px] italic px-3 py-2 rounded-lg" style={{ color: '#991b1b', background: '#FBE9E9' }}>
-                              Officer feedback: "{task.staffComment}"
-                            </p>
                           )}
                         </div>
                       </div>
-                    );
-                  })}
-                </div>
-              )}
-            </section>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </>
         )}
       </div>

@@ -1,18 +1,31 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Megaphone, Clock, Search, AlertCircle, AlertTriangle, Info, ChevronDown } from 'lucide-react';
+import { Megaphone, Clock3, Search, AlertCircle, AlertTriangle, Info, ChevronDown, UserRound } from 'lucide-react';
 
-// ── Token system — shared across the Scholar Portal ──
-const MAROON = '#7f2d3a';
-const MAROON_DEEP = '#4f1620';
-const GOLD = '#b98b4e';
-const IVORY = '#FBF7F2';
+// ── Scholar Portal design system ──
+// Same tokens as the rest of the Scholar module (dashboard, duty &
+// participation, tasks & compliance) so this page reads as one continuous
+// workspace rather than a separate "Gazette" experience.
+const BG = '#F7F4EE';
+const SURFACE = '#FFFDF9';
+const BORDER = '#E7D8C7';
+const PRIMARY = '#6D2140';
+const PRIMARY_DARK = '#4A1730';
+const BRONZE = '#A9784E';
+const SUCCESS = '#6B8F71';
+const WARNING = '#C08A3E';
+const DANGER = '#C0473F';
 const INK = '#241512';
+const MUTED = '#8A7A68';
+const RADIUS = 18;
+
+const display = { fontFamily: "'Playfair Display', Georgia, serif" };
+const body = { fontFamily: "'Inter', -apple-system, 'Segoe UI', sans-serif" };
 
 const PRIORITY_CONFIG = {
-    critical:  { bg: '#FBE9E9', text: '#991b1b', pin: '#991b1b', label: 'Critical'  },
-    important: { bg: '#FBF0DE', text: '#92400e', pin: '#92400e', label: 'Important' },
-    info:      { bg: '#F6EFE1', text: '#8a6a3a', pin: GOLD,       label: 'Info'      },
+    critical:  { color: DANGER,  label: 'Critical'  },
+    important: { color: WARNING, label: 'Important' },
+    info:      { color: BRONZE,  label: 'Info'      },
 };
 
 const SOURCE_CONFIG = {
@@ -32,6 +45,58 @@ function PriorityIcon({ priority, size = 12 }) {
     if (priority === 'critical')  return <AlertCircle size={size} />;
     if (priority === 'important') return <AlertTriangle size={size} />;
     return <Info size={size} />;
+}
+
+function PriorityBadge({ priority }) {
+    const cfg = PRIORITY_CONFIG[priority] || PRIORITY_CONFIG.info;
+    return (
+        <span
+            className="inline-flex items-center gap-1.5 flex-shrink-0"
+            style={{ ...body, fontSize: '0.72rem', fontWeight: 600, color: cfg.color, background: `${cfg.color}14`, borderRadius: 999, padding: '4px 11px' }}
+        >
+            <PriorityIcon priority={priority} size={11} />
+            {cfg.label}
+        </span>
+    );
+}
+
+// A single announcement card — used for every notice after the lead story.
+function ArticleCard({ ann }) {
+    const normalizedRole = String(ann.created_by_role || '').trim().toLowerCase();
+    const src = SOURCE_CONFIG[normalizedRole];
+
+    return (
+        <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '18px 20px' }}>
+            <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 10 }}>
+                <PriorityBadge priority={ann.priority} />
+                {src && (
+                    <span className="flex items-center gap-1" style={{ ...body, fontSize: '0.72rem', color: MUTED }}>
+                        <UserRound size={11} />
+                        {src.label}
+                    </span>
+                )}
+            </div>
+
+            <h4 style={{ ...display, fontSize: '1.05rem', fontWeight: 600, color: INK, lineHeight: 1.3, marginBottom: 6 }}>
+                {ann.title}
+            </h4>
+
+            <p style={{ ...body, fontSize: '0.82rem', color: MUTED, lineHeight: 1.6 }} className="line-clamp-3">
+                {ann.content}
+            </p>
+
+            <div className="flex items-center gap-2 flex-wrap" style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${BG}` }}>
+                <span style={{ ...body, fontSize: '0.72rem', color: MUTED }}>
+                    {ann.created_by_name || ann.created_by || 'Unknown'}
+                </span>
+                <span style={{ color: BORDER }}>·</span>
+                <span className="flex items-center gap-1" style={{ ...body, fontSize: '0.72rem', color: MUTED }}>
+                    <Clock3 size={11} />
+                    {new Date(ann.created_at).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
+                </span>
+            </div>
+        </div>
+    );
 }
 
 const ScholarAnnouncements = () => {
@@ -77,192 +142,174 @@ const ScholarAnnouncements = () => {
         total:     announcements.length,
     };
 
-    const serif = { fontFamily: "'Playfair Display', serif" };
-    const sans = { fontFamily: "'DM Sans', sans-serif" };
+    const [leadStory, ...restStories] = filtered;
 
     return (
-        <div style={{ ...sans, background: IVORY, minHeight: '100vh' }}>
+        <div style={{ ...body, background: BG, minHeight: '100vh' }}>
+            <div className="w-full px-4 sm:px-6 lg:p-8">
 
-            {/* ── Hero band ─────────────────────────────────────── */}
-            <div
-                className="relative overflow-hidden px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 pb-14 sm:pb-16"
-                style={{ background: `linear-gradient(135deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)` }}
-            >
-                <svg
-                    className="absolute -right-8 -top-10 w-52 h-52 sm:-right-6 sm:-top-8 sm:w-64 sm:h-64 opacity-[0.14] pointer-events-none"
-                    viewBox="0 0 200 200"
-                    fill="none"
-                >
-                    <path
-                        d="M100 62c-6-14-20-24-36-24-4 0-8 1-8 1s-2 10 4 22c5 10 15 18 26 19-4 12-6 26-6 38 0 34 18 62 40 62 8 0 12-4 20-4s12 4 20 4c22 0 40-30 40-64 0-24-12-42-30-42-8 0-14 4-20 4s-10-3-16-6c2-11 8-20 16-25-2-1-6-2-10-2-16 0-30 8-40 17z"
-                        fill={GOLD}
-                    />
-                    <path d="M100 62c2-16 10-30 22-38" stroke={GOLD} strokeWidth="6" strokeLinecap="round" />
-                </svg>
-
-                <p className="relative text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.2em] sm:tracking-[0.25em] mb-2" style={{ color: GOLD }}>
-                    Foundation Updates
-                </p>
-                <h1 className="relative text-2xl sm:text-3xl md:text-4xl font-bold text-white" style={serif}>Announcements</h1>
-                <p className="relative text-xs mt-2 max-w-md" style={{ color: '#e9c9a8' }}>
-                    Stay updated with the latest from Kalinga Foundation.
-                </p>
-            </div>
-
-            <div className="px-4 sm:px-6 lg:p-8 lg:pt-0">
-
-                {/* ── Priority strip — floats over the hero ──────────── */}
-                <div
-                    className="relative -mt-8 sm:-mt-10 mb-6 sm:mb-8 rounded-2xl bg-white overflow-hidden"
-                    style={{ boxShadow: '0 12px 30px -12px rgba(79,22,32,0.25)' }}
-                >
-                    <div className="grid grid-cols-3 divide-x divide-slate-100">
-                        <div className="p-4 sm:p-5 text-center">
-                            <p className="text-2xl sm:text-3xl font-bold" style={{ ...serif, color: '#991b1b' }}>{counts.critical}</p>
-                            <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: '#c9a9b0' }}>Critical</p>
-                        </div>
-                        <div className="p-4 sm:p-5 text-center">
-                            <p className="text-2xl sm:text-3xl font-bold" style={{ ...serif, color: '#92400e' }}>{counts.important}</p>
-                            <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: '#c9a9b0' }}>Important</p>
-                        </div>
-                        <div className="p-4 sm:p-5 text-center">
-                            <p className="text-2xl sm:text-3xl font-bold" style={{ ...serif, color: MAROON }}>{counts.total}</p>
-                            <p className="text-[9px] sm:text-[10px] font-bold uppercase tracking-widest mt-1" style={{ color: '#c9a9b0' }}>Total</p>
-                        </div>
+                {/* ── Personal header ── */}
+                <div className="flex items-start justify-between gap-4 flex-wrap" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '22px 26px', marginBottom: 20 }}>
+                    <div>
+                        <p style={{ ...body, fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.08em', color: BRONZE }}>SCHOLAR PORTAL</p>
+                        <h1 style={{ ...display, fontSize: '1.7rem', fontWeight: 600, color: INK, marginTop: 4 }}>Announcements</h1>
+                        <p style={{ ...body, fontSize: '0.84rem', color: MUTED, marginTop: 6, maxWidth: 460 }}>
+                            Updates and notices from your Officer, Staff, and the Foundation Admin.
+                        </p>
                     </div>
+                    <span style={{ ...body, fontSize: '0.76rem', fontWeight: 600, color: PRIMARY, background: `${PRIMARY}12`, border: `1px solid ${BORDER}`, borderRadius: 999, padding: '7px 16px', flexShrink: 0 }}>
+                        {announcements.length} notice{announcements.length === 1 ? '' : 's'} on file
+                    </span>
                 </div>
 
-                {/* Search + Priority Dropdown */}
-                <div className="flex flex-col sm:flex-row gap-3 mb-4">
-                    <div className="relative flex-1">
-                        <Search className="absolute left-4 top-3.5" size={16} style={{ color: '#c9b3b8' }} />
-                        <input
-                            type="text"
-                            placeholder="Search announcements..."
-                            value={search}
-                            onChange={e => setSearch(e.target.value)}
-                            className="w-full bg-white pl-11 pr-4 py-3 text-sm rounded-2xl outline-none transition-all placeholder:text-slate-300"
-                            style={{ border: '1px solid #f0e6e0', boxShadow: '0 8px 24px -16px rgba(36,21,18,0.15)' }}
-                            onFocus={e => (e.target.style.borderColor = MAROON)}
-                            onBlur={e => (e.target.style.borderColor = '#f0e6e0')}
-                        />
-                    </div>
-
-                    <div className="relative sm:w-52 shrink-0">
-                        <select
-                            value={priorityFilter}
-                            onChange={e => setPriorityFilter(e.target.value)}
-                            className="w-full appearance-none bg-white pl-4 pr-9 py-3 text-sm font-bold rounded-2xl outline-none transition-all cursor-pointer"
-                            style={{
-                                border: '1px solid #f0e6e0',
-                                boxShadow: '0 8px 24px -16px rgba(36,21,18,0.15)',
-                                color: priorityFilter === 'all' ? '#374151' : PRIORITY_CONFIG[priorityFilter]?.text,
-                            }}
-                        >
-                            <option value="all">All Priorities</option>
-                            <option value="critical">Critical</option>
-                            <option value="important">Important</option>
-                            <option value="info">Info</option>
-                        </select>
-                        <ChevronDown size={15} className="absolute right-3.5 top-3.5 pointer-events-none" style={{ color: '#c9b3b8' }} />
-                    </div>
-                </div>
-
-                {/* Sender Filter — underline tabs */}
-                <div className="flex gap-6 mb-6 flex-wrap border-b" style={{ borderColor: '#f0e6e0' }}>
-                    {SOURCE_TABS.map(f => (
-                        <button
-                            key={f.key}
-                            onClick={() => setSourceFilter(f.key)}
-                            className="text-xs pb-2.5 font-bold uppercase tracking-wider transition-colors"
-                            style={{
-                                color: sourceFilter === f.key ? MAROON : '#c9b3b8',
-                                borderBottom: sourceFilter === f.key ? `2px solid ${MAROON}` : '2px solid transparent',
-                                marginBottom: -1,
-                            }}
-                        >
-                            {f.label}
-                        </button>
-                    ))}
-                </div>
-
-                {/* Announcements — pinned notice cards */}
-                {loading ? (
-                    <div className="space-y-5 pt-2">
-                        {Array(4).fill(0).map((_, i) => (
-                            <div key={i} className="animate-pulse rounded-2xl h-28" style={{ background: '#EFE7E2' }} />
+                {/* ── Priority overview ── */}
+                {!loading && (
+                    <div className="grid grid-cols-3 gap-4" style={{ marginBottom: 20 }}>
+                        {[
+                            { label: 'Critical',  value: counts.critical,  color: DANGER,  icon: AlertCircle },
+                            { label: 'Important', value: counts.important, color: WARNING, icon: AlertTriangle },
+                            { label: 'Total',      value: counts.total,     color: PRIMARY, icon: Megaphone },
+                        ].map((item) => (
+                            <div key={item.label} style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '16px 18px' }}>
+                                <div className="flex items-center justify-center" style={{ width: 30, height: 30, borderRadius: 9, background: `${item.color}14` }}>
+                                    <item.icon size={14} style={{ color: item.color }} />
+                                </div>
+                                <p style={{ ...display, fontSize: '1.5rem', fontWeight: 600, color: INK, marginTop: 10 }}>{item.value}</p>
+                                <p style={{ ...body, fontSize: '0.76rem', color: MUTED, marginTop: 2 }}>{item.label}</p>
+                            </div>
                         ))}
                     </div>
-                ) : filtered.length === 0 ? (
-                    <div className="bg-white rounded-[2rem] p-16 text-center" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)' }}>
-                        <Megaphone size={40} className="mx-auto mb-3" style={{ color: '#e9d9dc' }} />
-                        <p className="text-sm font-bold" style={{ color: '#c9b3b8' }}>No announcements found.</p>
+                )}
+
+                {/* ── Filter bar ── */}
+                <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '14px 18px', marginBottom: 16 }}>
+                    <div className="flex flex-col sm:flex-row gap-3 sm:items-center">
+                        <div className="flex items-center gap-2 flex-1 min-w-[180px]">
+                            <Search size={15} style={{ color: MUTED }} />
+                            <input
+                                type="text"
+                                placeholder="Search announcements"
+                                value={search}
+                                onChange={e => setSearch(e.target.value)}
+                                style={{ width: '100%', border: 'none', outline: 'none', background: 'none', ...body, fontSize: '0.82rem', color: INK }}
+                            />
+                        </div>
+                        <div className="relative sm:w-52 shrink-0 flex items-center gap-2" style={{ borderTop: 'none', borderLeft: `1px solid ${BORDER}`, paddingLeft: 14 }}>
+                            <select
+                                value={priorityFilter}
+                                onChange={e => setPriorityFilter(e.target.value)}
+                                className="appearance-none cursor-pointer"
+                                style={{
+                                    width: '100%', border: 'none', outline: 'none', background: 'none',
+                                    ...body, fontSize: '0.8rem', fontWeight: 500,
+                                    color: priorityFilter === 'all' ? INK : PRIORITY_CONFIG[priorityFilter]?.color,
+                                }}
+                            >
+                                <option value="all">All Priorities</option>
+                                <option value="critical">Critical</option>
+                                <option value="important">Important</option>
+                                <option value="info">Info</option>
+                            </select>
+                            <ChevronDown size={13} className="pointer-events-none" style={{ color: MUTED, marginLeft: -18 }} />
+                        </div>
                     </div>
-                ) : (
-                    <div className="space-y-6 pb-8">
-                        {filtered.map((ann, idx) => {
-                            const cfg = PRIORITY_CONFIG[ann.priority] || PRIORITY_CONFIG.info;
-                            const normalizedRole = String(ann.created_by_role || '').trim().toLowerCase();
-                            const src = SOURCE_CONFIG[normalizedRole];
+
+                    <div className="flex items-center gap-2 flex-wrap" style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${BG}` }}>
+                        {SOURCE_TABS.map(f => {
+                            const isActive = sourceFilter === f.key;
                             return (
-                                <div key={ann.id} className="relative">
-                                    {/* push-pin — overlaps the card's top edge, like a notice pinned to a board */}
-                                    <span
-                                        className="absolute left-6 -top-2 w-4 h-4 rounded-full z-10"
-                                        style={{ background: cfg.pin, boxShadow: '0 2px 4px rgba(36,21,18,0.35)', border: '2px solid #fff' }}
-                                    />
-
-                                    <div
-                                        className="relative bg-white rounded-2xl overflow-hidden pt-5 px-5 pb-5"
-                                        style={{ boxShadow: '0 10px 26px -16px rgba(36,21,18,0.22)' }}
-                                    >
-                                        {/* folded-corner ribbon — priority colour, top-right */}
-                                        <div
-                                            className="absolute top-0 right-0 w-0 h-0"
-                                            style={{ borderStyle: 'solid', borderWidth: '0 34px 34px 0', borderColor: `transparent ${cfg.pin} transparent transparent` }}
-                                        />
-                                        <span className="absolute top-1.5 right-1 z-10" style={{ color: '#fff' }}>
-                                            <PriorityIcon priority={ann.priority} size={11} />
-                                        </span>
-
-                                        <div className="flex items-center gap-2 mb-2 flex-wrap pr-8">
-                                            {idx === 0 && (
-                                                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full text-white" style={{ background: MAROON }}>
-                                                    Latest
-                                                </span>
-                                            )}
-                                            <span
-                                                className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full"
-                                                style={{ background: cfg.bg, color: cfg.text }}
-                                            >
-                                                {cfg.label}
-                                            </span>
-                                            {src && (
-                                                <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-slate-100 text-slate-500">
-                                                    {src.label}
-                                                </span>
-                                            )}
-                                        </div>
-
-                                        <h4 className="font-bold text-base" style={{ ...serif, color: INK }}>{ann.title}</h4>
-                                        <p className="text-xs mt-2 leading-relaxed text-slate-500">{ann.content}</p>
-
-                                        <div className="flex items-center gap-2 mt-4 pt-3" style={{ borderTop: '1px solid #f5eee9' }}>
-                                            <Clock size={10} style={{ color: '#c9b3b8' }} />
-                                            <p className="text-[10px]" style={{ color: '#c9b3b8' }}>
-                                                {new Date(ann.created_at).toLocaleDateString('en-PH', {
-                                                    year: 'numeric', month: 'long', day: 'numeric',
-                                                })}
-                                            </p>
-                                            <span className="text-[10px]" style={{ color: '#c9b3b8' }}>•</span>
-                                            <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: MAROON }}>
-                                                {ann.created_by_name || ann.created_by || 'Unknown'}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
+                                <button
+                                    key={f.key}
+                                    onClick={() => setSourceFilter(f.key)}
+                                    style={{
+                                        ...body, fontSize: '0.76rem', fontWeight: 600, borderRadius: 999,
+                                        padding: '7px 14px', cursor: 'pointer',
+                                        border: `1px solid ${isActive ? PRIMARY : BORDER}`,
+                                        background: isActive ? PRIMARY : SURFACE,
+                                        color: isActive ? '#fff' : INK,
+                                    }}
+                                >
+                                    {f.label}
+                                </button>
                             );
                         })}
+                    </div>
+                </div>
+
+                {/* ── Announcements ── */}
+                {loading ? (
+                    <div className="space-y-5 pb-8">
+                        <div className="animate-pulse" style={{ background: `${BORDER}88`, height: 160, borderRadius: RADIUS }} />
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {Array(4).fill(0).map((_, i) => (
+                                <div key={i} className="animate-pulse" style={{ background: `${BORDER}88`, height: 150, borderRadius: RADIUS }} />
+                            ))}
+                        </div>
+                    </div>
+                ) : filtered.length === 0 ? (
+                    <div className="text-center" style={{ border: `1px dashed ${BORDER}`, background: SURFACE, borderRadius: RADIUS, padding: '64px 20px' }}>
+                        <div className="mx-auto flex items-center justify-center" style={{ width: 52, height: 52, borderRadius: 16, background: `${BRONZE}14`, marginBottom: 16 }}>
+                            <Megaphone size={22} style={{ color: BRONZE }} />
+                        </div>
+                        <p style={{ ...display, fontSize: '1.05rem', fontWeight: 600, color: INK }}>No announcements found</p>
+                        <p style={{ ...body, fontSize: '0.8rem', color: MUTED, marginTop: 4 }}>Check back later, or try a different filter.</p>
+                    </div>
+                ) : (
+                    <div className="pb-10">
+                        {/* Lead story — full width feature card */}
+                        {(() => {
+                            const cfg = PRIORITY_CONFIG[leadStory.priority] || PRIORITY_CONFIG.info;
+                            const normalizedRole = String(leadStory.created_by_role || '').trim().toLowerCase();
+                            const src = SOURCE_CONFIG[normalizedRole];
+                            return (
+                                <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, marginBottom: 20, padding: '26px 28px', position: 'relative', overflow: 'hidden' }}>
+                                    <span aria-hidden="true" className="absolute top-0 left-0 right-0" style={{ height: 4, background: `linear-gradient(90deg, ${PRIMARY} 0%, ${cfg.color} 100%)` }} />
+                                    <div className="flex items-center gap-2 flex-wrap" style={{ marginBottom: 12 }}>
+                                        <span style={{ ...body, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em', color: '#fff', background: PRIMARY, borderRadius: 999, padding: '4px 12px' }}>
+                                            LATEST
+                                        </span>
+                                        <PriorityBadge priority={leadStory.priority} />
+                                        {src && (
+                                            <span className="flex items-center gap-1" style={{ ...body, fontSize: '0.74rem', color: MUTED }}>
+                                                <UserRound size={11} />
+                                                {src.label}
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    <h4 style={{ ...display, fontSize: '1.5rem', fontWeight: 600, color: INK, lineHeight: 1.25 }}>
+                                        {leadStory.title}
+                                    </h4>
+
+                                    <div className="flex items-center gap-2 flex-wrap" style={{ marginTop: 8, marginBottom: 14 }}>
+                                        <span style={{ ...body, fontSize: '0.76rem', color: MUTED }}>
+                                            {leadStory.created_by_name || leadStory.created_by || 'Unknown'}
+                                        </span>
+                                        <span style={{ color: BORDER }}>·</span>
+                                        <span className="flex items-center gap-1" style={{ ...body, fontSize: '0.76rem', color: MUTED }}>
+                                            <Clock3 size={11} />
+                                            {new Date(leadStory.created_at).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}
+                                        </span>
+                                    </div>
+
+                                    <p style={{ ...body, fontSize: '0.9rem', color: '#5c4a3f', lineHeight: 1.75, maxWidth: 640 }}>
+                                        {leadStory.content}
+                                    </p>
+                                </div>
+                            );
+                        })()}
+
+                        {/* Remaining notices */}
+                        {restStories.length > 0 && (
+                            <>
+                                <p style={{ ...body, fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em', color: MUTED, marginBottom: 14 }}>
+                                    MORE ANNOUNCEMENTS
+                                </p>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    {restStories.map((ann) => <ArticleCard key={ann.id} ann={ann} />)}
+                                </div>
+                            </>
+                        )}
                     </div>
                 )}
             </div>

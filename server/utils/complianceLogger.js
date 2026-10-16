@@ -8,7 +8,6 @@ const defaults = {
     service_hour_shortfall_deduction: 1,
     absent_duty_deduction: 2,
     late_submission_deduction: 1,
-    negative_letter_deduction: 1,
     quality_drop_deduction: 0.5,
     extra_service_bonus: 2,
     good_maintenance_bonus: 5,
@@ -165,7 +164,6 @@ const calculateComplianceScore = ({
         serviceHourShortfall: settings.service_hour_shortfall_deduction ?? defaults.service_hour_shortfall_deduction,
         absentDuty: settings.absent_duty_deduction ?? defaults.absent_duty_deduction,
         lateSubmission: settings.late_submission_deduction ?? defaults.late_submission_deduction,
-        negativeLetter: settings.negative_letter_deduction ?? defaults.negative_letter_deduction,
         qualityDrop: settings.quality_drop_deduction ?? defaults.quality_drop_deduction,
         extraServiceBonus: settings.extra_service_bonus ?? defaults.extra_service_bonus,
         goodMaintenanceBonus: settings.good_maintenance_bonus ?? defaults.good_maintenance_bonus,
@@ -248,9 +246,9 @@ const calculateComplianceScore = ({
         penalizedPeriods: effectiveLatePeriods,
     };
 
-    const negativeLetterPoints = negativeLetters * penalties.negativeLetter;
-    totalDeduction += negativeLetterPoints;
-    deductions.negativeLetter = { points: negativeLetterPoints, negativeLetters };
+    // Negative sentiment remains available for review and reporting, but it is
+    // not a compliance deduction.
+    deductions.negativeLetter = { points: 0, negativeLetters };
 
     let qualityDropPoints = 0;
     if (avgQuality !== null && avgQuality < 70) {
@@ -276,6 +274,7 @@ const calculateComplianceScore = ({
     const averageQualityAndAttendance = (avgQuality !== null && attendanceRate !== null)
         ? Math.round((avgQuality + attendanceRate) / 2)
         : null;
+    const hasNoComplianceHistory = totalSubs === 0 && totalDuties === 0 && totalServiceHours === 0 && negativeLetters === 0 && avgQuality === null;
     const goodMaintenanceBonusPoints = averageQualityAndAttendance !== null
         && averageQualityAndAttendance >= 85
         && totalSubs >= allowedMissedNum + 1
@@ -327,6 +326,49 @@ const calculateComplianceScore = ({
         }
 
         totalDeduction = Math.max(0, totalDeduction - bonuses.totalBonusPoints);
+    }
+
+    if (hasNoComplianceHistory) {
+        return {
+            overallCompliance: 100,
+            riskScore: 0,
+            totalDeduction: 0,
+            totalBonusPoints: 0,
+            recoverableCredits: 0,
+            recoveryEnabled,
+            bonuses: {
+                earlySubmission: 0,
+                consecutiveEarly: 0,
+                serviceHoursCompletion: 0,
+                perfectAttendance: 0,
+                totalBonusPoints: 0,
+            },
+            minComplianceNum: parseFloat(settings.min_compliance || defaults.min_compliance),
+            deductions: {
+                missedSubmission: { points: 0, missingReports: 0, reportsTarget: 0, allowedMissed: allowedMissedNum, graceCount: missedGraceCount, penalizedReports: 0 },
+                serviceHourShortfall: { points: 0, missingHours: 0, requiredHoursTarget: 0 },
+                absentDuty: { points: 0, absentCount: 0, attendanceRate: 0 },
+                lateSubmission: { points: 0, daysSinceSubmission: null, latePeriods: 0, graceCount: lateGraceCount, penalizedPeriods: 0 },
+                negativeLetter: { points: 0, negativeLetters: 0 },
+                qualityDrop: { points: 0, avgQuality: null },
+                extraServiceBonus: { points: 0, totalServiceHours: 0, requiredHoursNum: requiredHoursNum },
+                goodMaintenanceBonus: { points: 0, averageQualityAndAttendance: null, totalSubs: 0, allowedMissedNum },
+            },
+            stats: {
+                total_submissions: totalSubs,
+                total_service_hours: totalServiceHours,
+                avg_quality: avgQuality,
+                attendance_rate: attendanceRate,
+                absent: absentCount,
+                negative_letters: negativeLetters,
+                days_since_submission: daysSinceSubmission,
+                total_duties: totalDuties,
+                present: presentCount,
+                early_submission_count: earlySubmissionCount,
+                consecutive_early_months: consecutiveEarlyMonths,
+                recoverable_credits: 0,
+            },
+        };
     }
 
     const overallCompliance = clampCompliance(100 - totalDeduction);

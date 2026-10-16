@@ -8,6 +8,7 @@ const db = require('./config/db');
 const authRoutes       = require('./routes/authRoutes');
 const adminRoutes      = require('./routes/admin/adminRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
+const backupRecoveryRoutes = require('./routes/backupRecoveryRoutes');
 const scholarRoutes    = require('./routes/scholar/scholarRoutes');
 const staffRoutes      = require('./routes/staff/staffRoutes');
 const officerRoutes    = require('./routes/officer/officerRoutes');
@@ -17,8 +18,14 @@ const exportRoutes     = require('./routes/exportroutes'); // ← consistent cas
 const flaggedRoutes    = require('./routes/flaggedRoutes');
 const tasksRoutes      = require('./routes/tasksRoutes');
 const reportSummaryRoutes = require('./routes/reportSummaryRoutes');
+const archiveRoutes    = require('./routes/archiveRoutes');
+const retentionRoutes  = require('./routes/retentionRoutes');
 const { sendTaskDeadlineReminders, sendComplianceAlerts } = require('./utils/notifyHelpers');
 const { rateLimit } = require('./middleware/rateLimit');
+const { cleanupExpired } = require('./services/resumableUploadService');
+const { loadModelAtStartup } = require('./services/letterScoreService');
+const { runScheduledBackups } = require('./services/backupRecoveryService');
+const { markEndedDutyAbsences } = require('./services/dutyAbsenceService');
 
 const app = express();
 
@@ -34,7 +41,7 @@ app.use(cors({
     credentials: true,
 }));
 app.use(express.json());
-app.use(rateLimit({ max: 120 }));
+app.use(rateLimit({ max: 120, skipPaths: ['/api/submission/score'] }));
 app.use((req, res, next) => {
     if (process.env.NODE_ENV === 'production' && req.headers['x-forwarded-proto'] !== 'https') {
         return res.status(426).json({ error: 'HTTPS is required.' });
@@ -42,8 +49,8 @@ app.use((req, res, next) => {
     next();
 });
 
-// Static files
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// Uploaded and generated files are served through authenticated proxy routes.
+// Do not expose the uploads directory as a public static tree.
 
 // --- Debug: log incoming requests (temporary) -----------------------------
 app.use((req, res, next) => {
@@ -51,39 +58,11 @@ app.use((req, res, next) => {
     next();
 });
 
-// --- Debug: expose registered routes for troubleshooting (temporary)
-app.get('/api/_routes', (req, res) => {
-    try {
-        const routes = [];
-        const stack = app._router && app._router.stack ? app._router.stack : [];
-        stack.forEach((middleware) => {
-            try {
-                if (middleware.route) {
-                    routes.push({ path: middleware.route.path, methods: middleware.route.methods });
-                    return;
-                }
-
-                const handler = middleware.handle || middleware;
-                const innerStack = handler && handler.stack ? handler.stack : null;
-                if (Array.isArray(innerStack)) {
-                    innerStack.forEach((layer) => {
-                        if (layer.route) routes.push({ path: layer.route.path, methods: layer.route.methods });
-                    });
-                }
-            } catch (e) {
-                // ignore malformed middleware entries
-            }
-        });
-        res.json({ routes });
-    } catch (err) {
-        res.status(500).json({ error: 'Failed to enumerate routes', detail: String(err) });
-    }
-});
-
 // ─── Routes ───────────────────────────────────────────────────
 app.use('/api',            authRoutes);
 app.use('/api/admin',      adminRoutes);
 app.use('/api/admin/notifications', notificationRoutes);
+app.use('/api/admin/backups', backupRecoveryRoutes);
 app.use('/api/scholar',    scholarRoutes);
 app.use('/api/staff',      staffRoutes);
 app.use('/api/officer',    officerRoutes);
@@ -93,6 +72,8 @@ app.use('/api/export',     exportRoutes);
 app.use('/api/flagged',    flaggedRoutes);
 app.use('/api/tasks',      tasksRoutes);
 app.use('/api/reports',    reportSummaryRoutes);
+app.use('/api/archive',    archiveRoutes);
+app.use('/api',            retentionRoutes);
 
 // ─── Test Route ───────────────────────────────────────────────
 app.get('/', (req, res) => {
@@ -104,6 +85,22 @@ app.use((err, req, res, next) => {
     console.error(err.stack);
     res.status(500).json({ error: 'Something went wrong on the server!' });
 });
+
+loadModelAtStartup();
+
+const runDutyAbsenceSweep = async () => {
+    try {
+        const result = await markEndedDutyAbsences();
+        if (!result.skipped && result.markedCount > 0) {
+            console.log(`[duty-absence] marked ${result.markedCount} scholars absent after duty end.`);
+        }
+    } catch (error) {
+        console.error('[duty-absence] sweep failed:', error.message || error);
+    }
+};
+
+setTimeout(runDutyAbsenceSweep, 15 * 1000);
+setInterval(runDutyAbsenceSweep, 60 * 1000);
 
 // ─── Start Server ─────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
@@ -134,6 +131,68 @@ if (process.env.ENABLE_DEADLINE_REMINDERS !== 'false') {
     setInterval(runTaskDeadlineReminders, reminderIntervalMs);
 }
 
+cleanupExpired().catch((error) => console.error('[resumable-upload] cleanup failed:', error.message));
+setInterval(() => cleanupExpired().catch((error) => console.error('[resumable-upload] cleanup failed:', error.message)), 60 * 60 * 1000);
+
+let backupScheduleTimer = null;
+let backupSchedule = {
+    enabled: process.env.ENABLE_SCHEDULED_BACKUPS !== 'false',
+    retentionCount: Math.max(1, Number.parseInt(process.env.BACKUP_DAILY_RETENTION || '14', 10)),
+};
+let backupScheduleLoaded = false;
+const runScheduledBackupIfEnabled = async () => {
+    if (!backupSchedule.enabled) return;
+    try {
+        const result = await runScheduledBackups({
+            enabled: backupSchedule.enabled,
+            dailyRetentionCount: backupSchedule.retentionCount,
+        });
+        if (!result.skipped) console.log('[scheduled-backup] completed:', result.backups.map((backup) => backup.id));
+    } catch (error) {
+        console.error('[scheduled-backup] failed:', error.message || error);
+    }
+};
+
+const configureBackupSchedule = ({ enabled, retentionCount }) => {
+    if (backupScheduleTimer) clearInterval(backupScheduleTimer);
+    backupSchedule = {
+        enabled: Boolean(enabled),
+        retentionCount: Math.max(1, Number.parseInt(retentionCount, 10) || 14),
+    };
+    backupScheduleTimer = setInterval(runScheduledBackupIfEnabled, 30 * 1000);
+};
+
+configureBackupSchedule(backupSchedule);
+process.on('admin-backup-settings-updated', (settings) => {
+    backupScheduleLoaded = true;
+    configureBackupSchedule(settings);
+});
+setInterval(() => {
+    db.query(
+        'SELECT scheduled_backups, backup_retention_count FROM admin_system_settings WHERE id = 1',
+        (error, rows) => {
+            if (error) {
+                console.error('Failed to refresh scheduled backup settings:', error.message);
+                return;
+            }
+            if (!rows.length) return;
+            const next = {
+                enabled: Boolean(rows[0].scheduled_backups),
+                retentionCount: rows[0].backup_retention_count,
+            };
+            if (!backupScheduleLoaded) {
+                backupScheduleLoaded = true;
+                configureBackupSchedule(next);
+                return;
+            }
+            if (next.enabled !== backupSchedule.enabled ||
+                Number(next.retentionCount) !== backupSchedule.retentionCount) {
+                configureBackupSchedule(next);
+            }
+        }
+    );
+}, 60 * 1000);
+
 const initializeDatabase = () => {
     if (!process.env.DB_NAME) {
         return;
@@ -142,6 +201,57 @@ const initializeDatabase = () => {
     db.query('SELECT 1', (err) => {
         if (err) console.error('❌ MySQL connection failed:', err.message);
         else console.log('✅ Connected to MySQL Database!');
+    });
+
+    db.query(`
+        CREATE TABLE IF NOT EXISTS admin_preferences (
+            user_id INT PRIMARY KEY,
+            settings_json LONGTEXT NOT NULL,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `, (preferencesError) => {
+        if (preferencesError) console.error('Failed to ensure admin preferences table:', preferencesError.message);
+    });
+    db.query(`
+        CREATE TABLE IF NOT EXISTS officer_notification_preferences (
+            officer_id INT PRIMARY KEY,
+            new_submissions BOOLEAN NOT NULL DEFAULT TRUE,
+            pending_reviews BOOLEAN NOT NULL DEFAULT TRUE,
+            deadlines BOOLEAN NOT NULL DEFAULT TRUE,
+            returned_submissions BOOLEAN NOT NULL DEFAULT TRUE,
+            announcements BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `, (notificationPreferencesError) => {
+        if (notificationPreferencesError) {
+            console.error('Failed to ensure officer notification preferences table:', notificationPreferencesError.message);
+        }
+    });
+    db.query(`
+        CREATE TABLE IF NOT EXISTS admin_system_settings (
+            id TINYINT PRIMARY KEY,
+            scheduled_backups BOOLEAN NOT NULL DEFAULT TRUE,
+            backup_interval_hours INT NOT NULL DEFAULT 24,
+            backup_retention_count INT NOT NULL DEFAULT 14,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `, (systemSettingsError) => {
+        if (systemSettingsError) {
+            console.error('Failed to ensure admin system settings table:', systemSettingsError.message);
+            return;
+        }
+        db.query(
+            `INSERT IGNORE INTO admin_system_settings (id, scheduled_backups, backup_interval_hours, backup_retention_count)
+             VALUES (1, ?, ?, ?)`,
+            [
+                process.env.ENABLE_SCHEDULED_BACKUPS !== 'false',
+                Math.max(1, Number.parseInt(process.env.BACKUP_INTERVAL_HOURS || '24', 10)),
+                Math.max(1, Number.parseInt(process.env.BACKUP_DAILY_RETENTION || '14', 10)),
+            ],
+            (seedError) => {
+                if (seedError) console.error('Failed to initialize admin system settings:', seedError.message);
+            }
+        );
     });
 
     // Create core tables and seed an admin account if the database is empty.
@@ -154,6 +264,7 @@ const initializeDatabase = () => {
             password VARCHAR(255) NOT NULL,
             role ENUM('admin','scholar','staff','officer') NOT NULL DEFAULT 'scholar',
             year_level VARCHAR(64) DEFAULT NULL,
+            birth_date DATE DEFAULT NULL,
             age INT DEFAULT NULL,
             phone VARCHAR(64) DEFAULT NULL,
             address VARCHAR(255) DEFAULT NULL,
@@ -171,6 +282,10 @@ const initializeDatabase = () => {
             return;
         }
 
+        db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','scholar','staff','officer') NOT NULL DEFAULT 'scholar'", (roleErr) => {
+            if (roleErr) console.error('Failed to update user role enum:', roleErr.message);
+        });
+
         const allowUserProfileColumnMigration =
             process.env.ALLOW_AUTO_USER_PROFILE_MIGRATION === 'true' ||
             process.env.NODE_ENV !== 'production';
@@ -180,6 +295,7 @@ const initializeDatabase = () => {
         } else {
             const requiredProfileColumns = {
                 age: 'INT DEFAULT NULL',
+                birth_date: 'DATE DEFAULT NULL',
                 phone: 'VARCHAR(64) DEFAULT NULL',
                 address: 'VARCHAR(255) DEFAULT NULL',
                 course: 'VARCHAR(255) DEFAULT NULL',
@@ -275,11 +391,41 @@ const initializeDatabase = () => {
             type VARCHAR(64) DEFAULT NULL,
             status VARCHAR(32) DEFAULT NULL,
             detail TEXT,
+            is_read TINYINT(1) NOT NULL DEFAULT 0,
+            read_at TIMESTAMP NULL DEFAULT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `, (nErr) => {
         if (nErr) console.error('Failed to create notification_logs table:', nErr);
         else console.log('✅ notification_logs table ensured');
+    });
+
+    db.query(`
+        ALTER TABLE notification_logs
+        ADD COLUMN IF NOT EXISTS is_read TINYINT(1) NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS read_at TIMESTAMP NULL DEFAULT NULL
+    `, (nErr) => {
+        if (nErr) console.error('Failed to add notification read columns:', nErr);
+        else console.log('✅ notification read columns ensured');
+    });
+
+    db.query(`
+        CREATE TABLE IF NOT EXISTS duty_makeup_permissions (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            scholar_id VARCHAR(64) NOT NULL,
+            source_duty_id INT NOT NULL,
+            makeup_duty_id INT NOT NULL,
+            reason TEXT DEFAULT NULL,
+            status VARCHAR(32) NOT NULL DEFAULT 'approved',
+            approved_by INT DEFAULT NULL,
+            approved_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            used_at TIMESTAMP NULL DEFAULT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY unique_makeup_permission (scholar_id, makeup_duty_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `, (makeupErr) => {
+        if (makeupErr) console.error('Failed to create duty_makeup_permissions table:', makeupErr);
+        else console.log('✅ duty_makeup_permissions table ensured');
     });
 
     db.query(`
@@ -358,6 +504,10 @@ const initializeDatabase = () => {
         ADD COLUMN IF NOT EXISTS letter_content TEXT DEFAULT NULL,
         ADD COLUMN IF NOT EXISTS sentiment_score DECIMAL(7,2) DEFAULT NULL,
         ADD COLUMN IF NOT EXISTS sentiment_label VARCHAR(64) DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS content_score INT DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS content_breakdown TEXT DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS quality_label VARCHAR(64) DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS needs_followup TINYINT(1) NOT NULL DEFAULT 0,
         ADD COLUMN IF NOT EXISTS report_card_path VARCHAR(500) DEFAULT NULL,
         ADD COLUMN IF NOT EXISTS cor_path VARCHAR(500) DEFAULT NULL,
         ADD COLUMN IF NOT EXISTS service_activity VARCHAR(255) DEFAULT NULL,
@@ -367,10 +517,67 @@ const initializeDatabase = () => {
         ADD COLUMN IF NOT EXISTS quality_status VARCHAR(64) DEFAULT NULL,
         ADD COLUMN IF NOT EXISTS officer_comment TEXT DEFAULT NULL,
         ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP NULL DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP NULL DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS archive_at TIMESTAMP NULL DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP NULL DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP NULL DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS finalized_at DATETIME NULL DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS export_available_at DATETIME NULL DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS finalization_batch_id VARCHAR(64) DEFAULT NULL,
         ADD COLUMN IF NOT EXISTS generated_pdf_path VARCHAR(1000) DEFAULT NULL
     `, (alterErr) => {
         if (alterErr) console.error('Failed to ensure submissions schema:', alterErr);
-        else console.log('✅ submissions table schema ensured');
+        else {
+            console.log('✅ submissions table schema ensured');
+            db.query(`
+                UPDATE submissions
+                SET status = 'approved',
+                    finalized_at = COALESCE(archived_at, archive_at, NOW()),
+                    export_available_at = COALESCE(archive_at, archived_at, NOW()),
+                    finalization_batch_id = COALESCE(
+                        finalization_batch_id,
+                        CONCAT('legacy-', scholar_id, '-', DATE_FORMAT(COALESCE(archived_at, archive_at, NOW()), '%Y%m%d%H%i%s'))
+                    )
+                WHERE status = 'archived' AND finalized_at IS NULL
+            `, (legacyFinalizationErr) => {
+                if (legacyFinalizationErr) console.error('Failed to migrate legacy archived submissions:', legacyFinalizationErr.message);
+                else console.log('✅ legacy archived submissions moved to finalized history');
+            });
+            db.query(`
+                UPDATE submissions
+                SET finalized_at = COALESCE(approved_at, reviewed_at, submitted_at, NOW()),
+                    export_available_at = DATE_ADD(COALESCE(approved_at, reviewed_at, submitted_at, NOW()), INTERVAL 7 DAY),
+                    finalization_batch_id = CONCAT('legacy-approved-', scholar_id, '-', id)
+                WHERE LOWER(status) = 'approved' AND finalized_at IS NULL
+            `, (approvedFinalizationErr) => {
+                if (approvedFinalizationErr) console.error('Failed to migrate approved submissions into Reports:', approvedFinalizationErr.message);
+                else console.log('✅ previously approved submissions moved into Reports');
+            });
+        }
+    });
+
+    db.query(`
+        UPDATE submissions
+        SET status = 'approved'
+        WHERE status = 'Approved'
+    `, (statusErr) => {
+        if (statusErr) console.error('Failed to normalize legacy approved status:', statusErr.message);
+    });
+
+    db.query(`
+        UPDATE submissions
+        SET status = 'rejected'
+        WHERE status = 'Rejected'
+    `, (statusErr) => {
+        if (statusErr) console.error('Failed to normalize legacy rejected status:', statusErr.message);
+    });
+
+    db.query(`
+        UPDATE submissions
+        SET status = 'pending'
+        WHERE status = 'Pending'
+    `, (statusErr) => {
+        if (statusErr) console.error('Failed to normalize legacy pending status:', statusErr.message);
     });
 
     // Speed up Scholar queries by indexing common filter columns.
@@ -396,6 +603,73 @@ const initializeDatabase = () => {
     `, (idxErr) => {
         if (idxErr) console.error('Failed to add submission_media submission_id index:', idxErr.message);
         else console.log('✅ submission_media.submission_id index ensured');
+    });
+
+    db.query(`
+        CREATE TABLE IF NOT EXISTS documents (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            scholar_id VARCHAR(64) NOT NULL,
+            category VARCHAR(64) NOT NULL,
+            file_name VARCHAR(255) NOT NULL,
+            file_path VARCHAR(1000) DEFAULT NULL,
+            file_size BIGINT UNSIGNED DEFAULT NULL,
+            mime_type VARCHAR(128) DEFAULT NULL,
+            status ENUM('Pending', 'Approved', 'Rejected') NOT NULL DEFAULT 'Pending',
+            uploaded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            retention_until DATETIME NOT NULL,
+            is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+            archived_at DATETIME DEFAULT NULL,
+            source_submission_id INT DEFAULT NULL,
+            INDEX idx_documents_scholar (scholar_id),
+            INDEX idx_documents_archive (is_archived, retention_until),
+            INDEX idx_documents_category (category)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `, (documentErr) => {
+        if (documentErr) console.error('Failed to ensure documents table:', documentErr.message);
+                else {
+                             db.query(`
+                              INSERT INTO documents (scholar_id, category, file_name, file_path, mime_type, status, uploaded_at, retention_until, source_submission_id)
+                              SELECT s.scholar_id,
+                                  CASE WHEN s.generated_pdf_path IS NOT NULL THEN 'monthly_letter'
+                                    WHEN s.cor_path IS NOT NULL THEN 'COR'
+                                    WHEN s.report_card_path IS NOT NULL THEN 'grades'
+                                    ELSE s.submission_type END,
+                                  CASE WHEN s.generated_pdf_path IS NOT NULL THEN CONCAT('monthly-letter-', s.id, '.pdf')
+                                    WHEN s.cor_path IS NOT NULL THEN CONCAT('cor-', s.id)
+                                    WHEN s.report_card_path IS NOT NULL THEN CONCAT('report-card-', s.id)
+                                    ELSE CONCAT(s.submission_type, '-', s.id) END,
+                                  COALESCE(s.generated_pdf_path, s.cor_path, s.report_card_path),
+                                  CASE WHEN s.generated_pdf_path IS NOT NULL THEN 'application/pdf' ELSE NULL END,
+                                  CASE s.status WHEN 'approved' THEN 'Approved' WHEN 'rejected' THEN 'Rejected' ELSE 'Pending' END,
+                                  s.submitted_at, DATE_ADD(s.submitted_at, INTERVAL 5 YEAR), s.id
+                              FROM submissions s
+                              WHERE COALESCE(s.generated_pdf_path, s.cor_path, s.report_card_path) IS NOT NULL
+                                AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.source_submission_id = s.id)
+                             `, (backfillErr) => {
+                                if (backfillErr) console.error('Failed to backfill retention documents:', backfillErr.message);
+                        });
+                }
+    });
+
+    db.query(`
+        ALTER TABLE submission_media
+        ADD COLUMN IF NOT EXISTS photo_path VARCHAR(1000) DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS consent BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMP NULL DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS retention_until DATETIME NULL,
+        ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT FALSE,
+        ADD COLUMN IF NOT EXISTS archived_at DATETIME DEFAULT NULL
+    `, (mediaRetentionErr) => {
+        if (mediaRetentionErr) console.error('Failed to ensure media retention fields:', mediaRetentionErr.message);
+        else db.query(`
+            UPDATE submission_media
+            SET photo_path = COALESCE(photo_path, file_path),
+                uploaded_at = COALESCE(uploaded_at, created_at),
+                retention_until = COALESCE(retention_until, DATE_ADD(COALESCE(uploaded_at, created_at), INTERVAL 5 YEAR))
+            WHERE photo_path IS NULL OR uploaded_at IS NULL OR retention_until IS NULL
+        `, (mediaBackfillErr) => {
+            if (mediaBackfillErr) console.error('Failed to backfill media retention fields:', mediaBackfillErr.message);
+        });
     });
 
     // Ensure tasks table exists
@@ -436,7 +710,6 @@ const initializeDatabase = () => {
                                 console.log('✅ tasks table and target levels ensured');
                                 return;
                             }
-
                             legacyTasks.forEach(task => {
                                 db.query(
                                     `SELECT year_level FROM officer_year_level_assignments WHERE officer_id = ?`,
@@ -529,4 +802,30 @@ db.ready
     `, (privacyErr) => {
         if (privacyErr) console.error('Failed to create privacy_requests table:', privacyErr);
         else console.log('✅ privacy_requests table ensured');
+    });
+
+    db.query('ALTER TABLE submission_media ADD COLUMN IF NOT EXISTS approved_for_donor TINYINT(1) NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP NULL DEFAULT NULL, ADD COLUMN IF NOT EXISTS approved_by INT DEFAULT NULL', (mediaApprovalErr) => {
+        if (mediaApprovalErr) console.error('Failed to ensure donor media approval fields:', mediaApprovalErr.message);
+    });
+
+    db.query(`
+        ALTER TABLE grades
+        ADD COLUMN IF NOT EXISTS finalized_at DATETIME NULL DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS export_available_at DATETIME NULL DEFAULT NULL,
+        ADD COLUMN IF NOT EXISTS finalization_batch_id VARCHAR(64) DEFAULT NULL
+    `, (gradeFinalizationErr) => {
+        if (gradeFinalizationErr) console.error('Failed to ensure grade finalization schema:', gradeFinalizationErr);
+        else {
+            console.log('✅ grades finalization fields ensured');
+            db.query(`
+                UPDATE grades
+                SET finalized_at = created_at,
+                    export_available_at = DATE_ADD(created_at, INTERVAL 7 DAY),
+                    finalization_batch_id = CONCAT('legacy-grade-', scholar_id, '-', semester, '-', academic_year)
+                WHERE verification_status = 'approved' AND finalized_at IS NULL
+            `, (approvedGradeErr) => {
+                if (approvedGradeErr) console.error('Failed to migrate approved grades into Reports:', approvedGradeErr.message);
+                else console.log('✅ previously approved grades moved into Reports');
+            });
+        }
     });

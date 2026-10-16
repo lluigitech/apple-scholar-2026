@@ -22,10 +22,10 @@ export const monthPeriodLabel = (monthValue) => {
   }).format(date);
 };
 
-const getBatch = (row) => row.batch || row.year_level || row.yearLevel || row.year || 'All Scholars';
+const getBatch = (row) => row.batch || row.group_name || row.year_level || row.yearLevel || row.year || 'All Scholars';
 const getName = (row) => row.name || row.scholar || row.full_name || row.fullName || '';
 
-export const buildSummaryRows = (records = [], isCompliant = (row) => Number(row.completionRate) >= 100) => {
+export const buildSummaryRows = (records = [], isCompliant = (row) => Number(row.completionRate ?? row.credits ?? 0) >= 70) => {
   const grouped = new Map();
   records.forEach((row) => {
     const batch = getBatch(row);

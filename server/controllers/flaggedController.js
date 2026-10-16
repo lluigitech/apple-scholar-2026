@@ -1,6 +1,7 @@
 const db = require('../config/db');
 const { calculateComplianceScore } = require('../utils/complianceLogger');
 const { applyOfficerYearLevelFilter } = require('../utils/officerAssignments');
+const nodemailer = require('nodemailer');
 
 const normalizeAcademicGrade = (gradeScale, rawGrade) => {
     const gradeValue = Number(rawGrade);
@@ -410,4 +411,56 @@ exports.getInterventions = (req, res) => {
         }
         res.json(rows);
     });
+};
+
+exports.remindScholar = async (req, res) => {
+    const { scholarId } = req.params;
+    const note = typeof req.body?.note === 'string' ? req.body.note.trim() : '';
+    try {
+        const rows = await new Promise((resolve, reject) => {
+            db.query(
+                `SELECT scholar_id, full_name, email FROM users
+                 WHERE scholar_id = ? AND role = 'scholar' AND status = 'active' LIMIT 1`,
+                [scholarId],
+                (err, data) => err ? reject(err) : resolve(data)
+            );
+        });
+        if (!rows.length) return res.status(404).json({ error: 'Scholar not found.' });
+        if (!rows[0].email) return res.status(400).json({ error: 'Scholar has no email address.' });
+
+        const host = process.env.SMTP_HOST;
+        const port = process.env.SMTP_PORT;
+        const user = process.env.SMTP_USER;
+        const pass = process.env.SMTP_PASS;
+        if (!host || !port || !user || !pass) return res.status(503).json({ error: 'Email service is not configured.' });
+
+        const transporter = nodemailer.createTransport({ host, port: Number(port), secure: Number(port) === 465, auth: { user, pass } });
+        const subject = 'Apple Scholar reminder: please review your compliance status';
+        const text = `Hello ${rows[0].full_name || 'Scholar'},\n\nThis is a reminder to review your pending scholar requirements and submissions in the Apple Scholar portal.\n${note ? `\nNote from the scholarship team:\n${note}\n` : ''}\nPlease log in to check your current compliance status.\n\nThank you,\nApple Scholar Team`;
+        const info = await transporter.sendMail({
+            from: process.env.SMTP_FROM || process.env.SMTP_USER,
+            to: rows[0].email,
+            subject,
+            text,
+        });
+
+        await new Promise((resolve) => db.query(
+            `INSERT INTO notification_logs (scholar_id, recipient, channel, type, status, detail)
+             VALUES (?, ?, 'email', 'compliance_reminder', 'sent', ?)`,
+            [scholarId, rows[0].email, info.messageId || 'sent'],
+            () => resolve()
+        ));
+        res.json({ success: true, message: `Reminder sent to ${rows[0].email}.` });
+    } catch (error) {
+        console.error('Reminder email error:', error);
+        try {
+            await new Promise((resolve) => db.query(
+                `INSERT INTO notification_logs (scholar_id, recipient, channel, type, status, detail)
+                 VALUES (?, ?, 'email', 'compliance_reminder', 'failed', ?)`,
+                [scholarId, '', String(error.message || error)],
+                () => resolve()
+            ));
+        } catch (_) { /* notification logging must not mask the original error */ }
+        res.status(502).json({ error: 'The reminder could not be sent.' });
+    }
 };

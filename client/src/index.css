@@ -1,1 +1,31 @@
+
 @import "tailwindcss";
+
+/* Keep the default root font size */
+html {
+  font-size: 16px;
+}
+
+/* Compact dashboard spacing on desktop/laptop */
+@media (min-width: 1024px) {
+  .admin-dashboard-content {
+    padding: 1.25rem;
+    gap: 1rem;
+  }
+
+  .admin-dashboard-content .dashboard-card {
+    padding: 1rem;
+  }
+}
+
+/* Tablet and mobile: retain responsive sizing */
+@media (max-width: 1023px) {
+  .admin-dashboard-content {
+    padding: 1rem;
+    gap: 1rem;
+  }
+
+  .admin-dashboard-content .dashboard-card {
+    padding: 1rem;
+  }
+}

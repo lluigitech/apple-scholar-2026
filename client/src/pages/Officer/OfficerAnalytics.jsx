@@ -4,8 +4,12 @@ import {
   LineChart, Line, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell
 } from 'recharts';
-import { Download, TrendingUp, Users, FileText, AlertTriangle, BarChart3 } from 'lucide-react';
+import {
+  Download, TrendingUp, Users, FileText, AlertTriangle, BarChart3,
+  CalendarDays, ShieldCheck, PieChart as PieChartIcon,
+} from 'lucide-react';
 import { API_BASE, authHeaders } from '../../components/Officer/Reports/ReportsHelpers';
+import { formatYearLevelLabel } from '../../utils/yearLevelLabels';
 
 // ── Token system — shared across the whole portal ──
 const MAROON = '#7f2d3a';
@@ -25,6 +29,14 @@ const sans = { fontFamily: "'DM Sans', sans-serif" };
 const mono = { fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, monospace" };
 const chartStyle = { ...sans, fontSize: '0.72rem' };
 
+const tile = {
+  background: '#fff',
+  border: `1px solid ${RULE}`,
+  borderRadius: 14,
+  boxShadow: '0 8px 20px -16px rgba(36,21,18,0.35)',
+};
+const tooltipStyle = { ...sans, fontSize: '0.8rem', borderRadius: 8, border: `1px solid ${RULE}` };
+
 const getPeriodRange = (period) => {
   const end = new Date();
   const start = new Date(end.getFullYear(), end.getMonth() - (period === '1m' ? 0 : period === '3m' ? 2 : 5), 1);
@@ -34,18 +46,49 @@ const getPeriodRange = (period) => {
   };
 };
 
+// ── KPI card ──
 function StatCard({ label, value, sub, color, icon: Icon }) {
   return (
-    <div className="rounded-xl p-4" style={{ background: '#fff', border: `1px solid ${RULE}`, boxShadow: '0 8px 24px -16px rgba(36,21,18,0.2)' }}>
-      <div className="flex items-center justify-between mb-2">
-        <p style={{ ...sans, fontSize: '0.6rem', fontWeight: 800, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#a89890' }}>{label}</p>
-        <Icon size={14} style={{ color }} />
+    <div className="flex h-full items-center gap-4" style={{ ...tile, padding: '16px 20px', minWidth: 0 }}>
+      <span className="inline-flex flex-shrink-0 items-center justify-center rounded-full" style={{ width: 48, height: 48, background: `${color}1a` }}>
+        <Icon size={22} strokeWidth={1.75} style={{ color }} />
+      </span>
+      <div style={{ minWidth: 0 }}>
+        <p style={{ ...sans, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: '#a89890' }}>{label}</p>
+        <p style={{ ...serif, fontSize: '1.75rem', fontWeight: 700, color: INK, lineHeight: 1.1, marginTop: 2 }}>{value}</p>
+        {sub && <p className="truncate" style={{ ...sans, fontSize: '0.74rem', color: '#7a6a62', marginTop: 3 }}>{sub}</p>}
       </div>
-      <p style={{ ...serif, fontSize: '1.7rem', fontWeight: 700, color: INK, lineHeight: 1 }}>{value}</p>
-      {sub && <p style={{ ...sans, fontSize: '0.68rem', color, marginTop: 5 }}>{sub}</p>}
     </div>
   );
 }
+
+// ── Chart card shell ──
+function ChartCard({ icon: Icon, title, description, children, className = '' }) {
+  return (
+    <section className={`min-w-0 ${className}`} style={{ ...tile, padding: '18px 20px' }}>
+      <div className="flex items-start gap-3" style={{ marginBottom: 14 }}>
+        <span className="inline-flex flex-shrink-0 items-center justify-center rounded-lg" style={{ width: 34, height: 34, background: `${GOLD}1a` }}>
+          <Icon size={17} strokeWidth={1.75} style={{ color: GOLD }} />
+        </span>
+        <div style={{ minWidth: 0 }}>
+          <h3 style={{ ...serif, fontSize: '1.02rem', fontWeight: 700, color: MAROON, lineHeight: 1.25 }}>{title}</h3>
+          {description && <p style={{ ...sans, fontSize: '0.76rem', color: '#a89890', marginTop: 2 }}>{description}</p>}
+        </div>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+const EmptyNote = ({ children }) => (
+  <div className="flex items-center justify-center" style={{ minHeight: 120 }}>
+    <p style={{ ...sans, fontSize: '0.8rem', color: '#a89890' }}>{children}</p>
+  </div>
+);
+
+const Skeleton = ({ height }) => (
+  <div className="animate-pulse" style={{ ...tile, height, background: `${PAPER}` }} aria-hidden="true" />
+);
 
 const OfficerAnalytics = () => {
   const [period, setPeriod] = useState('6m');
@@ -227,172 +270,219 @@ const OfficerAnalytics = () => {
     axios.post(`${API_BASE}/export/google-sheets`, { log_only: true, module: 'Officer Analytics', report_resource: 'Analytics', spreadsheet_title: 'Officer Analytics Export', details: 'officer_analytics.csv' }, authHeaders()).catch(() => {});
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: IVORY }}>
-        <p style={{ ...sans, fontSize: '0.85rem', color: '#a89890' }}>Loading analytics...</p>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="min-h-screen flex items-center justify-center" style={{ background: IVORY }}>
-        <p style={{ ...sans, fontSize: '0.85rem', color: CLAY }}>{error}</p>
-      </div>
-    );
-  }
+  const todayLabel = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+  const yearChartMinWidth = Math.max(480, yearLevelCompliance.length * 72);
+  const hasBody = !loading && !error;
 
   return (
     <div className="min-h-screen" style={{ background: IVORY, ...sans }}>
+      <style>{`
+        .oa-btn:focus-visible, .oa-field:focus-visible { outline: 2px solid ${GOLD}; outline-offset: 2px; }
+        .oa-field:focus { border-color: ${GOLD} !important; }
+        .oa-export:hover { background: ${PAPER}; }
+        .oa-scroll::-webkit-scrollbar { height: 6px; }
+        .oa-scroll::-webkit-scrollbar-thumb { background: rgba(127,45,58,.2); border-radius: 999px; }
+      `}</style>
 
-      {/* ── Ledger header band — same family as the rest of the portal ── */}
-      <div className="relative overflow-hidden px-5 sm:px-8 pt-8 pb-11" style={{ background: `linear-gradient(135deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)` }}>
-        <svg className="absolute -right-6 -top-10 w-56 h-56 opacity-[0.12] pointer-events-none" viewBox="0 0 200 200" fill="none">
-          <polyline points="30,150 75,110 115,130 170,60" stroke={GOLD} strokeWidth="7" fill="none" strokeLinecap="round" strokeLinejoin="round" />
-          <circle cx="170" cy="60" r="7" fill={GOLD} />
-        </svg>
-        <div className="flex items-center gap-2 mb-3">
-          <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ border: `1.5px solid ${GOLD}` }}>
-            <BarChart3 size={12} style={{ color: GOLD }} />
+      <div className="flex flex-col gap-4 px-4 py-5 sm:px-6 lg:px-8" style={{ minWidth: 0 }}>
+
+        {/* ── Standard Officer header: title card + date card ── */}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_auto]">
+          <div style={{ ...tile, padding: '20px 24px' }}>
+            <p style={{ ...sans, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.1em', color: GOLD }}>OFFICER PORTAL</p>
+            <h1 style={{ ...serif, fontSize: '1.75rem', fontWeight: 700, color: MAROON_DEEP, marginTop: 4, lineHeight: 1.2 }}>Analytics</h1>
+            <p style={{ ...sans, fontSize: '0.84rem', color: '#a89890', marginTop: 6, maxWidth: 640 }}>
+              Track submission trends, compliance rates, and scholar performance.
+            </p>
           </div>
-          <span style={{ ...sans, fontSize: '0.66rem', fontWeight: 800, letterSpacing: '0.28em', textTransform: 'uppercase', color: GOLD_LIGHT }}>Officer Portal</span>
-        </div>
-        <div className="flex items-end justify-between gap-4 flex-wrap">
-          <div>
-            <h1 style={{ ...serif, fontSize: '2rem', fontWeight: 700, color: '#fff', letterSpacing: '-0.01em' }}>Analytics Dashboard</h1>
-            <p style={{ ...sans, fontSize: '0.82rem', color: '#e9c9a8', marginTop: 4 }}>Scholar compliance, sentiment trends, and submission metrics.</p>
-          </div>
-          <div className="flex gap-2 flex-wrap items-center">
-            <div className="flex rounded-full overflow-hidden" style={{ border: `1.5px solid ${GOLD}55` }}>
-              {['1m', '3m', '6m'].map(p => (
-                <button key={p} onClick={() => setPeriod(p)}
-                  className="px-3.5 py-1.5 transition-colors"
-                  style={{ ...sans, fontSize: '0.72rem', fontWeight: 700, background: period === p ? GOLD : 'transparent', color: period === p ? MAROON_DEEP : GOLD_LIGHT, border: 'none', cursor: 'pointer' }}>
-                  {p}
-                </button>
-              ))}
+          <div className="flex items-center gap-3" style={{ ...tile, padding: '16px 24px' }}>
+            <span className="inline-flex flex-shrink-0 items-center justify-center" style={{ width: 42, height: 42, borderRadius: 12, background: `${MAROON}10` }}>
+              <CalendarDays size={19} style={{ color: MAROON }} />
+            </span>
+            <div>
+              <p style={{ ...sans, fontSize: '0.68rem', color: '#a89890' }}>Today</p>
+              <p style={{ ...sans, fontSize: '0.92rem', fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>{todayLabel}</p>
             </div>
-            <select
-              value={selectedYearLevel}
-              onChange={(e) => setSelectedYearLevel(e.target.value)}
-              className="px-3.5 py-1.5 rounded-full outline-none"
-              style={{ ...sans, fontSize: '0.76rem', fontWeight: 700, background: 'rgba(255,255,255,0.08)', border: `1.5px solid ${GOLD}55`, color: GOLD_LIGHT, cursor: 'pointer' }}
-            >
+          </div>
+        </div>
+
+        {/* ── KPI cards ── */}
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <StatCard label="Total Scholars" value={loading ? '—' : totalScholars}
+            sub={selectedYearLevel === 'all' ? 'Across all year levels' : formatYearLevelLabel(selectedYearLevel)} color={MAROON} icon={Users} />
+          <StatCard label="Average Compliance" value={loading ? '—' : `${avgCompliance}%`}
+            sub="Overall completion rate" color={SAGE} icon={ShieldCheck} />
+          <StatCard label="Letters Reviewed" value={loading ? '—' : lettersReviewed}
+            sub="Approved by officers" color={GOLD} icon={FileText} />
+          <StatCard label="At-Risk Scholars" value={loading ? '—' : atRiskScholars}
+            sub="Below 50% compliance" color={CLAY} icon={AlertTriangle} />
+        </div>
+
+        {/* ── Filter toolbar ── */}
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center" style={{ ...tile, padding: '12px 18px' }}>
+          <div className="flex items-center gap-3">
+            <span style={{ ...sans, fontSize: '0.78rem', color: '#7a6a62' }}>Period</span>
+            <div className="inline-flex gap-1.5" role="group" aria-label="Period">
+              {['1m', '3m', '6m'].map(p => {
+                const active = period === p;
+                return (
+                  <button key={p} type="button" aria-pressed={active} onClick={() => setPeriod(p)} className="oa-btn transition-colors"
+                    style={{ ...sans, height: 36, minWidth: 48, padding: '0 14px', borderRadius: 8, fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer',
+                      background: active ? MAROON : PAPER, color: active ? '#fff' : INK, border: `1px solid ${active ? MAROON : RULE}` }}>
+                    {p.toUpperCase()}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 sm:ml-4" style={{ minWidth: 0 }}>
+            <label htmlFor="oa-year" style={{ ...sans, fontSize: '0.78rem', color: '#7a6a62', whiteSpace: 'nowrap' }}>Year Level</label>
+            <select id="oa-year" className="oa-field" value={selectedYearLevel} onChange={(e) => setSelectedYearLevel(e.target.value)}
+              style={{ ...sans, height: 38, minWidth: 180, maxWidth: '100%', padding: '0 12px', borderRadius: 8, border: `1px solid ${RULE}`, background: '#fff', fontSize: '0.82rem', color: INK, cursor: 'pointer', outline: 'none' }}>
               {yearLevelOptions.map(level => (
-                <option key={level} value={level} style={{ color: INK }}>{level === 'all' ? 'All Year Levels' : level}</option>
+                <option key={level} value={level}>{level === 'all' ? 'All Year Levels' : formatYearLevelLabel(level)}</option>
               ))}
             </select>
-            <button onClick={exportCSV}
-              className="flex items-center gap-1.5 rounded-full transition-colors hover:opacity-90"
-              style={{ ...sans, fontSize: '0.76rem', fontWeight: 700, background: GOLD, color: MAROON_DEEP, border: 'none', padding: '7px 16px', cursor: 'pointer' }}>
-              <Download size={13} /> Export
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="relative z-10 px-5 sm:px-8 -mt-6 pb-10">
-
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 mb-6">
-          <StatCard label="Total Scholars" value={totalScholars} sub="Active scholars" color={MAROON} icon={Users} />
-          <StatCard label="Avg Compliance" value={`${avgCompliance}%`} sub="Average completion rate" color={SAGE} icon={TrendingUp} />
-          <StatCard label="Letters Reviewed" value={lettersReviewed} sub="Total letters" color={GOLD} icon={FileText} />
-          <StatCard label="At-Risk Scholars" value={atRiskScholars} sub="Completion below 50%" color={CLAY} icon={AlertTriangle} />
-        </div>
-
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-          <div className="rounded-xl p-5" style={{ background: '#fff', border: `1px solid ${RULE}` }}>
-            <h3 style={{ ...serif, fontSize: '1rem', fontWeight: 700, color: MAROON, marginBottom: 14 }}>Compliance &amp; Sentiment Trend</h3>
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={displayTrend}>
-                <CartesianGrid strokeDasharray="3 3" stroke={RULE} />
-                <XAxis dataKey="month" stroke="#a89890" style={chartStyle} />
-                <YAxis stroke="#a89890" style={chartStyle} />
-                <Tooltip contentStyle={{ ...sans, fontSize: '0.8rem', borderRadius: 8, border: `1px solid ${RULE}` }} />
-                <Legend wrapperStyle={{ ...sans, fontSize: '0.75rem' }} />
-                <Line type="monotone" dataKey="compliance" stroke={MAROON} strokeWidth={2} name="Compliance %" dot={{ r: 3 }} />
-                <Line type="monotone" dataKey="sentimentPos" stroke={SAGE} strokeWidth={2} name="Positive %" dot={{ r: 3 }} />
-                <Line type="monotone" dataKey="sentimentNeg" stroke={CLAY} strokeWidth={2} name="Negative %" dot={{ r: 3 }} />
-              </LineChart>
-            </ResponsiveContainer>
           </div>
 
-          <div className="rounded-xl p-5" style={{ background: '#fff', border: `1px solid ${RULE}` }}>
-            <h3 style={{ ...serif, fontSize: '1rem', fontWeight: 700, color: MAROON, marginBottom: 14 }}>Letter Sentiment Distribution</h3>
-            <div className="flex items-center gap-4">
-              <ResponsiveContainer width="60%" height={200}>
-                <PieChart>
-                  <Pie data={sentimentDist} cx="50%" cy="50%" outerRadius={80} dataKey="pct" label={({ value }) => `${value}%`} labelLine={false}>
-                    {sentimentDist.map((e, i) => <Cell key={i} fill={e.color} />)}
-                  </Pie>
-                  <Tooltip contentStyle={{ ...sans, fontSize: '0.8rem', borderRadius: 8, border: `1px solid ${RULE}` }} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="flex-1 space-y-3">
-                {sentimentDist.map((item, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: item.color }} />
-                    <div>
-                      <p style={{ ...sans, fontSize: '0.72rem', fontWeight: 700, color: INK }}>{item.name}</p>
-                      <p style={{ ...serif, fontSize: '1.15rem', fontWeight: 700, color: item.color }}>{item.pct}%</p>
+          <button type="button" onClick={exportCSV} className="oa-btn oa-export inline-flex items-center justify-center gap-2 sm:ml-auto"
+            style={{ ...sans, height: 38, padding: '0 16px', borderRadius: 8, background: '#fff', color: MAROON, border: `1px solid ${MAROON}`, fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer' }}>
+            <Download size={14} /> Export CSV
+          </button>
+        </div>
+
+        {/* ── Error ── */}
+        {error && (
+          <div role="alert" className="flex items-center gap-2" style={{ ...tile, borderLeft: `3px solid ${CLAY}`, background: `${CLAY}0d`, padding: '12px 16px', ...sans, fontSize: '0.82rem', fontWeight: 600, color: CLAY }}>
+            <AlertTriangle size={15} className="flex-shrink-0" /> {error}
+          </div>
+        )}
+
+        {/* ── Loading skeletons ── */}
+        {loading && (
+          <>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2"><Skeleton height={300} /><Skeleton height={300} /></div>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2"><Skeleton height={230} /><Skeleton height={230} /></div>
+            <Skeleton height={300} />
+          </>
+        )}
+
+        {hasBody && (
+          <>
+            {/* ── Row 1: trend + sentiment ── */}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <ChartCard icon={TrendingUp} title="Monthly Submissions Trend" description="Compliance and sentiment percentages per month.">
+                {displayTrend.length === 0 ? <EmptyNote>No submissions in this period.</EmptyNote> : (
+                  <div style={{ width: '100%', height: 240, minWidth: 0 }}>
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                      <LineChart data={displayTrend}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={RULE} />
+                        <XAxis dataKey="month" stroke="#a89890" style={chartStyle} />
+                        <YAxis stroke="#a89890" style={chartStyle} />
+                        <Tooltip contentStyle={tooltipStyle} />
+                        <Legend wrapperStyle={{ ...sans, fontSize: '0.75rem' }} />
+                        <Line type="monotone" dataKey="compliance" stroke={MAROON} strokeWidth={2} name="Compliance %" dot={{ r: 3 }} />
+                        <Line type="monotone" dataKey="sentimentPos" stroke={SAGE} strokeWidth={2} name="Positive %" dot={{ r: 3 }} />
+                        <Line type="monotone" dataKey="sentimentNeg" stroke={CLAY} strokeWidth={2} name="Negative %" dot={{ r: 3 }} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </ChartCard>
+
+              <ChartCard icon={PieChartIcon} title="Sentiment Distribution" description="Sentiment analysis of submitted letters.">
+                {monthlySubs.length === 0 ? <EmptyNote>No letters in this period.</EmptyNote> : (
+                  <div className="flex flex-col items-center gap-4 sm:flex-row">
+                    <div className="relative w-full sm:w-3/5" style={{ height: 220, minWidth: 0 }}>
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                        <PieChart>
+                          <Pie data={sentimentDist} cx="50%" cy="50%" innerRadius={52} outerRadius={84} dataKey="pct" label={({ value }) => `${value}%`} labelLine={false}>
+                            {sentimentDist.map((e, i) => <Cell key={i} fill={e.color} />)}
+                          </Pie>
+                          <Tooltip contentStyle={tooltipStyle} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
+                        <span style={{ ...serif, fontSize: '1.4rem', fontWeight: 700, color: INK, lineHeight: 1 }}>{monthlySubs.length}</span>
+                        <span style={{ ...sans, fontSize: '0.7rem', color: '#a89890' }}>Letters</span>
+                      </div>
+                    </div>
+                    <div className="w-full flex-1">
+                      {sentimentDist.map((item, i) => (
+                        <div key={item.name} className="flex items-center gap-2.5 py-2.5" style={{ borderTop: i > 0 ? `1px solid ${RULE}` : 'none' }}>
+                          <span className="flex-shrink-0 rounded-full" style={{ width: 11, height: 11, background: item.color }} />
+                          <span className="flex-1" style={{ ...sans, fontSize: '0.8rem', color: INK }}>{item.name}</span>
+                          <span style={{ ...mono, fontSize: '0.76rem', color: '#6b6058', minWidth: 28, textAlign: 'right' }}>{item.value}</span>
+                          <span style={{ ...mono, fontSize: '0.76rem', fontWeight: 700, color: item.color, minWidth: 42, textAlign: 'right' }}>{item.pct}%</span>
+                        </div>
+                      ))}
                     </div>
                   </div>
-                ))}
-              </div>
+                )}
+              </ChartCard>
             </div>
-          </div>
-        </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-          <div className="rounded-xl p-5" style={{ background: '#fff', border: `1px solid ${RULE}` }}>
-            <h3 style={{ ...serif, fontSize: '1rem', fontWeight: 700, color: MAROON, marginBottom: 14 }}>Letter Completeness by Metric</h3>
-            <div className="space-y-3.5">
-              {completenessData.map((item, i) => (
-                <div key={i}>
-                  <div className="flex justify-between mb-1.5" style={{ ...sans, fontSize: '0.74rem', color: '#6b6058' }}>
-                    <span>{item.category}</span>
-                    <span style={{ fontWeight: 700 }}>{item.pct}%</span>
-                  </div>
-                  <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: RULE }}>
-                    <div className="h-full rounded-full transition-all" style={{ width: `${item.pct}%`, backgroundColor: item.pct >= 85 ? SAGE : item.pct >= 70 ? AMBER : CLAY }} />
+            {/* ── Row 2: completeness + issues ── */}
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              <ChartCard icon={FileText} title="Letter Completeness by Metric" description="Share of letters that meet each completeness check.">
+                <div className="space-y-4">
+                  {completenessData.map((item) => {
+                    const color = item.pct >= 85 ? SAGE : item.pct >= 70 ? AMBER : CLAY;
+                    return (
+                      <div key={item.category}>
+                        <div className="flex justify-between gap-3" style={{ ...sans, fontSize: '0.78rem', color: '#4b3f38', marginBottom: 6 }}>
+                          <span>{item.category}</span>
+                          <span style={{ fontWeight: 700 }}>{item.pct}%</span>
+                        </div>
+                        <div className="h-2 w-full overflow-hidden rounded-full" style={{ background: RULE }}>
+                          <div className="h-full rounded-full transition-all" style={{ width: `${Math.max(0, Math.min(100, item.pct))}%`, backgroundColor: color }} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </ChartCard>
+
+              <ChartCard icon={AlertTriangle} title="Top Compliance Issues" description="Most common missing or incomplete components.">
+                <div>
+                  {topIssues.map((item, i) => (
+                    <div key={item.issue} className="flex items-center gap-3 py-2.5" style={{ borderTop: i > 0 ? `1px solid ${RULE}` : 'none' }}>
+                      <span className="flex flex-shrink-0 items-center justify-center rounded-full" style={{ width: 22, height: 22, background: MAROON, color: '#fff', ...sans, fontSize: '0.64rem', fontWeight: 800 }}>{i + 1}</span>
+                      <span className="min-w-0 flex-1" style={{ ...sans, fontSize: '0.82rem', color: '#4b3f38' }}>{item.issue}</span>
+                      <div className="hidden w-24 flex-shrink-0 overflow-hidden rounded-full sm:block" style={{ height: 6, background: RULE }}>
+                        <div className="h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, item.pct))}%`, background: i === 0 ? MAROON : i < 3 ? GOLD : GOLD_LIGHT }} />
+                      </div>
+                      <div className="flex-shrink-0 text-right" style={{ minWidth: 74 }}>
+                        <span style={{ ...serif, fontSize: '0.95rem', fontWeight: 700, color: MAROON }}>{item.count}</span>
+                        <span style={{ ...mono, fontSize: '0.7rem', color: '#a89890', marginLeft: 4 }}>({item.pct}%)</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </ChartCard>
+            </div>
+
+            {/* ── Row 3: full-width year-level chart ── */}
+            <ChartCard icon={BarChart3} title="Compliance Rate by Year Level" description="Average completion rate per year level.">
+              {yearLevelCompliance.length === 0 ? <EmptyNote>No year-level data available.</EmptyNote> : (
+                <div className="oa-scroll overflow-x-auto">
+                  <div style={{ minWidth: yearChartMinWidth, height: 260 }}>
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                      <AreaChart data={yearLevelCompliance} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={RULE} />
+                        <XAxis dataKey="level" stroke="#a89890" style={chartStyle} interval={0} tickMargin={6} tickFormatter={(v) => formatYearLevelLabel(v)} />
+                        <YAxis domain={[0, 100]} stroke="#a89890" style={chartStyle} />
+                        <Tooltip contentStyle={tooltipStyle} labelFormatter={(v) => formatYearLevelLabel(v)} />
+                        <Area type="monotone" dataKey="compliance" stroke={MAROON} fill={PAPER} strokeWidth={2} name="Compliance %" />
+                      </AreaChart>
+                    </ResponsiveContainer>
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="rounded-xl p-5" style={{ background: '#fff', border: `1px solid ${RULE}` }}>
-            <h3 style={{ ...serif, fontSize: '1rem', fontWeight: 700, color: MAROON, marginBottom: 10 }}>Top Compliance Issues</h3>
-            <div>
-              {topIssues.map((item, i) => (
-                <div key={i} className="flex items-center justify-between py-2.5" style={{ borderTop: i > 0 ? `1px solid ${RULE}` : 'none' }}>
-                  <div className="flex items-center gap-2.5">
-                    <span className="flex-shrink-0 flex items-center justify-center rounded-full" style={{ width: 20, height: 20, background: MAROON, color: '#fff', ...sans, fontSize: '0.62rem', fontWeight: 800 }}>{i + 1}</span>
-                    <span style={{ ...sans, fontSize: '0.8rem', color: '#4b3f38' }}>{item.issue}</span>
-                  </div>
-                  <div className="text-right flex-shrink-0 ml-2">
-                    <span style={{ ...serif, fontSize: '0.92rem', fontWeight: 700, color: MAROON }}>{item.count}</span>
-                    <span style={{ ...mono, fontSize: '0.68rem', color: '#a89890', marginLeft: 4 }}>({item.pct}%)</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className="rounded-xl p-5" style={{ background: '#fff', border: `1px solid ${RULE}` }}>
-          <h3 style={{ ...serif, fontSize: '1rem', fontWeight: 700, color: MAROON, marginBottom: 14 }}>Compliance Rate by Year Level</h3>
-          <ResponsiveContainer width="100%" height={240}>
-            <AreaChart data={yearLevelCompliance}>
-              <CartesianGrid strokeDasharray="3 3" stroke={RULE} />
-              <XAxis dataKey="level" stroke="#a89890" style={chartStyle} />
-              <YAxis domain={[0, 100]} stroke="#a89890" style={chartStyle} />
-              <Tooltip contentStyle={{ ...sans, fontSize: '0.8rem', borderRadius: 8, border: `1px solid ${RULE}` }} />
-              <Area type="monotone" dataKey="compliance" stroke={MAROON} fill={PAPER} strokeWidth={2} name="Compliance %" />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
+              )}
+            </ChartCard>
+          </>
+        )}
       </div>
     </div>
   );

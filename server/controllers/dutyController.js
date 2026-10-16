@@ -2,6 +2,7 @@ const db = require('../config/db');
 const crypto = require('crypto');
 const { sendDutyNotifyEmails } = require('../utils/notifyHelpers');
 const { logComplianceIncident, clampCompliance, getComplianceSettings, calculateCurrentCompliance } = require('../utils/complianceLogger');
+const { markEndedDutyAbsences } = require('../services/dutyAbsenceService');
 
 const logAttendanceNotification = (scholar_id, type, detail, cb = () => {}) => {
     if (!scholar_id) return cb();
@@ -24,12 +25,12 @@ exports.createDuty = (req, res) => {
     const {
         title, description, location,
         duty_date, time_start, time_end,
-        group_ids = [],
-        created_by
+        group_ids = []
     } = req.body;
 
-    if (!title || !duty_date || !created_by)
-        return res.status(400).json({ error: 'title, duty_date, and created_by are required' });
+    const createdBy = req.user?.id;
+    if (!title || !duty_date || !createdBy)
+        return res.status(400).json({ error: 'title and duty_date are required' });
     if (!Array.isArray(group_ids) || group_ids.length === 0)
         return res.status(400).json({ error: 'Select at least one group.' });
 
@@ -44,7 +45,7 @@ exports.createDuty = (req, res) => {
     db.query(sql, [
         title, description || null, location || null,
         duty_date, time_start || null, time_end || null,
-        qrToken, created_by
+        qrToken, createdBy
     ], (err, result) => {
         if (err) {
             console.error('Error creating duty:', err);
@@ -52,7 +53,7 @@ exports.createDuty = (req, res) => {
         }
 
         const dutyId = result.insertId;
-        const groupValues = group_ids.map(gid => [dutyId, gid, created_by]);
+        const groupValues = group_ids.map(gid => [dutyId, gid, createdBy]);
         const groupSql = `INSERT IGNORE INTO duty_group_assignments (duty_id, group_id, assigned_by) VALUES ?`;
 
         db.query(groupSql, [groupValues], (err2) => {
@@ -156,9 +157,16 @@ exports.bulkMarkAttendance = (req, res) => {
         return res.status(400).json({ error: 'records array is required' });
 
     const scholarIds = records.map(r => r.scholar_id);
-    const deleteSql = `DELETE FROM duty_attendance WHERE duty_id = ? AND scholar_id IN (?)`;
+    db.query("SELECT status FROM duties WHERE id = ? LIMIT 1", [duty_id], (dutyErr, dutyRows) => {
+        if (dutyErr) return res.status(500).json({ error: 'Error checking duty status' });
+        if (!dutyRows.length) return res.status(404).json({ error: 'Duty not found' });
+        if (!['upcoming', 'ongoing'].includes(dutyRows[0].status)) {
+            return res.status(409).json({ error: 'Attendance is closed because this duty is completed or cancelled.' });
+        }
 
-    db.query(deleteSql, [duty_id, scholarIds], (err) => {
+        const deleteSql = `DELETE FROM duty_attendance WHERE duty_id = ? AND scholar_id IN (?)`;
+
+        db.query(deleteSql, [duty_id, scholarIds], (err) => {
         if (err) {
             console.error('Error clearing old attendance:', err);
             return res.status(500).json({ error: 'Error saving attendance' });
@@ -177,6 +185,7 @@ exports.bulkMarkAttendance = (req, res) => {
                 return res.status(500).json({ error: 'Error saving attendance' });
             }
             res.status(201).json({ message: 'Attendance saved', count: records.length });
+        });
         });
     });
 };
@@ -233,8 +242,19 @@ exports.getDutyById = exports.getDutyDetails;
 // NOTE: na-merge na ito galing sa staffController.js version -- nag-pa-parse na
 // din ng target_audience JSON column.
 exports.getAllDuties = (req, res) => {
-    const sql = "SELECT * FROM duties ORDER BY duty_date DESC";
-    db.query(sql, (err, data) => {
+    const isStaff = ['staff', 'Staff'].includes(req.user?.role);
+    const sql = isStaff
+        ? `
+            SELECT DISTINCT d.*
+            FROM duties d
+            INNER JOIN duty_group_assignments dga ON dga.duty_id = d.id
+            INNER JOIN scholar_groups g ON g.id = dga.group_id
+            WHERE g.assigned_staff_id = ?
+            ORDER BY d.duty_date DESC
+        `
+        : "SELECT * FROM duties ORDER BY duty_date DESC";
+    const values = isStaff ? [req.user.id] : [];
+    db.query(sql, values, (err, data) => {
         if (err) return res.status(500).json({ error: 'Error fetching duties' });
         const parsed = data.map(d => ({
             ...d,
@@ -327,7 +347,14 @@ exports.markAttendance = (req, res) => {
     const { id } = req.params;
     const { scholar_id, status, method, marked_by } = req.body;
 
-    db.query(
+    db.query("SELECT status FROM duties WHERE id = ? LIMIT 1", [id], (dutyErr, dutyRows) => {
+        if (dutyErr) return res.status(500).json({ error: 'Error checking duty status' });
+        if (!dutyRows.length) return res.status(404).json({ error: 'Duty not found' });
+        if (!['upcoming', 'ongoing'].includes(dutyRows[0].status)) {
+            return res.status(409).json({ error: 'Attendance is closed because this duty is completed or cancelled.' });
+        }
+
+        db.query(
         "SELECT id FROM duty_attendance WHERE duty_id = ? AND scholar_id = ?",
         [id, scholar_id],
         (err, existing) => {
@@ -409,7 +436,8 @@ exports.markAttendance = (req, res) => {
                 );
             }
         }
-    );
+        );
+    });
 };
 
 // ─── BULK SAVE ATTENDANCE (Manual Entry) ─────────────────────
@@ -503,8 +531,166 @@ exports.getAttendanceSummary = (req, res) => {
 exports.notifyDutyScholars = (req, res) => {
     const { id } = req.params;
     sendDutyNotifyEmails(id, (err, result) => {
-        if (err) return res.status(400).json({ error: 'Failed to send duty notifications', detail: String(err) });
-        if (result && result.error) return res.status(400).json(result);
+        if (err) {
+            const status = err.message === 'Duty not found' ? 404 : 500;
+            return res.status(status).json({ error: 'Failed to send duty notifications', detail: String(err) });
+        }
+        if (result?.error === 'SMTP not configured') {
+            return res.status(503).json({ error: 'Email service is not configured.' });
+        }
+        if (result && result.error) return res.status(502).json(result);
         res.json(result);
     });
+};
+
+// ─── APPROVE A ONE-DUTY MAKEUP PERMISSION ────────────────────
+// This does not change the scholar's permanent group membership.
+exports.getMakeupPermissions = (req, res) => {
+    const status = req.query.status || 'approved';
+    db.query(`
+        SELECT p.*, s.full_name AS scholar_name,
+               source.title AS source_duty_title, source.duty_date AS source_duty_date,
+               target.title AS makeup_duty_title, target.duty_date AS makeup_duty_date
+        FROM duty_makeup_permissions p
+        JOIN users s ON s.scholar_id = p.scholar_id
+        JOIN duties source ON source.id = p.source_duty_id
+        JOIN duties target ON target.id = p.makeup_duty_id
+        WHERE p.status = ?
+        ORDER BY target.duty_date ASC, s.full_name ASC
+    `, [status], (err, rows) => {
+        if (err) return res.status(500).json({ error: 'Error fetching makeup permissions' });
+        res.json(rows);
+    });
+};
+
+exports.createMakeupPermission = (req, res) => {
+    const { scholar_id, source_duty_id, makeup_duty_id, reason } = req.body;
+    if (!scholar_id || !source_duty_id || !makeup_duty_id) {
+        return res.status(400).json({ error: 'scholar_id, source_duty_id, and makeup_duty_id are required' });
+    }
+    if (Number(source_duty_id) === Number(makeup_duty_id)) {
+        return res.status(400).json({ error: 'Source and makeup duty must be different' });
+    }
+
+    const sourceSql = `
+        SELECT da.status, source.duty_date
+        FROM duty_attendance da
+        JOIN duties source ON source.id = da.duty_id
+        WHERE da.duty_id = ? AND da.scholar_id = ?
+        ORDER BY da.marked_at DESC LIMIT 1
+    `;
+    db.query(sourceSql, [source_duty_id, scholar_id], (sourceErr, sourceRows) => {
+        if (sourceErr) return res.status(500).json({ error: 'Error checking source duty attendance' });
+        if (!sourceRows.length || !['absent', 'excused'].includes(String(sourceRows[0].status).toLowerCase())) {
+            return res.status(400).json({ error: 'Scholar must have an absent or excused record on the source duty' });
+        }
+
+        const sourceDate = sourceRows[0].duty_date;
+        db.query(
+            `SELECT id FROM duties
+             WHERE id = ? AND duty_date > CURDATE() AND duty_date > ?
+               AND duty_date <= DATE_ADD(?, INTERVAL 14 DAY)
+               AND status <> 'cancelled'
+             LIMIT 1`,
+            [makeup_duty_id, sourceDate, sourceDate],
+            (targetErr, targetRows) => {
+                if (targetErr) return res.status(500).json({ error: 'Error checking makeup duty' });
+                if (!targetRows.length) return res.status(400).json({ error: 'Select a non-cancelled duty within 14 days after the missed duty.' });
+
+                db.query(
+                    `SELECT id FROM users WHERE scholar_id = ? AND role = 'scholar' AND status = 'active' LIMIT 1`,
+                    [scholar_id],
+                    (userErr, userRows) => {
+                        if (userErr) return res.status(500).json({ error: 'Error checking scholar' });
+                        if (!userRows.length) return res.status(404).json({ error: 'Active scholar not found' });
+
+                        const createPermission = () => db.query(`
+                            INSERT INTO duty_makeup_permissions
+                                (scholar_id, source_duty_id, makeup_duty_id, reason, status, approved_by, approved_at)
+                            VALUES (?, ?, ?, ?, 'approved', ?, NOW())
+                            ON DUPLICATE KEY UPDATE
+                                source_duty_id = VALUES(source_duty_id), reason = VALUES(reason),
+                                status = 'approved', approved_by = VALUES(approved_by), approved_at = NOW(), used_at = NULL
+                        `, [scholar_id, source_duty_id, makeup_duty_id, reason || null, req.user.id], (insertErr) => {
+                            if (insertErr) return res.status(500).json({ error: 'Failed to assign makeup duty' });
+                            res.status(201).json({ message: 'Makeup duty assigned', scholar_id, makeup_duty_id });
+                        });
+
+                        db.query(
+                            `UPDATE duty_makeup_permissions
+                             SET makeup_duty_id = ?, reason = ?, status = 'approved',
+                                 approved_by = ?, approved_at = NOW(), used_at = NULL
+                             WHERE scholar_id = ? AND source_duty_id = ? AND status = 'pending'`,
+                            [makeup_duty_id, reason || null, req.user.id, scholar_id, source_duty_id],
+                            (pendingErr, pendingResult) => {
+                                if (pendingErr) return res.status(500).json({ error: 'Failed to assign makeup duty' });
+                                if (pendingResult.affectedRows) {
+                                    return res.status(201).json({ message: 'Makeup duty assigned', scholar_id, makeup_duty_id });
+                                }
+                                createPermission();
+                            }
+                        );
+                    }
+                );
+            }
+        );
+    });
+};
+
+exports.getMakeupCandidates = async (req, res) => {
+    try {
+        await markEndedDutyAbsences();
+    } catch (error) {
+        console.error('[duty-absence] failed to prepare admin makeup candidates:', error.message || error);
+        return res.status(500).json({ error: 'Unable to update ended duty attendance.' });
+    }
+    db.query(`
+        SELECT DISTINCT
+            da.scholar_id, u.full_name AS scholar_name,
+            source.id AS source_duty_id, source.title AS source_duty_title,
+            source.duty_date AS source_duty_date, da.status AS source_status,
+            pending.makeup_duty_id AS requested_makeup_duty_id, pending.reason
+        FROM duty_attendance da
+        JOIN users u ON u.scholar_id = da.scholar_id AND u.role = 'scholar' AND u.status = 'active'
+        JOIN duties source ON source.id = da.duty_id
+        LEFT JOIN (
+            SELECT p1.id, p1.scholar_id, p1.source_duty_id, p1.makeup_duty_id, p1.reason
+            FROM duty_makeup_permissions p1
+            JOIN (
+                SELECT scholar_id, source_duty_id, MAX(id) AS id
+                FROM duty_makeup_permissions
+                WHERE status = 'pending'
+                GROUP BY scholar_id, source_duty_id
+            ) latest_pending ON latest_pending.id = p1.id
+        ) pending ON pending.scholar_id = da.scholar_id AND pending.source_duty_id = da.duty_id
+        WHERE da.status IN ('absent', 'excused')
+          AND source.duty_date >= DATE_SUB(CURDATE(), INTERVAL 14 DAY)
+          AND (
+              pending.id IS NOT NULL
+              OR NOT EXISTS (
+                  SELECT 1 FROM duty_makeup_permissions active_permission
+                  WHERE active_permission.scholar_id = da.scholar_id
+                    AND active_permission.source_duty_id = da.duty_id
+                    AND active_permission.status IN ('approved', 'used')
+              )
+          )
+        ORDER BY source.duty_date DESC, u.full_name ASC
+    `, (err, rows) => {
+        if (err) return res.status(500).json({ error: 'Error fetching makeup candidates' });
+        res.json(rows);
+    });
+};
+
+// Complete a duty after attendance has been finalized.
+exports.completeDuty = (req, res) => {
+    const { duty_id } = req.params;
+    db.query(
+        "UPDATE duties SET status = 'completed' WHERE id = ? AND status IN ('upcoming', 'ongoing')",
+        [duty_id],
+        (err, result) => {
+            if (err) return res.status(500).json({ error: 'Error completing duty' });
+            if (!result.affectedRows) return res.status(409).json({ error: 'Duty is already completed, cancelled, or unavailable.' });
+            res.json({ message: 'Duty completed', duty_id: Number(duty_id), status: 'completed' });
+        }
+    );
 };

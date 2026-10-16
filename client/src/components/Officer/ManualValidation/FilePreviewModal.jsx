@@ -2,16 +2,27 @@ import React, { useEffect, useState } from 'react';
 import axios from 'axios';
 import { Download, X, FileText, ExternalLink, File, FileArchive, AlertTriangle } from 'lucide-react';
 
-const MAROON = '#7f2d3a';
-const BLUSH = '#F5E8EA';
+// ── Apple Scholar Officer tokens (same as the Scholar Submissions page) ──
+const BG = '#F7F4EE';
+const SURFACE = '#FFFDF9';
+const BORDER = '#E7D8C7';
+const MAROON = '#6D2140';
+const INK = '#241512';
+const MUTED = '#8A7A68';
+const SUCCESS = '#2F855A';
+const DANGER = '#B91C1C';
+const GOLD = '#A9784E';
+
+const sans = { fontFamily: "'Inter', sans-serif" };
 
 // Per-file-type accent so the header badge always signals what you're
 // looking at before the body even loads (useful for slow Cloudinary PDFs).
+// Colours come from the shared palette instead of one-off blues/greys.
 const KIND_STYLES = {
-    image: { icon: FileText, label: 'Image', bg: '#EAF3EE', fg: '#2F6B4F' },
-    pdf: { icon: FileText, label: 'PDF', bg: '#FDECEC', fg: '#B3261E' },
-    doc: { icon: File, label: 'Document', bg: '#E9EEFB', fg: '#2E4FA3' },
-    other: { icon: FileArchive, label: 'File', bg: '#F1F1F1', fg: '#5B5B5B' },
+    image: { icon: FileText, label: 'Image', bg: `${SUCCESS}14`, fg: SUCCESS },
+    pdf: { icon: FileText, label: 'PDF', bg: `${DANGER}14`, fg: DANGER },
+    doc: { icon: File, label: 'Document', bg: `${GOLD}1F`, fg: GOLD },
+    other: { icon: FileArchive, label: 'File', bg: `${MUTED}1F`, fg: MUTED },
 };
 
 // Any URL that goes through OUR backend (the /submission/preview proxy) is
@@ -21,6 +32,12 @@ const KIND_STYLES = {
 // axios (token attached), turn them into a blob, and point the tags at the
 // blob URL instead of the raw backend URL.
 const needsAuthProxy = (url) => url.includes('/api/submission/preview') || url.includes('/submission/preview');
+
+const iconBtn = (enabled) => ({
+    width: 36, height: 36, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    color: enabled ? MUTED : '#D9CBB8', border: `1px solid ${enabled ? BORDER : 'transparent'}`,
+    background: SURFACE, cursor: enabled ? 'pointer' : 'not-allowed', transition: 'background-color 150ms ease, color 150ms ease',
+});
 
 const FilePreviewModal = ({ preview, onClose }) => {
     const [loaded, setLoaded] = useState(false);
@@ -104,32 +121,38 @@ const FilePreviewModal = ({ preview, onClose }) => {
 
     const isWaitingOnAuthFetch = requiresAuth && !objectUrl && !fetchError;
 
+    const hoverOn = (e) => { e.currentTarget.style.backgroundColor = BG; e.currentTarget.style.color = INK; };
+    const hoverOff = (e) => { e.currentTarget.style.backgroundColor = SURFACE; e.currentTarget.style.color = MUTED; };
+
     return (
         <div
             className="fixed inset-0 z-50 flex items-end sm:items-center justify-center sm:p-4"
-            style={{ backgroundColor: 'rgba(20,10,12,0.55)', backdropFilter: 'blur(6px)' }}
+            style={{ backgroundColor: 'rgba(36,21,18,0.5)', backdropFilter: 'blur(4px)' }}
             onClick={onClose}
         >
             <div
-                className="relative bg-white w-full sm:max-w-3xl h-[92vh] sm:h-auto sm:max-h-[88vh]
-                           rounded-t-3xl sm:rounded-2xl shadow-2xl overflow-hidden flex flex-col
-                           animate-[preview-in_0.22s_ease-out]"
+                role="dialog"
+                aria-modal="true"
+                aria-label={preview.label || 'File preview'}
+                className="preview-dialog relative w-full sm:max-w-3xl h-[92vh] sm:h-auto sm:max-h-[88vh]
+                           rounded-t-2xl sm:rounded-2xl overflow-hidden flex flex-col"
+                style={{ background: SURFACE, border: `1px solid ${BORDER}`, boxShadow: '0 24px 60px -20px rgba(74,23,41,0.40)' }}
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}
-                <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 border-b border-slate-100 shrink-0">
+                <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 shrink-0" style={{ borderBottom: `1px solid ${BORDER}` }}>
                     <div className="flex items-center gap-3 min-w-0">
                         <div
-                            className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+                            className="w-9 h-9 rounded-full flex items-center justify-center shrink-0"
                             style={{ backgroundColor: style.bg, color: style.fg }}
                         >
-                            <KindIcon size={16} strokeWidth={2.25} />
+                            <KindIcon size={16} strokeWidth={2.1} />
                         </div>
                         <div className="min-w-0">
-                            <p className="text-sm font-bold text-slate-800 truncate leading-tight">
+                            <p className="truncate leading-tight" style={{ ...sans, fontSize: '0.88rem', fontWeight: 700, color: INK }}>
                                 {preview.label}
                             </p>
-                            <p className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: style.fg }}>
+                            <p style={{ ...sans, fontSize: '0.72rem', fontWeight: 600, color: style.fg, marginTop: 1 }}>
                                 {style.label}
                             </p>
                         </div>
@@ -143,9 +166,12 @@ const FilePreviewModal = ({ preview, onClose }) => {
                             target="_blank"
                             rel="noreferrer"
                             title="Open in new tab"
+                            aria-label="Open in new tab"
                             onClick={(e) => !effectiveUrl && e.preventDefault()}
-                            className={`hidden sm:flex w-9 h-9 items-center justify-center rounded-xl transition-colors
-                                        ${effectiveUrl ? 'text-slate-400 hover:text-slate-700 hover:bg-slate-100' : 'text-slate-200 cursor-not-allowed'}`}
+                            onMouseEnter={effectiveUrl ? hoverOn : undefined}
+                            onMouseLeave={effectiveUrl ? hoverOff : undefined}
+                            className="hidden sm:flex"
+                            style={iconBtn(!!effectiveUrl)}
                         >
                             <ExternalLink size={16} />
                         </a>
@@ -155,20 +181,21 @@ const FilePreviewModal = ({ preview, onClose }) => {
                             rel="noreferrer"
                             download={requiresAuth ? (preview.label || 'file') : undefined}
                             title="Download"
+                            aria-label="Download"
                             onClick={(e) => !effectiveUrl && e.preventDefault()}
-                            className={`w-9 h-9 flex items-center justify-center rounded-xl transition-colors
-                                        ${effectiveUrl ? 'text-slate-400 hover:text-slate-700 hover:bg-slate-100' : 'text-slate-200 cursor-not-allowed'}`}
+                            onMouseEnter={effectiveUrl ? hoverOn : undefined}
+                            onMouseLeave={effectiveUrl ? hoverOff : undefined}
+                            style={iconBtn(!!effectiveUrl)}
                         >
                             <Download size={16} />
                         </a>
                         <button
                             onClick={onClose}
                             title="Close"
-                            className="w-9 h-9 flex items-center justify-center rounded-xl
-                                       text-slate-400 hover:text-white transition-colors"
-                            style={{ backgroundColor: 'transparent' }}
-                            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = MAROON)}
-                            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+                            aria-label="Close preview"
+                            style={{ ...iconBtn(true) }}
+                            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = MAROON; e.currentTarget.style.color = '#fff'; e.currentTarget.style.borderColor = MAROON; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = SURFACE; e.currentTarget.style.color = MUTED; e.currentTarget.style.borderColor = BORDER; }}
                         >
                             <X size={17} />
                         </button>
@@ -179,25 +206,26 @@ const FilePreviewModal = ({ preview, onClose }) => {
                     so it's shown here regardless of who opens the preview (officer or scholar).
                     Officer-side callers simply don't pass `description`, so it stays hidden there. */}
                 {preview.description && (
-                    <div className="px-4 sm:px-5 py-2.5 border-b border-slate-100 shrink-0" style={{ backgroundColor: BLUSH }}>
-                        <p className="text-[10px] font-black uppercase tracking-wider mb-0.5" style={{ color: MAROON }}>
+                    <div className="px-4 sm:px-5 py-3 shrink-0" style={{ backgroundColor: BG, borderBottom: `1px solid ${BORDER}` }}>
+                        <p style={{ ...sans, fontSize: '0.7rem', fontWeight: 700, color: MAROON, marginBottom: 2 }}>
                             Comment
                         </p>
-                        <p className="text-xs text-slate-600 leading-relaxed">{preview.description}</p>
+                        <p style={{ ...sans, fontSize: '0.8rem', color: INK, lineHeight: 1.55 }}>{preview.description}</p>
                     </div>
                 )}
 
                 {/* Body */}
                 <div
-                    className={`flex-1 min-h-0 overflow-auto bg-slate-50 flex items-center justify-center relative
+                    className={`flex-1 min-h-0 overflow-auto flex items-center justify-center relative
                                 ${preview.kind === 'pdf' ? 'p-0' : 'p-3 sm:p-5'}`}
+                    style={{ backgroundColor: BG }}
                 >
                     {fetchError ? (
                         <div className="flex flex-col items-center gap-3 py-10 px-6 text-center">
-                            <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ backgroundColor: '#fef2f2', color: '#ef4444' }}>
-                                <AlertTriangle size={24} strokeWidth={2} />
+                            <div className="w-12 h-12 rounded-full flex items-center justify-center" style={{ backgroundColor: `${DANGER}14`, color: DANGER }}>
+                                <AlertTriangle size={22} strokeWidth={2} />
                             </div>
-                            <p className="text-sm font-bold text-slate-700">{fetchError}</p>
+                            <p role="alert" style={{ ...sans, fontSize: '0.86rem', fontWeight: 700, color: INK }}>{fetchError}</p>
                         </div>
                     ) : isWaitingOnAuthFetch ? (
                         <Spinner />
@@ -210,8 +238,8 @@ const FilePreviewModal = ({ preview, onClose }) => {
                                         src={effectiveUrl}
                                         alt={preview.label}
                                         onLoad={() => setLoaded(true)}
-                                        className={`max-w-full max-h-full object-contain rounded-xl shadow-sm
-                                                    transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+                                        className={`max-w-full max-h-full object-contain transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+                                        style={{ borderRadius: 12, border: `1px solid ${BORDER}`, background: SURFACE }}
                                     />
                                 </>
                             )}
@@ -232,16 +260,16 @@ const FilePreviewModal = ({ preview, onClose }) => {
                             {(preview.kind === 'doc' || preview.kind === 'other') && (
                                 <div className="flex flex-col items-center gap-4 py-10 px-6 text-center">
                                     <div
-                                        className="w-16 h-16 rounded-2xl flex items-center justify-center"
+                                        className="w-14 h-14 rounded-full flex items-center justify-center"
                                         style={{ backgroundColor: style.bg, color: style.fg }}
                                     >
-                                        <KindIcon size={26} strokeWidth={2} />
+                                        <KindIcon size={24} strokeWidth={1.9} />
                                     </div>
                                     <div>
-                                        <p className="text-sm font-bold text-slate-700">
+                                        <p style={{ ...sans, fontSize: '0.9rem', fontWeight: 700, color: INK }}>
                                             {preview.kind === 'doc' ? "Can't preview Word documents here" : "Can't preview this file type"}
                                         </p>
-                                        <p className="text-xs text-slate-400 mt-1 max-w-xs">
+                                        <p className="max-w-xs mx-auto" style={{ ...sans, fontSize: '0.78rem', color: MUTED, marginTop: 4, lineHeight: 1.5 }}>
                                             Download it to open with the right app on your device.
                                         </p>
                                     </div>
@@ -251,9 +279,8 @@ const FilePreviewModal = ({ preview, onClose }) => {
                                         rel="noreferrer"
                                         download={requiresAuth ? (preview.label || 'file') : undefined}
                                         onClick={(e) => !effectiveUrl && e.preventDefault()}
-                                        className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-bold
-                                                   uppercase tracking-wider text-white transition-transform hover:scale-[1.02]"
-                                        style={{ backgroundColor: MAROON }}
+                                        className="inline-flex items-center gap-2 px-5 transition-opacity hover:opacity-90"
+                                        style={{ ...sans, height: 40, borderRadius: 12, backgroundColor: MAROON, color: '#fff', fontSize: '0.8rem', fontWeight: 700, textDecoration: 'none' }}
                                     >
                                         <Download size={14} />
                                         Download {preview.kind === 'doc' ? 'document' : 'file'}
@@ -266,10 +293,12 @@ const FilePreviewModal = ({ preview, onClose }) => {
             </div>
 
             <style>{`
+                .preview-dialog { animation: preview-in 0.22s ease-out; }
                 @keyframes preview-in {
                     from { opacity: 0; transform: translateY(12px) scale(0.98); }
                     to { opacity: 1; transform: translateY(0) scale(1); }
                 }
+                @media (prefers-reduced-motion: reduce) { .preview-dialog { animation: none; } }
             `}</style>
         </div>
     );
@@ -278,8 +307,8 @@ const FilePreviewModal = ({ preview, onClose }) => {
 const Spinner = () => (
     <div className="absolute inset-0 flex items-center justify-center">
         <div
-            className="w-8 h-8 rounded-full border-2 border-slate-200 animate-spin"
-            style={{ borderTopColor: MAROON }}
+            className="w-8 h-8 rounded-full animate-spin"
+            style={{ border: `2px solid ${BORDER}`, borderTopColor: MAROON }}
         />
     </div>
 );

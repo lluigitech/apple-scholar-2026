@@ -1,21 +1,40 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { uploadResumableFile } from '../../../utils/resumableUpload';
 import {
     BookOpen, Plus, Trash2, Send, CheckCircle, AlertTriangle,
     ChevronDown, ChevronUp, Lock, GraduationCap, Loader2, Camera, X, RotateCcw,
+    CheckCircle2, Circle, FileText,
 } from 'lucide-react';
 
-// ── Token system — shared across the Scholar Portal ──
-const MAROON = '#7f2d3a';
-const MAROON_DEEP = '#4f1620';
-const GOLD = '#b98b4e';
-const ROSE = '#F5E8EA';
-const IVORY = '#FBF7F2';
+// ── Design tokens — Apple Scholar Portal system ──
+const BG = '#F7F4EE';
+const SURFACE = '#FFFDF9';
+const BORDER = '#E7D8C7';
+const PRIMARY = '#6D2140';
+const PRIMARY_DEEP = '#4A1730';
+const PRIMARY_TINT = 'rgba(109, 33, 64, 0.08)';
+const BRONZE = '#A9784E';
 const INK = '#241512';
+const MUTED = '#8A7A68';
+const SUCCESS = '#6B8F71';
+const DANGER = '#C0473F';
+const WARNING = '#C08A3E';
+
+const display = { fontFamily: "'Playfair Display', Georgia, serif" };
+const body = { fontFamily: "'Inter', -apple-system, 'Segoe UI', sans-serif" };
+
 const API = 'http://localhost:5000/api/submission';
 
 const SEMESTERS  = ['1st Sem', '2nd Sem', 'Summer'];
 const ACAD_YEARS = ['2023-2024', '2024-2025', '2025-2026', '2026-2027'];
+
+const YEAR_LEVEL_LABELS = {
+    grade_7: 'Grade 7', grade_8: 'Grade 8', grade_9: 'Grade 9', grade_10: 'Grade 10',
+    grade_11: 'Grade 11', grade_12: 'Grade 12',
+    college_1: '1st Year College', college_2: '2nd Year College', college_3: '3rd Year College',
+    college_4: '4th Year College', college_5: '5th Year College',
+};
 
 const emptySubject = () => ({
     key: Math.random().toString(36).slice(2),
@@ -24,62 +43,85 @@ const emptySubject = () => ({
     grade: '',
 });
 
-// Builds the Authorization header from the JWT stored at login.
-// All submission/grades endpoints now require verifyToken, so every
-// axios call in this file must send this.
 const authHeader = () => {
     const token = localStorage.getItem('token');
     return { Authorization: `Bearer ${token}` };
 };
 
-// Academic performance badge (passed/failed based on GWA) - unchanged meaning.
+const AlertStrip = ({ color, icon: Icon, title, children }) => (
+    <div className="flex items-start gap-2" style={{ borderLeft: `3px solid ${color}`, background: `${color}0d`, borderRadius: 8, padding: '10px 14px' }}>
+        {Icon && <Icon size={13} className="shrink-0 mt-0.5" style={{ color }} />}
+        <div>
+            {title && <p style={{ ...body, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.04em', color, marginBottom: 3, textTransform: 'uppercase' }}>{title}</p>}
+            <p style={{ ...body, fontSize: '0.79rem', color, lineHeight: 1.5 }}>{children}</p>
+        </div>
+    </div>
+);
+
 const StatusBadge = ({ status }) => {
     const cfg = {
-        passed:  { bg: '#EAF3EC', color: '#15803d', label: 'Passed' },
-        failed:  { bg: '#FBE9E9', color: '#991b1b', label: 'Failed' },
-        pending: { bg: '#FBF0DE', color: '#92400e', label: 'Pending' },
-    }[status] || { bg: '#f1f5f9', color: '#64748b', label: status };
+        passed:  { color: SUCCESS, label: 'Passed' },
+        failed:  { color: DANGER,  label: 'Failed' },
+        pending: { color: WARNING, label: 'Pending' },
+    }[status] || { color: MUTED, label: status };
     return (
-        <span className="text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-wide"
-            style={{ background: cfg.bg, color: cfg.color }}>
+        <span style={{ ...body, fontSize: '0.68rem', fontWeight: 700, color: cfg.color, background: `${cfg.color}14`, padding: '3px 10px', borderRadius: 999, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
             {cfg.label}
         </span>
     );
 };
 
-// Officer's review decision on the submission itself (separate from the
-// academic passed/failed status above). This is what tells the scholar
-// whether their submission was accepted, still awaiting review, or
-// returned for correction.
 const ReviewBadge = ({ status }) => {
     const cfg = {
-        approved: { bg: '#EAF3EC', color: '#15803d', label: 'Approved' },
-        rejected: { bg: '#FBE9E9', color: '#991b1b', label: 'Rejected' },
-        pending:  { bg: '#FBF0DE', color: '#92400e', label: 'Pending Review' },
-    }[status] || { bg: '#f1f5f9', color: '#64748b', label: status || 'Pending Review' };
+        approved: { color: SUCCESS, label: 'Approved' },
+        rejected: { color: DANGER,  label: 'Rejected' },
+        pending:  { color: WARNING, label: 'Pending Review' },
+    }[status] || { color: MUTED, label: status || 'Pending Review' };
     return (
-        <span className="text-[10px] font-black px-2.5 py-1 rounded-full uppercase tracking-wide"
-            style={{ background: cfg.bg, color: cfg.color }}>
+        <span style={{ ...body, fontSize: '0.68rem', fontWeight: 700, color: cfg.color, background: `${cfg.color}14`, padding: '3px 10px', borderRadius: 999, textTransform: 'uppercase', letterSpacing: '0.02em' }}>
             {cfg.label}
         </span>
     );
 };
+
+const ChecklistRow = ({ done, label }) => (
+    <div className="flex items-center gap-2.5">
+        {done ? <CheckCircle2 size={16} style={{ color: SUCCESS, flexShrink: 0 }} /> : <Circle size={16} style={{ color: BORDER, flexShrink: 0 }} />}
+        <span style={{ ...body, fontSize: '0.82rem', color: done ? INK : MUTED, fontWeight: done ? 600 : 500 }}>{label}</span>
+    </div>
+);
 
 const ScholarGrades = () => {
     const scholarId = localStorage.getItem('scholar_id');
+
+    // ── Grading system auto-detection ──
+    // Reads the same `year_level` value already stored in localStorage by
+    // the rest of the Scholar module (see ScholarNotification.jsx). If it's
+    // missing or unrecognized, this defaults to GWA — the exact behavior
+    // the original form always had — so nothing changes for scholars whose
+    // level we can't determine.
+    const rawYearLevel = localStorage.getItem('year_level') || '';
+    const isSHS = rawYearLevel.startsWith('grade_');
+    const gradingSystem = isSHS ? 'percentage' : 'gwa';
+    const yearLevelLabel = YEAR_LEVEL_LABELS[rawYearLevel] || 'Not set';
+
+    const gradeBounds = gradingSystem === 'gwa'
+        ? { min: 1.00, max: 5.00, step: 0.25, placeholder: 'GWA (1.00–5.00)' }
+        : { min: 0, max: 100, step: 1, placeholder: 'Percentage (0–100)' };
+
+    const gradeLabel = gradingSystem === 'gwa' ? 'General Weighted Average (GWA)' : 'Percentage Grade';
+    const averageLabel = gradingSystem === 'gwa' ? 'Computed GWA (Preview)' : 'Computed Average (Preview)';
+    const summaryAverageLabel = gradingSystem === 'gwa' ? 'General Weighted Average' : 'General Average';
 
     const [grades, setGrades]               = useState([]);
     const [loading, setLoading]              = useState(true);
     const [expandedSem, setExpandedSem]      = useState(null);
 
-    // Submit form state
     const [semester, setSemester]            = useState('1st Sem');
     const [academicYear, setAcademicYear]    = useState('2025-2026');
     const [subjects, setSubjects]            = useState([emptySubject(), emptySubject()]);
     const [checkingLock, setCheckingLock]    = useState(false);
     const [isLocked, setIsLocked]            = useState(false);
-    // Info about the existing submission for the currently selected sem/year
-    // (used to show a "this was rejected, here's why" banner when unlocked-for-resubmit).
     const [lockInfo, setLockInfo]            = useState({ status: null, staff_comment: null });
     const [submitting, setSubmitting]        = useState(false);
     const [error, setError]                  = useState('');
@@ -104,10 +146,6 @@ const ScholarGrades = () => {
 
     useEffect(() => { fetchGrades(); }, [scholarId]);
 
-    // Check lock status whenever semester/year selection changes.
-    // The backend now returns locked=false when the existing submission for
-    // this sem/year was rejected, plus the status + staff_comment so we can
-    // show the scholar why it was returned.
     useEffect(() => {
         if (!scholarId) return;
         const checkLock = async () => {
@@ -150,14 +188,21 @@ const ScholarGrades = () => {
         setProofPreview(null);
     };
 
-    // Live GWA preview based on current form inputs
-    const previewGwa = (() => {
-        const valid = subjects.filter(s => s.subject_name && s.units && s.grade);
-        if (valid.length === 0) return null;
-        const totalUnits = valid.reduce((sum, s) => sum + parseInt(s.units), 0);
-        const weighted    = valid.reduce((sum, s) => sum + parseInt(s.units) * parseFloat(s.grade), 0);
+    // Live average preview — same weighted formula as before; only the
+    // label changes depending on grading system.
+    const filledSubjects = subjects.filter(s => s.subject_name && s.units && s.grade !== '');
+    const previewAverage = (() => {
+        if (filledSubjects.length === 0) return null;
+        const totalUnits = filledSubjects.reduce((sum, s) => sum + parseInt(s.units), 0);
+        const weighted    = filledSubjects.reduce((sum, s) => sum + parseInt(s.units) * parseFloat(s.grade), 0);
         return totalUnits > 0 ? (weighted / totalUnits).toFixed(2) : null;
     })();
+
+    const filledForSubmit = subjects.filter(s => s.subject_name.trim() && s.grade !== '');
+    const gradesValid = filledForSubmit.length > 0 && filledForSubmit.every(s => {
+        const g = parseFloat(s.grade);
+        return !isNaN(g) && g >= gradeBounds.min && g <= gradeBounds.max;
+    });
 
     const handleSubmit = async () => {
         setError('');
@@ -175,8 +220,8 @@ const ScholarGrades = () => {
         }
         for (const s of filled) {
             const g = parseFloat(s.grade);
-            if (isNaN(g) || g < 1.00 || g > 5.00) {
-                setError(`Invalid grade for "${s.subject_name}". Must be between 1.00 and 5.00.`);
+            if (isNaN(g) || g < gradeBounds.min || g > gradeBounds.max) {
+                setError(`Invalid grade for "${s.subject_name}". Must be between ${gradeBounds.min.toFixed(2)} and ${gradeBounds.max.toFixed(2)}.`);
                 return;
             }
         }
@@ -195,15 +240,16 @@ const ScholarGrades = () => {
                 units: parseInt(s.units),
                 grade: parseFloat(s.grade),
             }))));
-            formData.append('proof', proofFile);
+            const uploadId = await uploadResumableFile(proofFile, 'proof');
+            formData.append('resumable_upload_id', uploadId);
 
-            const res = await axios.post(`${API}/grades/submit`, formData, {
+            const res = await axios.post(`${API}/grades/submit-resumable`, formData, {
                 headers: {
                     'Content-Type': 'multipart/form-data',
                     ...authHeader(),
                 },
             });
-            setSuccess(`Grades submitted! Computed GWA: ${res.data.gwa?.toFixed(2) ?? 'N/A'}`);
+            setSuccess(`Grades submitted! Computed ${gradingSystem === 'gwa' ? 'GWA' : 'average'}: ${res.data.gwa?.toFixed(2) ?? 'N/A'}`);
             setIsLocked(true);
             setLockInfo({ status: 'pending', staff_comment: null });
             setSubjects([emptySubject(), emptySubject()]);
@@ -216,283 +262,380 @@ const ScholarGrades = () => {
         }
     };
 
-    const inputCls = 'w-full bg-white border rounded-xl px-3.5 py-2.5 text-sm outline-none focus:ring-2 transition-all';
-    const inputStyle = { color: INK, borderColor: '#e9dfd8' };
+    const inputStyle = { ...body, fontSize: '0.85rem', color: INK, borderColor: BORDER, background: SURFACE };
+    const inputCls = 'w-full border rounded-lg px-3.5 py-2.5 outline-none transition-all';
 
     const wasRejected = lockInfo.status === 'rejected';
 
+    // "Passing" reads in the direction each grading system actually works:
+    // lower is better for GWA, higher is better for percentage.
+    const isPassingGrade = (g) => gradingSystem === 'gwa' ? g <= 3.00 : g >= 75;
+
+    // Validation checklist — derived straight from existing state, no new
+    // backend fields.
+    const checklist = [
+        { done: Boolean(semester && academicYear), label: 'Semester and academic year selected' },
+        { done: filledForSubmit.length > 0, label: 'Subjects encoded' },
+        { done: gradesValid, label: `Grades completed (${gradeLabel})` },
+        { done: Boolean(proofFile), label: 'Report Card / Grade Sheet uploaded' },
+    ];
+    const allChecked = checklist.every(c => c.done);
+
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+        <div style={{ ...body, background: BG }}>
+            <style>{`
+                @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Inter:wght@400;500;600;700&display=swap');
+                .grades-footer { position: sticky; bottom: 0; z-index: 5; }
+                @media (max-width: 1023px) { .grades-footer { position: static; } }
+            `}</style>
 
-            {/* Submit Form */}
-            <div className="lg:col-span-2">
-                <div className="bg-white p-6 rounded-2xl sticky top-6" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)', borderTop: `2px solid ${GOLD}` }}>
-                    <div className="flex items-center gap-2 mb-1">
-                        <div className="p-2 rounded-xl" style={{ background: ROSE }}>
-                            <GraduationCap size={16} style={{ color: MAROON }} />
-                        </div>
-                        <h3 className="font-black text-sm" style={{ color: INK }}>Submit Semester Grades</h3>
-                    </div>
-                    <p className="text-xs text-slate-400 mb-5 ml-10">One submission per semester only.</p>
+            {/* ── 1. Academic header ─────────────────────────────────── */}
+            <div className="flex items-start justify-between gap-4 flex-wrap" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 16, padding: '20px 24px', marginBottom: 20 }}>
+                <div>
+                    <p style={{ ...body, fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.08em', color: BRONZE }}>SCHOLAR PORTAL</p>
+                    <h1 style={{ ...display, fontSize: '1.5rem', fontWeight: 600, color: INK, marginTop: 4 }}>Grades</h1>
+                    <p style={{ ...body, fontSize: '0.83rem', color: MUTED, marginTop: 5, maxWidth: 460 }}>
+                        Submit your grades once, with your Report Card or Grade Sheet as proof.
+                    </p>
+                </div>
+                <span style={{ ...body, fontSize: '0.76rem', fontWeight: 600, color: PRIMARY, background: PRIMARY_TINT, border: `1px solid ${BORDER}`, borderRadius: 999, padding: '7px 16px', flexShrink: 0 }}>
+                    {semester} • AY {academicYear}
+                </span>
+            </div>
 
-                    {/* Sem / Year selectors */}
-                    <div className="grid grid-cols-2 gap-3 mb-4">
-                        <div>
-                            <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mb-1.5 block">Semester</label>
-                            <select className={inputCls} style={inputStyle} value={semester} onChange={e => setSemester(e.target.value)}>
-                                {SEMESTERS.map(s => <option key={s}>{s}</option>)}
-                            </select>
-                        </div>
-                        <div>
-                            <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mb-1.5 block">Academic Year</label>
-                            <select className={inputCls} style={inputStyle} value={academicYear} onChange={e => setAcademicYear(e.target.value)}>
-                                {ACAD_YEARS.map(y => <option key={y}>{y}</option>)}
-                            </select>
-                        </div>
-                    </div>
+            {/* ── 2. Semester overview — 3 compact cards ─────────────── */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4" style={{ marginBottom: 20 }}>
+                <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '14px 16px' }}>
+                    <p style={{ ...body, fontSize: '0.68rem', fontWeight: 600, color: BRONZE }}>Current Semester</p>
+                    <p style={{ ...display, fontSize: '1.15rem', fontWeight: 600, color: INK, marginTop: 4 }}>{semester}</p>
+                    <p style={{ ...body, fontSize: '0.74rem', color: MUTED, marginTop: 1 }}>AY {academicYear}</p>
+                </div>
+                <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '14px 16px' }}>
+                    <p style={{ ...body, fontSize: '0.68rem', fontWeight: 600, color: BRONZE }}>Year Level</p>
+                    <p style={{ ...display, fontSize: '1.15rem', fontWeight: 600, color: INK, marginTop: 4 }}>{yearLevelLabel}</p>
+                </div>
+                <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '14px 16px' }}>
+                    <p style={{ ...body, fontSize: '0.68rem', fontWeight: 600, color: BRONZE }}>Grading System</p>
+                    <p style={{ ...display, fontSize: '1.15rem', fontWeight: 600, color: INK, marginTop: 4 }}>
+                        {gradingSystem === 'gwa' ? 'GWA (1.00–5.00)' : 'Percentage (0–100)'}
+                    </p>
+                </div>
+            </div>
 
-                    {/* Rejection banner - shown when this sem/year was returned by the
-                        officer, so the form below is unlocked for resubmission. */}
+            <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 sm:gap-6">
+
+                {/* ── LEFT: entry workspace + upload + validation ──────── */}
+                <div className="lg:col-span-3 space-y-5">
+
+                    {/* Rejection banner */}
                     {!checkingLock && wasRejected && (
-                        <div className="flex items-start gap-2 px-4 py-3 rounded-xl mb-4" style={{ background: '#FBE9E9', border: '1px solid #f3c6c6' }}>
-                            <RotateCcw size={14} className="shrink-0 mt-0.5" style={{ color: '#991b1b' }} />
+                        <AlertStrip color={DANGER} icon={RotateCcw} title="Returned for correction">
+                            {lockInfo.staff_comment || 'Your previous submission for this semester was rejected. Please review and resubmit.'}
+                        </AlertStrip>
+                    )}
+
+                    {/* Semester / year selectors */}
+                    <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 16, padding: '18px 20px' }}>
+                        <div className="flex items-center gap-2 mb-4">
+                            <div className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: 10, background: PRIMARY_TINT }}>
+                                <GraduationCap size={16} style={{ color: PRIMARY }} />
+                            </div>
                             <div>
-                                <p className="text-xs font-black uppercase tracking-wide mb-0.5" style={{ color: '#991b1b' }}>
-                                    Returned for correction
-                                </p>
-                                <p className="text-xs leading-relaxed" style={{ color: '#991b1b' }}>
-                                    {lockInfo.staff_comment || 'Your previous submission for this semester was rejected. Please review and resubmit.'}
-                                </p>
+                                <h3 style={{ ...display, fontSize: '1.05rem', fontWeight: 600, color: INK }}>Grade Entry Workspace</h3>
+                                <p style={{ ...body, fontSize: '0.74rem', color: MUTED }}>One submission per semester only.</p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3 mb-4">
+                            <div>
+                                <label style={{ ...body, fontSize: '0.68rem', fontWeight: 700, color: MUTED, letterSpacing: '0.03em', marginBottom: 6, display: 'block' }}>SEMESTER</label>
+                                <select className={inputCls} style={inputStyle} value={semester} onChange={e => setSemester(e.target.value)}>
+                                    {SEMESTERS.map(s => <option key={s}>{s}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label style={{ ...body, fontSize: '0.68rem', fontWeight: 700, color: MUTED, letterSpacing: '0.03em', marginBottom: 6, display: 'block' }}>ACADEMIC YEAR</label>
+                                <select className={inputCls} style={inputStyle} value={academicYear} onChange={e => setAcademicYear(e.target.value)}>
+                                    {ACAD_YEARS.map(y => <option key={y}>{y}</option>)}
+                                </select>
+                            </div>
+                        </div>
+
+                        {checkingLock ? (
+                            <div className="flex items-center gap-2 py-3" style={{ ...body, fontSize: '0.8rem', color: MUTED }}>
+                                <Loader2 size={13} className="animate-spin" /> Checking submission status…
+                            </div>
+                        ) : isLocked ? (
+                            <AlertStrip color={WARNING} icon={Lock}>
+                                You've already submitted grades for {semester} AY {academicYear}. This semester is locked and cannot be edited.
+                            </AlertStrip>
+                        ) : (
+                            <>
+                                {/* Subject rows — single grade column per subject, per system */}
+                                <div className="mb-2" style={{ overflowX: 'auto' }}>
+                                    <div className="grid gap-2" style={{ gridTemplateColumns: '2.2fr 0.8fr 1.2fr auto', minWidth: 480 }}>
+                                        <span style={{ ...body, fontSize: '0.66rem', fontWeight: 700, color: BRONZE, letterSpacing: '0.04em' }}>SUBJECT</span>
+                                        <span style={{ ...body, fontSize: '0.66rem', fontWeight: 700, color: BRONZE, letterSpacing: '0.04em' }}>UNITS</span>
+                                        <span style={{ ...body, fontSize: '0.66rem', fontWeight: 700, color: BRONZE, letterSpacing: '0.04em' }}>{gradeLabel.toUpperCase()}</span>
+                                        <span />
+                                    </div>
+                                    <div className="space-y-2 mt-2">
+                                        {subjects.map((s, i) => (
+                                            <div key={s.key} className="grid gap-2 items-center" style={{ gridTemplateColumns: '2.2fr 0.8fr 1.2fr auto', minWidth: 480 }}>
+                                                <input
+                                                    className={inputCls}
+                                                    style={inputStyle}
+                                                    placeholder={`Subject ${i + 1} name`}
+                                                    value={s.subject_name}
+                                                    onChange={e => setSubjectField(s.key, 'subject_name', e.target.value)}
+                                                />
+                                                <input
+                                                    type="number" min="1" max="6"
+                                                    className={inputCls}
+                                                    style={inputStyle}
+                                                    value={s.units}
+                                                    onChange={e => setSubjectField(s.key, 'units', e.target.value)}
+                                                />
+                                                <input
+                                                    type="number" min={gradeBounds.min} max={gradeBounds.max} step={gradeBounds.step}
+                                                    className={inputCls}
+                                                    style={inputStyle}
+                                                    placeholder={gradeBounds.placeholder}
+                                                    value={s.grade}
+                                                    onChange={e => setSubjectField(s.key, 'grade', e.target.value)}
+                                                />
+                                                <button
+                                                    onClick={() => removeSubjectRow(s.key)}
+                                                    disabled={subjects.length <= 1}
+                                                    className="flex items-center justify-center transition-colors"
+                                                    style={{ width: 30, height: 30, borderRadius: 8, color: subjects.length <= 1 ? BORDER : MUTED, background: 'none', border: 'none', cursor: subjects.length <= 1 ? 'default' : 'pointer' }}
+                                                >
+                                                    <Trash2 size={13} />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+
+                                <button onClick={addSubjectRow}
+                                    className="w-full flex items-center justify-center gap-1.5 transition-colors mt-3 mb-4"
+                                    style={{ padding: '10px 0', borderRadius: 10, border: `1.5px dashed ${BORDER}`, color: MUTED, background: 'none', ...body, fontSize: '0.78rem', fontWeight: 600, cursor: 'pointer' }}>
+                                    <Plus size={14} /> Add Another Subject
+                                </button>
+
+                                {previewAverage && (
+                                    <div className="flex items-center justify-between mb-4" style={{ padding: '12px 16px', background: PRIMARY_TINT, border: `1px solid ${BORDER}`, borderRadius: 12 }}>
+                                        <span style={{ ...body, fontSize: '0.72rem', fontWeight: 700, color: PRIMARY_DEEP, letterSpacing: '0.02em' }}>{averageLabel.toUpperCase()}</span>
+                                        <span style={{ ...display, fontSize: '1.3rem', fontWeight: 700, color: PRIMARY }}>{previewAverage}</span>
+                                    </div>
+                                )}
+                            </>
+                        )}
+                    </div>
+
+                    {/* Report card upload */}
+                    {!checkingLock && !isLocked && (
+                        <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 16, padding: '18px 20px' }}>
+                            <div className="flex items-center gap-2 mb-3">
+                                <div className="flex items-center justify-center" style={{ width: 32, height: 32, borderRadius: 10, background: PRIMARY_TINT }}>
+                                    <FileText size={15} style={{ color: PRIMARY }} />
+                                </div>
+                                <div>
+                                    <h3 style={{ ...display, fontSize: '1rem', fontWeight: 600, color: INK }}>Report Card Upload</h3>
+                                    <p style={{ ...body, fontSize: '0.73rem', color: MUTED }}>Used to verify the grades entered above.</p>
+                                </div>
+                            </div>
+
+                            {!proofPreview ? (
+                                <label
+                                    className="flex flex-col items-center justify-center gap-2 w-full cursor-pointer transition-colors"
+                                    style={{ padding: '32px 0', borderRadius: 14, border: `1.5px dashed ${BORDER}`, background: BG, color: MUTED }}
+                                    onDragOver={e => e.preventDefault()}
+                                    onDrop={e => {
+                                        e.preventDefault();
+                                        const file = e.dataTransfer.files?.[0];
+                                        if (!file) return;
+                                        setProofFile(file);
+                                        setProofPreview(URL.createObjectURL(file));
+                                    }}
+                                >
+                                    <Camera size={22} />
+                                    <span style={{ ...body, fontSize: '0.82rem', fontWeight: 600 }}>Drag & drop, or browse PDF / image</span>
+                                    <input type="file" accept=".jpg,.jpeg,.png,.pdf,.doc,.docx" className="hidden" onChange={handleProofChange} />
+                                </label>
+                            ) : (
+                                <div className="relative">
+                                    {!proofFile?.type?.startsWith('image/') ? (
+                                        <div className="flex items-center gap-2 p-3" style={{ background: BG, border: `1px solid ${BORDER}`, borderRadius: 10 }}>
+                                            <BookOpen size={16} style={{ color: MUTED }} />
+                                            <span style={{ ...body, fontSize: '0.8rem', fontWeight: 600, color: INK }} className="truncate">{proofFile.name}</span>
+                                        </div>
+                                    ) : (
+                                        <img src={proofPreview} alt="Proof preview" className="w-full h-44 object-cover" style={{ border: `1px solid ${BORDER}`, borderRadius: 12 }} />
+                                    )}
+                                    <div className="flex items-center gap-2 mt-3">
+                                        <label className="flex items-center gap-1.5 cursor-pointer transition-colors" style={{ ...body, fontSize: '0.78rem', fontWeight: 600, color: PRIMARY, background: PRIMARY_TINT, border: 'none', borderRadius: 8, padding: '8px 14px' }}>
+                                            <RotateCcw size={13} /> Replace File
+                                            <input type="file" accept=".jpg,.jpeg,.png,.pdf,.doc,.docx" className="hidden" onChange={handleProofChange} />
+                                        </label>
+                                        <button onClick={removeProof} className="flex items-center gap-1.5 transition-colors" style={{ ...body, fontSize: '0.78rem', fontWeight: 600, color: DANGER, background: `${DANGER}14`, border: 'none', borderRadius: 8, padding: '8px 14px', cursor: 'pointer' }}>
+                                            <X size={13} /> Remove
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {error && <AlertStrip color={DANGER} icon={AlertTriangle}>{error}</AlertStrip>}
+                    {success && <AlertStrip color={SUCCESS} icon={CheckCircle}>{success}</AlertStrip>}
+
+                    {/* Validation checklist */}
+                    {!checkingLock && !isLocked && (
+                        <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 16, padding: '18px 20px' }}>
+                            <p style={{ ...body, fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em', color: MUTED, marginBottom: 12 }}>BEFORE YOU SUBMIT</p>
+                            <div className="space-y-2.5">
+                                {checklist.map((c, i) => <ChecklistRow key={i} done={c.done} label={c.label} />)}
                             </div>
                         </div>
                     )}
 
-                    {/* Lock state */}
-                    {checkingLock ? (
-                        <div className="flex items-center gap-2 text-xs text-slate-400 py-3">
-                            <Loader2 size={13} className="animate-spin" /> Checking submission status...
-                        </div>
-                    ) : isLocked ? (
-                        <div className="flex items-start gap-2 px-4 py-3 rounded-xl mb-4" style={{ background: '#FBF0DE', border: '1px solid #f3d9a6' }}>
-                            <Lock size={14} className="shrink-0 mt-0.5" style={{ color: '#92400e' }} />
-                            <p className="text-xs font-semibold" style={{ color: '#92400e' }}>
-                                You've already submitted grades for {semester} AY {academicYear}. This semester is locked and cannot be edited.
-                            </p>
-                        </div>
-                    ) : (
-                        <>
-                            {/* Subject rows */}
-                            <div className="space-y-3 mb-3">
-                                {subjects.map((s, i) => (
-                                    <div key={s.key} className="p-3 rounded-xl" style={{ background: IVORY, border: '1px solid #f0e6e0' }}>
-                                        <div className="flex items-center justify-between mb-2">
-                                            <span className="text-[10px] font-black text-slate-400 uppercase">Subject {i + 1}</span>
-                                            {subjects.length > 1 && (
-                                                <button onClick={() => removeSubjectRow(s.key)}
-                                                    className="p-1 rounded-lg text-slate-300 hover:bg-red-50 hover:text-red-400 transition-all">
-                                                    <Trash2 size={12} />
-                                                </button>
-                                            )}
-                                        </div>
-                                        <input
-                                            className={inputCls + ' mb-2'}
-                                            style={inputStyle}
-                                            placeholder="Subject name (e.g. Mathematics 101)"
-                                            value={s.subject_name}
-                                            onChange={e => setSubjectField(s.key, 'subject_name', e.target.value)}
-                                        />
-                                        <div className="grid grid-cols-2 gap-2">
-                                            <input
-                                                type="number" min="1" max="6"
-                                                className={inputCls}
-                                                style={inputStyle}
-                                                placeholder="Units"
-                                                value={s.units}
-                                                onChange={e => setSubjectField(s.key, 'units', e.target.value)}
-                                            />
-                                            <input
-                                                type="number" min="1.00" max="5.00" step="0.25"
-                                                className={inputCls}
-                                                style={inputStyle}
-                                                placeholder="Grade (1.00-5.00)"
-                                                value={s.grade}
-                                                onChange={e => setSubjectField(s.key, 'grade', e.target.value)}
-                                            />
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-
-                            <button onClick={addSubjectRow}
-                                className="w-full flex items-center justify-center gap-1.5 py-2.5 rounded-xl border border-dashed text-slate-500 text-xs font-bold hover:bg-slate-50 transition-all mb-4"
-                                style={{ borderColor: `${GOLD}88` }}>
-                                <Plus size={13} /> Add Another Subject
-                            </button>
-
-                            {/* Live GWA preview */}
-                            {previewGwa && (
-                                <div className="flex items-center justify-between p-3 rounded-xl mb-4"
-                                    style={{ background: ROSE }}>
-                                    <span className="text-xs font-bold text-slate-600">Computed GWA (preview)</span>
-                                    <span className="text-lg font-black" style={{ color: MAROON }}>{previewGwa}</span>
-                                </div>
-                            )}
-
-                            {/* Proof of grades upload */}
-                            <div className="mb-4">
-                                <label className="text-[11px] font-semibold text-slate-500 uppercase tracking-widest mb-1.5 block">
-                                    Proof - Report Card / Grade Sheet Photo <span style={{ color: MAROON }}>*</span>
-                                </label>
-                                {!proofPreview ? (
-                                    <label className="flex flex-col items-center justify-center gap-1.5 w-full py-6 rounded-xl border-2 border-dashed text-slate-400 text-xs font-bold hover:bg-slate-50 transition-all cursor-pointer"
-                                        style={{ borderColor: `${GOLD}88`, background: IVORY }}>
-                                        <Camera size={18} />
-                                        Upload photo of your Report Card
-                                        <input type="file" accept=".jpg,.jpeg,.png,.pdf,.doc,.docx" className="hidden" onChange={handleProofChange} />
-                                    </label>
-                                ) : (
-                                    <div className="relative">
-                                        {!proofFile?.type?.startsWith('image/') ? (
-                                            <div className="flex items-center gap-2 p-3 rounded-xl" style={{ background: IVORY, border: '1px solid #e9dfd8' }}>
-                                                <BookOpen size={16} className="text-slate-400" />
-                                                <span className="text-xs font-semibold text-slate-600 truncate">{proofFile.name}</span>
-                                            </div>
-                                        ) : (
-                                            <img src={proofPreview} alt="Proof preview" className="w-full h-40 object-cover rounded-xl" style={{ border: '1px solid #e9dfd8' }} />
-                                        )}
-                                        <button onClick={removeProof}
-                                            className="absolute top-2 right-2 p-1.5 rounded-full bg-white shadow text-slate-500 hover:text-red-500 transition-all"
-                                            style={{ border: 'none', cursor: 'pointer' }}>
-                                            <X size={13} />
-                                        </button>
-                                    </div>
-                                )}
-                                <p className="text-[10px] text-slate-400 mt-1.5">This will be used to verify the grades you entered above.</p>
-                            </div>
-
-                            {error && (
-                                <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl mb-4" style={{ background: '#FBE9E9', border: '1px solid #f3c6c6' }}>
-                                    <AlertTriangle size={13} className="shrink-0" style={{ color: '#991b1b' }} />
-                                    <p className="text-xs font-medium" style={{ color: '#991b1b' }}>{error}</p>
-                                </div>
-                            )}
-                            {success && (
-                                <div className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl mb-4" style={{ background: '#EAF3EC', border: '1px solid #bbf7d0' }}>
-                                    <CheckCircle size={13} className="shrink-0" style={{ color: '#15803d' }} />
-                                    <p className="text-xs font-medium" style={{ color: '#15803d' }}>{success}</p>
-                                </div>
-                            )}
-
-                            <div className="rounded-xl px-3.5 py-2.5 mb-4 flex items-start gap-2" style={{ background: '#FBF0DE', border: '1px solid #f3d9a6' }}>
-                                <AlertTriangle size={13} className="shrink-0 mt-0.5" style={{ color: '#92400e' }} />
-                                <p className="text-[11px] font-medium leading-relaxed" style={{ color: '#92400e' }}>
-                                    Double-check your entries. Once submitted, grades for this semester cannot be edited unless returned by the officer for correction.
-                                </p>
-                            </div>
-
-                            <button onClick={handleSubmit} disabled={submitting}
-                                className="w-full py-3 rounded-full text-white text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-60 transition-all"
-                                style={{ background: `linear-gradient(120deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)`, boxShadow: `0 4px 14px ${MAROON}35` }}>
+                    {/* ── 7. Sticky submission footer ─────────────────────── */}
+                    {!checkingLock && !isLocked && (
+                        <div className="grades-footer flex items-center justify-between gap-4 flex-wrap" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '14px 18px' }}>
+                            <span style={{ ...body, fontSize: '0.8rem', fontWeight: 600, color: allChecked ? SUCCESS : MUTED }}>
+                                {allChecked ? 'Ready to submit' : 'Complete the checklist to submit'}
+                            </span>
+                            <button
+                                onClick={handleSubmit}
+                                disabled={submitting}
+                                className="flex items-center justify-center gap-2 transition-opacity hover:opacity-90 disabled:opacity-60"
+                                style={{ padding: '11px 24px', borderRadius: 12, border: 'none', ...body, fontSize: '0.82rem', fontWeight: 700, color: '#fff', background: `linear-gradient(120deg, ${PRIMARY} 0%, ${PRIMARY_DEEP} 100%)`, cursor: submitting ? 'wait' : 'pointer' }}
+                            >
                                 {submitting ? (
-                                    <><Loader2 size={14} className="animate-spin" /> Submitting...</>
+                                    <><Loader2 size={14} className="animate-spin" /> Submitting…</>
                                 ) : wasRejected ? (
                                     <><RotateCcw size={14} /> Resubmit Grades</>
                                 ) : (
                                     <><Send size={14} /> Submit Grades</>
                                 )}
                             </button>
-                        </>
+                        </div>
                     )}
                 </div>
-            </div>
 
-            {/* Submitted Grades History */}
-            <div className="lg:col-span-3 space-y-4">
-                <h3 className="font-black flex items-center gap-2" style={{ color: INK }}>
-                    <BookOpen size={16} style={{ color: MAROON }} /> Submitted Grades
-                </h3>
+                {/* ── RIGHT: semester summary + submitted history ──────── */}
+                <div className="lg:col-span-2 space-y-5">
 
-                {loading ? (
-                    <div className="space-y-3">
-                        {[1, 2].map(i => <div key={i} className="h-20 rounded-2xl animate-pulse" style={{ background: '#EFE7E2' }} />)}
+                    {/* Semester summary card */}
+                    <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 16, padding: '18px 20px' }}>
+                        <p style={{ ...body, fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.05em', color: MUTED, marginBottom: 12 }}>SEMESTER SUMMARY</p>
+                        {previewAverage ? (
+                            <>
+                                <div className="flex items-baseline justify-between">
+                                    <span style={{ ...body, fontSize: '0.82rem', color: MUTED }}>{summaryAverageLabel}</span>
+                                    <span style={{ ...display, fontSize: '1.5rem', fontWeight: 700, color: PRIMARY }}>{previewAverage}</span>
+                                </div>
+                                <div className="flex items-baseline justify-between mt-2">
+                                    <span style={{ ...body, fontSize: '0.82rem', color: MUTED }}>Total Units</span>
+                                    <span style={{ ...body, fontSize: '0.9rem', fontWeight: 600, color: INK }}>
+                                        {filledSubjects.reduce((sum, s) => sum + (parseInt(s.units) || 0), 0)}
+                                    </span>
+                                </div>
+                                <div className="flex items-baseline justify-between mt-2">
+                                    <span style={{ ...body, fontSize: '0.82rem', color: MUTED }}>Academic Standing</span>
+                                    <span style={{ ...body, fontSize: '0.82rem', fontWeight: 700, color: isPassingGrade(parseFloat(previewAverage)) ? SUCCESS : DANGER }}>
+                                        {isPassingGrade(parseFloat(previewAverage)) ? 'Passing' : 'Needs Improvement'}
+                                    </span>
+                                </div>
+                            </>
+                        ) : (
+                            <p style={{ ...body, fontSize: '0.8rem', color: MUTED }}>Enter subjects and grades to see a live summary.</p>
+                        )}
                     </div>
-                ) : grades.length === 0 ? (
-                    <div className="bg-white rounded-[2rem] p-16 text-center" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)' }}>
-                        <BookOpen size={40} className="mx-auto mb-3" style={{ color: '#e9d9dc' }} />
-                        <p className="text-sm font-bold" style={{ color: '#c9b3b8' }}>No grades submitted yet.</p>
-                        <p className="text-xs mt-1" style={{ color: '#c9b3b8' }}>Use the form to submit your first semester.</p>
+
+                    {/* Submitted grades history */}
+                    <div>
+                        <h3 className="flex items-center gap-2 mb-3" style={{ ...display, fontSize: '1.05rem', fontWeight: 600, color: INK }}>
+                            <BookOpen size={16} style={{ color: PRIMARY }} /> Submitted Grades
+                        </h3>
+
+                        {loading ? (
+                            <div className="space-y-3">
+                                {[1, 2].map(i => <div key={i} className="animate-pulse" style={{ height: 80, borderRadius: 14, background: `${BORDER}88` }} />)}
+                            </div>
+                        ) : grades.length === 0 ? (
+                            <div className="text-center" style={{ background: SURFACE, border: `1px dashed ${BORDER}`, borderRadius: 16, padding: '48px 20px' }}>
+                                <BookOpen size={30} style={{ margin: '0 auto 12px', color: BORDER }} />
+                                <p style={{ ...body, fontSize: '0.86rem', fontWeight: 600, color: MUTED }}>No grades submitted yet.</p>
+                                <p style={{ ...body, fontSize: '0.76rem', color: MUTED, marginTop: 4 }}>Use the form to submit your first semester.</p>
+                            </div>
+                        ) : grades.map((sem, si) => {
+                            const key    = `${sem.semester}|${sem.academic_year}`;
+                            const isOpen = expandedSem === key;
+                            const semRejected = sem.review_status === 'rejected';
+                            return (
+                                <div key={si} className="overflow-hidden mb-3"
+                                    style={{ background: SURFACE, border: `1px solid ${semRejected ? DANGER + '55' : BORDER}`, borderRadius: 14 }}>
+                                    <button onClick={() => setExpandedSem(isOpen ? null : key)}
+                                        className="w-full flex items-center justify-between transition-colors"
+                                        style={{ padding: '15px 18px', background: 'none', border: 'none', cursor: 'pointer' }}>
+                                        <div className="text-left min-w-0">
+                                            <p style={{ ...body, fontSize: '0.85rem', fontWeight: 700, color: INK }}>{sem.semester} AY {sem.academic_year}</p>
+                                            <p style={{ ...body, fontSize: '0.72rem', color: MUTED, marginTop: 2 }}>{sem.total_units} total units · {sem.subjects.length} subjects</p>
+                                            <div className="flex items-center gap-2 flex-wrap mt-2">
+                                                <span style={{ ...display, fontSize: '1rem', fontWeight: 700, color: PRIMARY }}>
+                                                    {sem.gwa ? sem.gwa.toFixed(2) : 'TBA'}
+                                                </span>
+                                                <StatusBadge status={sem.status} />
+                                                <ReviewBadge status={sem.review_status} />
+                                                {sem.locked && (
+                                                    <span className="flex items-center gap-1" style={{ ...body, fontSize: '0.66rem', color: MUTED, fontWeight: 700 }}>
+                                                        <Lock size={10} /> Locked
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                        {isOpen ? <ChevronUp size={15} style={{ color: MUTED, flexShrink: 0 }} /> : <ChevronDown size={15} style={{ color: MUTED, flexShrink: 0 }} />}
+                                    </button>
+
+                                    {semRejected && sem.staff_comment && (
+                                        <div style={{ margin: '0 18px 14px' }}>
+                                            <AlertStrip color={DANGER} title="Officer Feedback">{sem.staff_comment}</AlertStrip>
+                                        </div>
+                                    )}
+
+                                    {isOpen && (
+                                        <div style={{ borderTop: `1px solid ${BORDER}` }}>
+                                            <table className="w-full text-left">
+                                                <thead>
+                                                    <tr style={{ background: BG }}>
+                                                        <th style={{ ...body, fontSize: '0.66rem', fontWeight: 700, color: BRONZE, letterSpacing: '0.03em', padding: '10px 18px' }}>SUBJECT</th>
+                                                        <th style={{ ...body, fontSize: '0.66rem', fontWeight: 700, color: BRONZE, letterSpacing: '0.03em', padding: '10px 18px' }}>UNITS</th>
+                                                        <th style={{ ...body, fontSize: '0.66rem', fontWeight: 700, color: BRONZE, letterSpacing: '0.03em', padding: '10px 18px' }}>GRADE</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {sem.subjects.map((subj, ji) => (
+                                                        <tr key={ji} style={{ borderTop: `1px solid ${BORDER}` }}>
+                                                            <td style={{ ...body, fontSize: '0.83rem', fontWeight: 600, color: INK, padding: '10px 18px' }}>{subj.subject_name}</td>
+                                                            <td style={{ ...body, fontSize: '0.83rem', color: MUTED, padding: '10px 18px' }}>{subj.units}</td>
+                                                            <td style={{ padding: '10px 18px' }}>
+                                                                <span style={{ ...body, fontSize: '0.76rem', fontWeight: 700, padding: '2px 9px', borderRadius: 999, color: isPassingGrade(subj.grade) ? SUCCESS : DANGER, background: `${isPassingGrade(subj.grade) ? SUCCESS : DANGER}14` }}>
+                                                                    {subj.grade.toFixed(2)}
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
                     </div>
-                ) : grades.map((sem, si) => {
-                    const key    = `${sem.semester}|${sem.academic_year}`;
-                    const isOpen = expandedSem === key;
-                    const semRejected = sem.review_status === 'rejected';
-                    return (
-                        <div key={si} className="bg-white rounded-[2rem] overflow-hidden"
-                            style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)', border: semRejected ? '1px solid #f3c6c6' : 'none' }}>
-                            <button onClick={() => setExpandedSem(isOpen ? null : key)}
-                                className="w-full flex items-center justify-between px-6 py-4 hover:bg-slate-50 transition-colors"
-                                style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
-                                <div className="flex items-center gap-4 flex-wrap">
-                                    <div className="text-left">
-                                        <p className="text-sm font-black" style={{ color: INK }}>{sem.semester} AY {sem.academic_year}</p>
-                                        <p className="text-xs text-slate-400 mt-0.5">{sem.total_units} total units - {sem.subjects.length} subjects</p>
-                                    </div>
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                        <span className="text-lg font-black" style={{ color: MAROON }}>
-                                            {sem.gwa ? sem.gwa.toFixed(2) : 'TBA'}
-                                        </span>
-                                        <span className="text-[10px] text-slate-400">GWA</span>
-                                        <StatusBadge status={sem.status} />
-                                        <ReviewBadge status={sem.review_status} />
-                                        {sem.locked && (
-                                            <span className="flex items-center gap-1 text-[10px] text-slate-300 font-bold ml-1">
-                                                <Lock size={10} /> Locked
-                                            </span>
-                                        )}
-                                    </div>
-                                </div>
-                                {isOpen ? <ChevronUp size={15} className="text-slate-400" /> : <ChevronDown size={15} className="text-slate-400" />}
-                            </button>
-
-                            {/* Officer feedback, shown right under the header when rejected */}
-                            {semRejected && sem.staff_comment && (
-                                <div className="mx-6 mb-4 -mt-1 px-4 py-3 rounded-xl" style={{ background: '#FBE9E9', border: '1px solid #f3c6c6' }}>
-                                    <p className="text-[10px] font-black uppercase tracking-widest mb-1" style={{ color: '#991b1b' }}>Officer Feedback</p>
-                                    <p className="text-xs leading-relaxed" style={{ color: '#991b1b' }}>{sem.staff_comment}</p>
-                                </div>
-                            )}
-
-                            {isOpen && (
-                                <div className="border-t" style={{ borderColor: '#f5eee9' }}>
-                                    <table className="w-full text-left">
-                                        <thead>
-                                            <tr className="text-[10px] font-black uppercase tracking-widest border-b"
-                                                style={{ color: MAROON, background: IVORY, borderColor: '#f5eee9' }}>
-                                                <th className="px-6 py-3">Subject</th>
-                                                <th className="px-6 py-3">Units</th>
-                                                <th className="px-6 py-3">Grade</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y" style={{ borderColor: '#f5eee9' }}>
-                                            {sem.subjects.map((subj, ji) => (
-                                                <tr key={ji}>
-                                                    <td className="px-6 py-3 text-sm font-semibold text-slate-700">{subj.subject_name}</td>
-                                                    <td className="px-6 py-3 text-sm text-slate-500">{subj.units}</td>
-                                                    <td className="px-6 py-3">
-                                                        <span className="text-sm font-black px-2.5 py-0.5 rounded-full"
-                                                            style={subj.grade <= 3.00 ? { background: '#EAF3EC', color: '#15803d' } : { background: '#FBE9E9', color: '#991b1b' }}>
-                                                            {subj.grade.toFixed(2)}
-                                                        </span>
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            )}
-                        </div>
-                    );
-                })}
+                </div>
             </div>
         </div>
     );

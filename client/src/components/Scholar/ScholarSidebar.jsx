@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   Upload,
   CheckSquare,
-  Bell,
   LogOut,
   X,
   User,
@@ -12,16 +11,26 @@ import {
   Settings,
   ClipboardList,
 } from 'lucide-react';
+import appleLogo from '../../assets/logo/applelogo.png';
 
-// ── Token system — shared across the Scholar Portal ──
-const MAROON = '#7f2d3a';
-const MAROON_DEEP = '#4f1620';
-const GOLD = '#b98b4e';
-const IVORY = '#FBF7F2';
+// ── Same tokens as AdminSidebar — single source of truth, keep in sync ──
+const BG = '#F7F4EE';
+const SURFACE = '#FFFDF9';
+const BORDER = '#E7D8C7';
+const PRIMARY = '#6D2140';
+const PRIMARY_DEEP = '#4A1730';
 const INK = '#241512';
-const ROSE = '#F5E8EA';
+const MUTED = '#8A7A68';
+const BRONZE = '#A9784E';
+const RADIUS = 12;
 
-const ScholarSidebar = ({ isOpen, onClose }) => {
+const body = { fontFamily: "'Inter', 'Segoe UI', sans-serif" };
+
+// `isOpen` / `onClose` drive the mobile drawer.
+// `collapsed` drives the desktop 256px ↔ 84px rail, mirroring AdminSidebar —
+// the toggle itself lives wherever the scholar header renders it; this
+// component only reads the prop.
+const ScholarSidebar = ({ isOpen, onClose, collapsed = false }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const name = localStorage.getItem('name');
@@ -31,128 +40,232 @@ const ScholarSidebar = ({ isOpen, onClose }) => {
     if (window.innerWidth < 1024 && onClose) onClose();
   };
 
+  const handleLogout = async () => {
+    await axios.post('http://localhost:5000/api/logout', {}, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }).catch(() => {});
+    localStorage.clear();
+    navigate('/');
+  };
+
   const getInitials = (fullName) => {
     if (!fullName) return '?';
-    return fullName.split(' ').map(n => n[0]).slice(0, 2).join('').toUpperCase();
+    return fullName.split(' ').map((n) => n[0]).slice(0, 2).join('').toUpperCase();
   };
 
   const menuGroups = [
     {
       group: 'Overview',
       items: [
-        { name: 'Dashboard',       path: '/scholar',               icon: <LayoutDashboard size={18} /> },
-        { name: 'Notifications',   path: '/scholar/notifications', icon: <Bell size={18} />             },
-        { name: 'Announcements',   path: '/scholar/announcements', icon: <ClipboardList size={18} />    },
+        { name: 'Dashboard', path: '/scholar', icon: LayoutDashboard },
+        { name: 'Announcements', path: '/scholar/announcements', icon: ClipboardList },
       ],
     },
     {
       group: 'Requirements',
       items: [
-        { name: 'Submission',            path: '/scholar/submission', icon: <Upload size={18} />         },
-        { name: 'Requirement Checklist', path: '/scholar/checklist',  icon: <CheckSquare size={18} />    },
+        { name: 'Submission', path: '/scholar/submission', icon: Upload },
+        { name: 'Requirements Checklist', path: '/scholar/checklist', icon: CheckSquare },
       ],
     },
     {
       group: 'Duties & Tasks',
       items: [
-        { name: 'Duty Participation', path: '/scholar/duties', icon: <CalendarDays size={18} /> },
+        { name: 'Duty Participation', path: '/scholar/duties', icon: CalendarDays },
       ],
     },
     {
       group: 'Account',
       items: [
-        { name: 'Profile',   path: '/scholar/profile',   icon: <User size={18} />     },
-        { name: 'Settings',  path: '/scholar/settings',  icon: <Settings size={18} /> },
+        { name: 'Profile', path: '/scholar/profile', icon: User },
+        { name: 'Settings', path: '/scholar/settings', icon: Settings },
       ],
     },
   ];
 
-  const serif = { fontFamily: "'Playfair Display', serif" };
+  const isActive = (path) => location.pathname === path;
+
+  // Mobile drawer is always shown fully expanded — `collapsed` is a
+  // desktop-only affordance, same convention as AdminSidebar.
+  const rail = collapsed;
 
   return (
     <>
-      {/* Mobile Overlay */}
+      {/* Mobile overlay */}
       {isOpen && (
         <div
-          className="fixed inset-0 bg-black/30 backdrop-blur-sm z-20 lg:hidden"
+          className="fixed inset-0 bg-black/25 backdrop-blur-sm z-20 lg:hidden"
           onClick={onClose}
         />
       )}
 
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Inter:wght@400;500;600;700&display=swap');
+
+        .as-scroll::-webkit-scrollbar { width: 5px; }
+        .as-scroll::-webkit-scrollbar-track { background: transparent; }
+        .as-scroll::-webkit-scrollbar-thumb { background: rgba(109,33,64,0.16); border-radius: 999px; }
+        .as-scroll::-webkit-scrollbar-thumb:hover { background: rgba(109,33,64,0.30); }
+        .as-scroll { scrollbar-width: thin; scrollbar-color: rgba(109,33,64,0.16) transparent; }
+
+        .as-sidebar {
+          width: min(272px, 86vw);
+          transition: width 200ms ease;
+          box-shadow: 4px 0 24px rgba(74, 23, 48, 0.04);
+        }
+        @media (min-width: 1024px) {
+          .as-sidebar { width: 256px; }
+          .as-sidebar.as-rail { width: 84px; }
+        }
+
+        .as-navitem {
+          transition: background-color 180ms ease, color 180ms ease, transform 180ms ease, box-shadow 180ms ease;
+          outline: none;
+          cursor: pointer;
+          border: none;
+        }
+        .as-navitem:focus-visible,
+        .as-logout:focus-visible,
+        .as-close:focus-visible {
+          outline: 2px solid ${PRIMARY};
+          outline-offset: 2px;
+        }
+        .as-navitem.is-idle { background: transparent; color: ${MUTED}; }
+        .as-navitem.is-idle:hover { background: ${BG}; color: ${PRIMARY}; }
+        .as-navitem.is-idle:not(.is-rail):hover { transform: translateX(2px); }
+        .as-navitem.is-active {
+          background: ${PRIMARY};
+          color: #fff;
+          box-shadow: 0 4px 12px rgba(109, 33, 64, 0.22);
+        }
+
+        .as-logout { transition: background-color 180ms ease; }
+        .as-logout:hover { background: ${PRIMARY_DEEP} !important; }
+
+        .as-close { transition: background-color 180ms ease, color 180ms ease; }
+        .as-close:hover { background: ${BG}; color: ${PRIMARY}; }
+
+        .as-group-line { flex: 1; height: 1px; background: ${BORDER}; opacity: 0.7; }
+      `}</style>
+
       {/* Sidebar */}
       <aside
         className={`
-          fixed top-0 left-0 h-screen z-30 w-64
-          backdrop-blur-2xl
-          flex flex-col
+          as-sidebar fixed top-0 left-0 h-screen z-30
+          flex flex-col overflow-hidden
           transform transition-transform duration-300 ease-in-out
           lg:sticky lg:top-0 lg:translate-x-0 lg:h-screen lg:shrink-0
           ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+          ${rail ? 'as-rail' : ''}
         `}
-        style={{ background: IVORY, borderRight: `1px solid #ecdfe1`, boxShadow: '4px 0 24px rgba(127,45,58,0.06)' }}
+        style={{ background: SURFACE, borderRight: `1px solid ${BORDER}` }}
       >
         {/* Branding */}
-        <div className="px-6 pt-7 pb-5 flex items-center justify-between shrink-0" style={{ borderBottom: '1px solid #ecdfe1' }}>
-          <div className="flex items-center gap-3">
-            <div
-              className="w-10 h-10 rounded-2xl flex items-center justify-center shrink-0"
-              style={{ background: `linear-gradient(135deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)`, boxShadow: `0 6px 14px -4px ${MAROON}55` }}
+        <div
+          className="relative shrink-0 flex flex-col items-center"
+          style={{
+            borderBottom: `1px solid ${BORDER}`,
+            padding: rail ? '22px 0 20px' : '24px 20px 18px',
+          }}
+        >
+          {!rail && (
+            <button
+              onClick={onClose}
+              className="as-close lg:hidden absolute flex items-center justify-center rounded-lg shrink-0"
+              style={{ top: 12, right: 12, width: 32, height: 32, color: MUTED, background: 'transparent', border: 'none', cursor: 'pointer' }}
+              aria-label="Close menu"
             >
-              {/* our own apple silhouette mark — same one used across every hero band,
-                  not the Apple Inc. logo */}
-              <svg viewBox="0 0 200 200" className="w-5 h-5" fill="none">
-                <path
-                  d="M100 62c-6-14-20-24-36-24-4 0-8 1-8 1s-2 10 4 22c5 10 15 18 26 19-4 12-6 26-6 38 0 34 18 62 40 62 8 0 12-4 20-4s12 4 20 4c22 0 40-30 40-64 0-24-12-42-30-42-8 0-14 4-20 4s-10-3-16-6c2-11 8-20 16-25-2-1-6-2-10-2-16 0-30 8-40 17z"
-                  fill={GOLD}
-                />
-                <path d="M100 62c2-16 10-30 22-38" stroke={GOLD} strokeWidth="10" strokeLinecap="round" />
-              </svg>
-            </div>
-            <div>
-              <h1 className="text-[15px] font-bold leading-none italic" style={{ ...serif, color: MAROON }}>
-                Apple Scholar
-              </h1>
-              <p className="text-[10px] font-bold tracking-[0.2em] uppercase mt-1" style={{ color: '#c9a9b0' }}>
-                Scholar Portal
-              </p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="lg:hidden p-1.5 rounded-lg transition-colors"
-            style={{ color: '#c9a9b0' }}
-          >
-            <X size={16} />
-          </button>
+              <X size={17} />
+            </button>
+          )}
+
+          {/* Full Apple Scholar logo — uncropped and undistorted; multiply
+              blend dissolves any white background into the cream sidebar. */}
+          <img
+            src={appleLogo}
+            alt="Apple Scholar"
+            draggable={false}
+            style={{
+              display: 'block',
+              width: rail ? 66 : '100%',
+              maxWidth: rail ? 66 : 196,
+              height: 'auto',
+              mixBlendMode: 'multiply',
+              userSelect: 'none',
+            }}
+          />
+
+          {!rail && (
+            <p
+              style={{
+                ...body,
+                fontSize: '0.66rem',
+                color: BRONZE,
+                fontWeight: 700,
+                letterSpacing: '0.18em',
+                textTransform: 'uppercase',
+                marginTop: 6,
+              }}
+            >
+              Scholar Portal
+            </p>
+          )}
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 px-3 py-4 overflow-y-auto space-y-4">
+        <nav
+          className="as-scroll flex-1 min-h-0 overflow-y-auto flex flex-col"
+          style={{ padding: rail ? '20px 12px' : '22px 16px', gap: 22 }}
+          aria-label="Scholar navigation"
+        >
           {menuGroups.map((group) => (
             <div key={group.group}>
-              <p className="text-[9px] font-bold uppercase tracking-[0.35em] px-3 mb-1.5" style={{ color: '#d4b3a0' }}>
-                {group.group}
-              </p>
-              <div className="space-y-0.5">
+              {!rail && (
+                <div className="flex items-center gap-2 px-3 mb-2">
+                  <p
+                    style={{ ...body, fontSize: '0.64rem', fontWeight: 700, color: BRONZE, letterSpacing: '0.14em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}
+                  >
+                    {group.group}
+                  </p>
+                  <span className="as-group-line" aria-hidden />
+                </div>
+              )}
+              {rail && (
+                <div aria-hidden style={{ height: 1, background: BORDER, opacity: 0.7, margin: '0 10px 10px' }} />
+              )}
+              <div className="flex flex-col" style={{ gap: 2 }}>
                 {group.items.map((item) => {
-                  const isActive = location.pathname === item.path;
+                  const active = isActive(item.path);
+                  const Icon = item.icon;
                   return (
                     <button
                       key={item.path}
                       onClick={() => handleNavigate(item.path)}
-                      className="w-full text-left px-3 py-2.5 rounded-xl text-[13px] font-bold transition-all duration-200 flex items-center gap-3 group"
-                      style={isActive
-                        ? { background: `linear-gradient(120deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)`, color: '#fff', boxShadow: `0 4px 12px -4px ${MAROON}66` }
-                        : { color: '#8a7570', background: 'transparent' }}
-                      onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.background = ROSE; }}
-                      onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.background = 'transparent'; }}
+                      title={rail ? item.name : undefined}
+                      aria-label={rail ? item.name : undefined}
+                      aria-current={active ? 'page' : undefined}
+                      className={`as-navitem w-full text-left flex items-center gap-3 ${active ? 'is-active' : 'is-idle'} ${rail ? 'is-rail' : ''}`}
+                      style={{
+                        height: 42,
+                        padding: rail ? 0 : '0 12px',
+                        justifyContent: rail ? 'center' : 'flex-start',
+                        borderRadius: RADIUS,
+                        ...body,
+                        fontSize: '0.84rem',
+                        fontWeight: active ? 600 : 500,
+                        letterSpacing: '0.005em',
+                      }}
                     >
-                      <span className="shrink-0 transition-colors" style={{ color: isActive ? '#fff' : GOLD }}>
-                        {item.icon}
-                      </span>
-                      <span className="flex-1 truncate">{item.name}</span>
-                      {isActive && (
-                        <span className="ml-auto w-1.5 h-1.5 rounded-full shrink-0" style={{ background: GOLD }} />
+                      <Icon
+                        size={18}
+                        strokeWidth={1.8}
+                        style={{ color: active ? '#fff' : PRIMARY, flexShrink: 0 }}
+                      />
+                      {!rail && <span className="truncate flex-1">{item.name}</span>}
+                      {!rail && active && (
+                        <span
+                          aria-hidden
+                          className="rounded-full shrink-0"
+                          style={{ width: 6, height: 6, background: '#fff', opacity: 0.9 }}
+                        />
                       )}
                     </button>
                   );
@@ -162,38 +275,91 @@ const ScholarSidebar = ({ isOpen, onClose }) => {
           ))}
         </nav>
 
-        {/* User Profile & Logout */}
-        <div className="p-3 shrink-0" style={{ borderTop: '1px solid #ecdfe1' }}>
-          <div className="flex items-center gap-3 px-3 py-3 rounded-xl mb-2" style={{ background: ROSE }}>
-            <div
-              className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
-              style={{ background: `linear-gradient(135deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)` }}
-            >
-              <span className="text-xs font-bold" style={{ color: GOLD }}>{getInitials(name)}</span>
-            </div>
-            <div className="min-w-0">
-              <p className="text-[12px] font-bold truncate uppercase tracking-tight" style={{ color: INK }}>
-                {name || 'Scholar'}
-              </p>
-              <div className="flex items-center gap-1.5 mt-0.5">
-                <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#15803d' }} />
-                <p className="text-[10px] font-bold uppercase tracking-widest" style={{ color: MAROON }}>Scholar</p>
+        {/* User profile & log out */}
+        <div className="shrink-0" style={{ padding: rail ? '14px 10px' : 16, borderTop: `1px solid ${BORDER}` }}>
+          {!rail ? (
+            <>
+              <div
+                className="flex items-center gap-3"
+                style={{
+                  padding: '10px 12px',
+                  marginBottom: 12,
+                  background: BG,
+                  border: `1px solid ${BORDER}`,
+                  borderRadius: RADIUS,
+                }}
+              >
+                <div className="relative shrink-0" style={{ width: 36, height: 36 }}>
+                  <div
+                    className="rounded-full flex items-center justify-center"
+                    style={{ width: 36, height: 36, background: PRIMARY }}
+                  >
+                    <span style={{ ...body, color: '#fff', fontSize: '0.72rem', fontWeight: 700 }}>
+                      {getInitials(name)}
+                    </span>
+                  </div>
+                  <span
+                    aria-hidden
+                    className="absolute rounded-full"
+                    style={{ right: -1, bottom: -1, width: 10, height: 10, background: '#3FA66B', border: `2px solid ${BG}` }}
+                  />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p style={{ ...body, fontSize: '0.82rem', fontWeight: 600, color: INK, lineHeight: 1.2 }} className="truncate">
+                    {name || 'Scholar'}
+                  </p>
+                  <p style={{ ...body, fontSize: '0.69rem', color: MUTED, marginTop: 3, lineHeight: 1 }}>Scholar</p>
+                </div>
               </div>
-            </div>
-          </div>
 
-          <button
-            onClick={async () => {
-              await axios.post('http://localhost:5000/api/logout', {}, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }).catch(() => {});
-              localStorage.clear();
-              navigate('/');
-            }}
-            className="w-full py-2.5 rounded-xl text-white font-bold text-[11px] transition-all duration-300 tracking-[0.15em] flex items-center justify-center gap-2 uppercase"
-            style={{ background: `linear-gradient(120deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)`, boxShadow: `0 4px 12px -4px ${MAROON}66` }}
-          >
-            <LogOut size={13} />
-            Sign Out
-          </button>
+              <button
+                onClick={handleLogout}
+                className="as-logout w-full flex items-center justify-center gap-2"
+                style={{
+                  height: 43,
+                  borderRadius: RADIUS,
+                  border: 'none',
+                  cursor: 'pointer',
+                  background: PRIMARY,
+                  color: '#fff',
+                  ...body,
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  letterSpacing: '0.01em',
+                }}
+              >
+                <LogOut size={16} />
+                Log out
+              </button>
+            </>
+          ) : (
+            <div className="flex flex-col items-center gap-3">
+              <div className="relative shrink-0" style={{ width: 36, height: 36 }} title={name || 'Scholar'}>
+                <div
+                  className="rounded-full flex items-center justify-center"
+                  style={{ width: 36, height: 36, background: PRIMARY }}
+                >
+                  <span style={{ ...body, color: '#fff', fontSize: '0.72rem', fontWeight: 700 }}>
+                    {getInitials(name)}
+                  </span>
+                </div>
+                <span
+                  aria-hidden
+                  className="absolute rounded-full"
+                  style={{ right: -1, bottom: -1, width: 10, height: 10, background: '#3FA66B', border: `2px solid ${SURFACE}` }}
+                />
+              </div>
+              <button
+                onClick={handleLogout}
+                className="as-logout flex items-center justify-center"
+                style={{ width: 40, height: 40, borderRadius: RADIUS, border: 'none', cursor: 'pointer', background: PRIMARY, color: '#fff' }}
+                title="Log out"
+                aria-label="Log out"
+              >
+                <LogOut size={16} />
+              </button>
+            </div>
+          )}
         </div>
       </aside>
     </>

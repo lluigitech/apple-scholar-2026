@@ -1,425 +1,1201 @@
-import React, { useState, useEffect } from 'react';
+
+import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import useComplianceStatus from '../../hooks/useComplianceStatus';
+import { buildScholarChecklist } from '../../utils/scholarChecklist';
 import {
-    CheckCircle, XCircle, Clock, AlertTriangle,
-    Megaphone, ChevronRight, FileText, Upload,
-    Timer, Image, TrendingUp, RefreshCw,
+    Clock3,
+    AlertTriangle,
+    ChevronRight,
+    FileText,
+    Upload,
+    Timer,
+    Image,
+    RefreshCw,
+    CheckCircle2,
+    XCircle,
+    ShieldCheck,
+    ArrowUpRight,
 } from 'lucide-react';
 
-// ── Token system — shared across the Scholar Portal ──
-const MAROON = '#7f2d3a';
-const MAROON_DEEP = '#4f1620';
-const GOLD = '#b98b4e';
-const IVORY = '#FBF7F2';
+/*
+ * Apple Scholar — Scholar Dashboard
+ * Redesigned to match the shared Scholar Portal visual language:
+ * rounded bento cards, warm paper background, maroon branding,
+ * bronze accents, clean typography, and responsive layouts.
+ *
+ * IMPORTANT:
+ * - Backend/API logic is preserved.
+ * - Routes are preserved.
+ * - Compliance data, submissions, requirements, announcements,
+ *   feedback, and refresh behavior are preserved.
+ * - Only the presentation/layout is redesigned.
+ */
+
+const BG = '#F7F4EE';
+const SURFACE = '#FFFDF9';
+const BORDER = '#E7D8C7';
+const PRIMARY = '#6D2140';
+const PRIMARY_DARK = '#4A1730';
+const BRONZE = '#A9784E';
+const SUCCESS = '#6B8F71';
+const WARNING = '#C08A3E';
+const DANGER = '#C0473F';
 const INK = '#241512';
-const ROSE = '#F5E8EA';
+const MUTED = '#8A7A68';
+const RADIUS = 18;
+
+const display = { fontFamily: "'Playfair Display', Georgia, serif" };
+const body = { fontFamily: "'Inter', -apple-system, 'Segoe UI', sans-serif" };
+const mono = { fontFamily: "'Inter', -apple-system, 'Segoe UI', sans-serif" };
 
 const authHeader = () => {
     const token = localStorage.getItem('token');
     return { Authorization: `Bearer ${token}` };
 };
 
-const getComplianceColor = (value) => value >= 70 ? '#15803d' : '#991b1b';
-const getComplianceBg = (value) => value >= 70 ? '#EAF3EC' : '#FBE9E9';
-const getRiskLabel = (complianceScore) => {
-    if (complianceScore >= 70) return 'Low Risk';
-    if (complianceScore >= 50) return 'Medium Risk';
+const getComplianceColor = (value) => {
+    if (value == null) return MUTED;
+    return Number(value) >= 70 ? SUCCESS : DANGER;
+};
+
+const getRiskLabel = (score) => {
+    if (score >= 70) return 'Low Risk';
+    if (score >= 50) return 'Medium Risk';
     return 'High Risk';
 };
-const getRiskColor = (complianceScore) => complianceScore >= 70 ? '#15803d' : complianceScore >= 50 ? '#92400e' : '#991b1b';
-const getRiskBg = (complianceScore) => complianceScore >= 70 ? '#EAF3EC' : complianceScore >= 50 ? '#FBF0DE' : '#FBE9E9';
 
-// ── Radial gauge — a semicircle arc reading the compliance score, the
-// dashboard's signature instrument. Pure SVG, no chart library needed.
-const ComplianceGauge = ({ score, color }) => {
-    const RADIUS = 74;
-    const CIRC = Math.PI * RADIUS; // half-circumference (180° arc length)
-    const pct = score === null ? 0 : Math.max(0, Math.min(100, score)) / 100;
-    const dash = pct * CIRC;
+const getRiskColor = (score) => {
+    if (score >= 70) return SUCCESS;
+    if (score >= 50) return WARNING;
+    return DANGER;
+};
+
+const formatStatus = (status) => {
+    if (!status) return 'Not submitted';
+    if (status === 'approved') return 'Approved';
+    if (status === 'rejected') return 'Returned';
+    if (status === 'pending') return 'Under review';
+    return status;
+};
+
+const formatChecklistDate = (value) => {
+    if (!value) return null;
+    const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+    return Number.isNaN(date.getTime())
+        ? null
+        : date.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+const StatusBadge = ({ status }) => {
+    const config = {
+        approved: { color: SUCCESS, bg: `${SUCCESS}14`, icon: CheckCircle2 },
+        rejected: { color: DANGER, bg: `${DANGER}12`, icon: XCircle },
+        pending: { color: WARNING, bg: `${WARNING}14`, icon: Clock3 },
+    };
+
+    const cfg = config[status] || {
+        color: MUTED,
+        bg: `${MUTED}12`,
+        icon: Clock3,
+    };
+
+    const Icon = cfg.icon;
+
     return (
-        <div className="relative flex flex-col items-center">
-            <svg viewBox="0 0 200 110" className="w-full max-w-[220px]">
-                <path d="M18,100 A82,82 0 0 1 182,100" fill="none" stroke="#f0e6e0" strokeWidth="14" strokeLinecap="round" />
-                <path
-                    d="M18,100 A82,82 0 0 1 182,100"
+        <span
+            className="inline-flex items-center gap-1.5"
+            style={{
+                ...body,
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                color: cfg.color,
+                background: cfg.bg,
+                borderRadius: 999,
+                padding: '5px 10px',
+                whiteSpace: 'nowrap',
+            }}
+        >
+            <Icon size={12} />
+            {formatStatus(status)}
+        </span>
+    );
+};
+
+const ProgressBar = ({ value, color = PRIMARY }) => (
+    <div
+        style={{
+            width: '100%',
+            height: 7,
+            background: `${BORDER}80`,
+            borderRadius: 999,
+            overflow: 'hidden',
+        }}
+    >
+        <div
+            style={{
+                width: `${Math.max(0, Math.min(100, value || 0))}%`,
+                height: '100%',
+                background: color,
+                borderRadius: 999,
+                transition: 'width 500ms ease',
+            }}
+        />
+    </div>
+);
+
+const ComplianceGauge = ({ score, loading }) => {
+    const value = score == null ? 0 : Math.max(0, Math.min(100, Number(score)));
+    const radius = 46;
+    const circumference = 2 * Math.PI * radius;
+    const dash = (value / 100) * circumference;
+    const color = getComplianceColor(score);
+
+    return (
+        <div
+            className="relative flex items-center justify-center flex-shrink-0"
+            style={{ width: 124, height: 124 }}
+        >
+            <svg
+                width="124"
+                height="124"
+                viewBox="0 0 124 124"
+                style={{ transform: 'rotate(-90deg)' }}
+            >
+                <circle
+                    cx="62"
+                    cy="62"
+                    r={radius}
+                    fill="none"
+                    stroke="rgba(255,255,255,0.18)"
+                    strokeWidth="9"
+                />
+                <circle
+                    cx="62"
+                    cy="62"
+                    r={radius}
                     fill="none"
                     stroke={color}
-                    strokeWidth="14"
+                    strokeWidth="9"
                     strokeLinecap="round"
-                    strokeDasharray={`${dash} ${CIRC * 2}`}
-                    style={{ transition: 'stroke-dasharray 0.6s ease' }}
+                    strokeDasharray={`${dash} ${circumference}`}
+                    style={{ transition: 'stroke-dasharray 600ms ease' }}
                 />
             </svg>
-            <div className="absolute top-[48px] flex flex-col items-center">
-                <span className="text-3xl font-bold" style={{ fontFamily: "'Playfair Display', serif", color: INK }}>
-                    {score !== null ? Math.round(score) : '—'}
-                </span>
-                <span className="text-[9px] font-bold uppercase tracking-widest -mt-1" style={{ color: '#a89890' }}>Credits</span>
+
+            <div className="absolute inset-0 flex flex-col items-center justify-center">
+                {loading ? (
+                    <div
+                        className="animate-pulse"
+                        style={{
+                            width: 34,
+                            height: 20,
+                            borderRadius: 6,
+                            background: 'rgba(255,255,255,0.2)',
+                        }}
+                    />
+                ) : (
+                    <>
+                        <span
+                            style={{
+                                ...display,
+                                color: '#fff',
+                                fontSize: '1.65rem',
+                                fontWeight: 700,
+                                lineHeight: 1,
+                            }}
+                        >
+                            {score == null ? '—' : Math.round(score)}
+                        </span>
+                        <span
+                            style={{
+                                ...mono,
+                                color: 'rgba(255,255,255,0.68)',
+                                fontSize: '0.55rem',
+                                fontWeight: 800,
+                                letterSpacing: '0.09em',
+                                marginTop: 5,
+                            }}
+                        >
+                            COMPLIANCE
+                        </span>
+                    </>
+                )}
             </div>
         </div>
     );
 };
 
-// ── Donut — completed vs missing requirements, the gauge's companion chart.
-const RequirementsDonut = ({ completed, total }) => {
-    const RADIUS = 40;
-    const CIRC = 2 * Math.PI * RADIUS;
-    const pct = total > 0 ? completed / total : 0;
-    const dash = pct * CIRC;
+const BentoStat = ({ icon: Icon, label, value, detail, accent = PRIMARY }) => (
+    <div
+        className="min-w-0"
+        style={{
+            background: SURFACE,
+            border: `1px solid ${BORDER}`,
+            borderRadius: RADIUS,
+            padding: '17px 18px',
+        }}
+    >
+        <div className="flex items-start justify-between gap-3">
+            <span
+                className="flex items-center justify-center flex-shrink-0"
+                style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 11,
+                    background: `${accent}14`,
+                }}
+            >
+                <Icon size={16} style={{ color: accent }} />
+            </span>
+        </div>
+
+        <p
+            style={{
+                ...display,
+                fontSize: '1.45rem',
+                fontWeight: 700,
+                color: INK,
+                marginTop: 13,
+            }}
+            className="truncate"
+        >
+            {value}
+        </p>
+
+        <p
+            style={{
+                ...body,
+                fontSize: '0.76rem',
+                fontWeight: 700,
+                color: INK,
+                marginTop: 2,
+            }}
+        >
+            {label}
+        </p>
+
+        <p
+            style={{
+                ...body,
+                fontSize: '0.69rem',
+                color: MUTED,
+                marginTop: 3,
+            }}
+            className="truncate"
+        >
+            {detail}
+        </p>
+    </div>
+);
+
+const RequirementRow = ({ requirement }) => {
+    const status = requirement.done
+        ? { label: 'Complete', detail: 'Approved', color: SUCCESS }
+        : requirement.status === 'pending_review'
+            ? { label: 'Pending Review', detail: 'Awaiting officer review', color: WARNING }
+            : ['rejected', 'returned'].includes(requirement.status)
+                ? { label: 'Returned', detail: 'Revision required', color: DANGER }
+                : ['missed', 'missing'].includes(requirement.status)
+                    ? { label: 'Missed', detail: 'Deadline passed', color: DANGER }
+                    : { label: 'Pending', detail: 'Still needs attention', color: WARNING };
+
     return (
-        <div className="relative flex items-center justify-center flex-shrink-0" style={{ width: 100, height: 100 }}>
-            <svg viewBox="0 0 100 100" className="w-full h-full -rotate-90">
-                <circle cx="50" cy="50" r={RADIUS} fill="none" stroke="#f0e6e0" strokeWidth="12" />
-                <circle
-                    cx="50" cy="50" r={RADIUS} fill="none" stroke="#15803d" strokeWidth="12"
-                    strokeDasharray={`${dash} ${CIRC}`} strokeLinecap="round"
-                    style={{ transition: 'stroke-dasharray 0.6s ease' }}
-                />
-            </svg>
-            <div className="absolute flex flex-col items-center">
-                <span className="text-lg font-bold" style={{ fontFamily: "'Playfair Display', serif", color: INK }}>{completed}/{total}</span>
-                <span className="text-[8px] font-bold uppercase tracking-widest" style={{ color: '#a89890' }}>Done</span>
+        <div
+        className="flex items-center justify-between gap-3"
+        style={{
+            padding: '13px 0',
+            borderBottom: `1px solid ${BORDER}`,
+        }}
+    >
+        <div className="flex items-center gap-3 min-w-0">
+            <span
+                className="flex items-center justify-center flex-shrink-0"
+                style={{
+                    width: 34,
+                    height: 34,
+                    borderRadius: 11,
+                    background: `${status.color}14`,
+                    color: status.color,
+                }}
+            >
+                {requirement.icon}
+            </span>
+
+            <div className="min-w-0">
+                <p
+                    style={{
+                        ...body,
+                        fontSize: '0.81rem',
+                        fontWeight: 700,
+                        color: INK,
+                    }}
+                    className="truncate"
+                >
+                    {requirement.label}
+                </p>
+
+                <p
+                    style={{
+                        ...body,
+                        fontSize: '0.68rem',
+                        color: MUTED,
+                        marginTop: 2,
+                    }}
+                >
+                    {status.detail}
+                </p>
             </div>
+        </div>
+
+        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+            <span
+                style={{
+                    ...body,
+                    fontSize: '0.7rem',
+                    fontWeight: 700,
+                    color: status.color,
+                    whiteSpace: 'nowrap',
+                }}
+            >
+                {status.label}
+            </span>
+            {requirement.dueDate && formatChecklistDate(requirement.dueDate) && (
+                <span style={{ ...body, fontSize: '0.65rem', color: MUTED, whiteSpace: 'nowrap' }}>
+                    Due {formatChecklistDate(requirement.dueDate)}
+                </span>
+            )}
+        </div>
         </div>
     );
 };
+
+const LatestAnnouncementsCard = ({ announcements, onOpen }) => (
+    <section
+        className="col-span-full min-w-0 w-full"
+        style={{
+            background: SURFACE,
+            border: `1px solid ${BORDER}`,
+            borderRadius: RADIUS,
+            padding: '18px',
+        }}
+    >
+        <div className="flex items-center justify-between gap-3 mb-4">
+            <div>
+                <p style={{ ...body, fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.08em', color: BRONZE, textTransform: 'uppercase' }}>
+                    From your portal
+                </p>
+                <h2 className="mt-1" style={{ ...display, fontSize: '1.08rem', fontWeight: 700, color: INK }}>
+                    Latest announcements
+                </h2>
+            </div>
+            <button
+                type="button"
+                onClick={onOpen}
+                className="inline-flex flex-shrink-0 items-center gap-1"
+                style={{ ...body, fontSize: '0.68rem', fontWeight: 700, color: PRIMARY, background: `${PRIMARY}0A`, border: `1px solid ${BORDER}`, borderRadius: 999, padding: '7px 10px', cursor: 'pointer' }}
+            >
+                View all <ChevronRight size={12} />
+            </button>
+        </div>
+
+        {announcements.length === 0 ? (
+            <p style={{ ...body, fontSize: '0.75rem', color: MUTED }}>No announcements yet.</p>
+        ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {announcements.slice(0, 3).map((announcement) => (
+                    <article
+                        key={announcement.id}
+                        className="min-w-0"
+                        style={{ background: BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '14px 15px' }}
+                    >
+                        <span style={{ ...body, fontSize: '0.61rem', fontWeight: 800, color: PRIMARY, background: `${PRIMARY}10`, borderRadius: 999, padding: '4px 8px' }}>
+                            NOTICE
+                        </span>
+                        <h3 className="mt-3 line-clamp-2" style={{ ...display, fontSize: '0.96rem', fontWeight: 700, color: INK, lineHeight: 1.3 }}>
+                            {announcement.title}
+                        </h3>
+                        <p className="mt-1 line-clamp-2" style={{ ...body, fontSize: '0.71rem', color: MUTED, lineHeight: 1.5 }}>
+                            {announcement.content}
+                        </p>
+                        <p className="mt-3 border-t pt-2" style={{ ...body, fontSize: '0.62rem', color: MUTED, borderColor: BORDER }}>
+                            {announcement.created_at ? new Date(announcement.created_at).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Date unavailable'}
+                        </p>
+                    </article>
+                ))}
+            </div>
+        )}
+    </section>
+);
+
+const ComplianceFlags = ({ flags, visible }) => visible && flags.length > 0 && (
+    <section
+        style={{
+            background: SURFACE,
+            border: `1px solid ${BORDER}`,
+            borderRadius: RADIUS,
+            padding: '18px 20px',
+        }}
+    >
+        <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+                <p style={{ ...body, fontSize: '0.61rem', fontWeight: 800, letterSpacing: '0.1em', color: DANGER, textTransform: 'uppercase' }}>
+                    Attention needed
+                </p>
+                <h2 style={{ ...display, fontSize: '1.05rem', fontWeight: 700, color: INK, marginTop: 3 }}>
+                    Compliance flags
+                </h2>
+            </div>
+            <AlertTriangle size={17} style={{ color: DANGER }} />
+        </div>
+
+        <div className="grid grid-cols-1 gap-2.5">
+            {flags.map((flag, index) => (
+                <div
+                    key={index}
+                    className="flex items-start gap-2.5"
+                    style={{ background: `${DANGER}08`, border: `1px solid ${DANGER}18`, borderRadius: 12, padding: '11px 12px' }}
+                >
+                    <AlertTriangle size={13} style={{ color: DANGER, flexShrink: 0, marginTop: 2 }} />
+                    <p style={{ ...body, fontSize: '0.73rem', color: INK, lineHeight: 1.45 }}>
+                        {flag.description}
+                    </p>
+                </div>
+            ))}
+        </div>
+    </section>
+);
+
+const Skeleton = ({ className = '' }) => (
+    <div
+        className={`animate-pulse ${className}`}
+        style={{
+            background: `${BORDER}88`,
+            borderRadius: RADIUS,
+        }}
+    />
+);
 
 const ScholarDashboard = () => {
     const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/+$|\/$/g, '');
     const API = API_BASE.endsWith('/api') ? API_BASE : `${API_BASE}/api`;
 
     const navigate = useNavigate();
-    const { data: complianceData, loading: complianceLoading, error: complianceError, refetch: refreshCompliance } = useComplianceStatus();
+    const {
+        data: complianceData,
+        loading: complianceLoading,
+        error: complianceError,
+        refetch: refreshCompliance,
+    } = useComplianceStatus();
+
     const name = localStorage.getItem('name');
     const scholarId = localStorage.getItem('scholar_id');
+
     const [latestSubmission, setLatestSubmission] = useState(null);
     const [announcements, setAnnouncements] = useState([]);
+    const [checklistInputs, setChecklistInputs] = useState({ duties: [], history: [], grades: [], tasks: [] });
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         const fetchData = async () => {
             try {
-                const [subRes, annRes] = await Promise.allSettled([
+                const [subRes, annRes, dutiesRes, gradesRes, tasksRes] = await Promise.allSettled([
                     axios.get(`${API}/submission/history/${scholarId}`, {
                         headers: authHeader(),
                     }),
                     axios.get(`${API}/scholar/announcements`, {
                         headers: authHeader(),
                     }),
+                    axios.get(`${API}/scholar/my-duties`, { headers: authHeader() }),
+                    axios.get(`${API}/submission/grades/${scholarId}`, { headers: authHeader() }),
+                    axios.get(`${API}/tasks`, { headers: authHeader() }),
                 ]);
-                if (subRes.status === 'fulfilled' && subRes.value.data.length > 0) {
-                    setLatestSubmission(subRes.value.data[0]);
+
+                const history = subRes.status === 'fulfilled' && Array.isArray(subRes.value.data) ? subRes.value.data : [];
+                if (history.length > 0) {
+                    setLatestSubmission(history[0]);
                 }
+
                 if (annRes.status === 'fulfilled') {
                     setAnnouncements(annRes.value.data.slice(0, 3));
                 }
+
+                setChecklistInputs({
+                    duties: dutiesRes.status === 'fulfilled' && Array.isArray(dutiesRes.value.data) ? dutiesRes.value.data : [],
+                    history,
+                    grades: gradesRes.status === 'fulfilled' && Array.isArray(gradesRes.value.data) ? gradesRes.value.data : [],
+                    tasks: tasksRes.status === 'fulfilled' && Array.isArray(tasksRes.value.data) ? tasksRes.value.data : [],
+                });
             } catch (err) {
                 console.error(err);
             } finally {
                 setLoading(false);
             }
         };
+
         fetchData();
     }, [scholarId]);
 
-    const requirements = [
-        { label: 'Monthly Letter', done: !!latestSubmission?.letter_content, icon: <FileText size={13} /> },
-        { label: 'Report Card', done: !!latestSubmission?.report_card_path, icon: <Upload size={13} /> },
-        { label: 'COR', done: !!latestSubmission?.cor_path, icon: <Upload size={13} /> },
-        { label: 'Service Hours', done: !!latestSubmission?.service_activity, icon: <Timer size={13} /> },
-        { label: 'Activity Photos', done: !!latestSubmission?.media_paths, icon: <Image size={13} /> },
-    ];
+    const allRequirements = buildScholarChecklist(checklistInputs).map((task) => ({
+        ...task,
+        label: task.title,
+        icon: task.type === 'Duty Participation' ? <Timer size={15} /> : <Upload size={15} />,
+    }));
+    const today = new Date();
+    const checklistNow = today;
+    const sevenDaysAgo = checklistNow.getTime() - 7 * 24 * 60 * 60 * 1000;
+    const requirements = allRequirements.filter((item) => {
+        if (item.done) {
+            const completedAt = item.completedAt ? new Date(item.completedAt).getTime() : NaN;
+            return Number.isFinite(completedAt) && completedAt >= sevenDaysAgo && completedAt <= checklistNow.getTime();
+        }
+        if (['missed', 'missing'].includes(item.status)) {
+            if (!item.dueDate) return false;
+            const dueDate = new Date(`${String(item.dueDate).slice(0, 10)}T00:00:00`);
+            return !Number.isNaN(dueDate.getTime())
+                && dueDate.getFullYear() === checklistNow.getFullYear()
+                && dueDate.getMonth() === checklistNow.getMonth();
+        }
+        return true;
+    });
 
-    const completedCount = requirements.filter(r => r.done).length;
-    const progressPercent = Math.round((completedCount / requirements.length) * 100);
+    const completedCount = requirements.filter((r) => r.done).length;
 
     const complianceScore = complianceData?.overall_compliance ?? null;
     const riskScore = Number(complianceData?.risk_score || 0);
-    const riskLabel = complianceScore !== null ? getRiskLabel(Number(complianceScore)) : 'Loading...';
-    const complianceColor = complianceScore !== null ? getComplianceColor(complianceScore) : '#a89890';
-    const complianceBg = complianceScore !== null ? getComplianceBg(complianceScore) : '#f1ece8';
-    const riskColor = complianceScore !== null ? getRiskColor(Number(complianceScore)) : '#a89890';
-    const riskBg = complianceScore !== null ? getRiskBg(Number(complianceScore)) : '#f1ece8';
+    const riskLabel =
+        complianceScore !== null
+            ? getRiskLabel(Number(complianceScore))
+            : 'Loading...';
+    const riskColor =
+        complianceScore !== null
+            ? getRiskColor(Number(complianceScore))
+            : MUTED;
+
     const topFlags = complianceData?.flags?.slice(0, 2) ?? [];
 
-    const serif = { fontFamily: "'Playfair Display', serif" };
-    const sans = { fontFamily: "'DM Sans', sans-serif" };
-
-    const Skeleton = ({ className }) => (
-        <div className={`animate-pulse rounded-2xl ${className}`} style={{ background: '#EFE7E2' }} />
-    );
+    const completionPercent = requirements.length
+        ? Math.round((completedCount / requirements.length) * 100)
+        : 0;
 
     return (
-        <div style={{ ...sans, background: IVORY, minHeight: '100vh' }}>
-
-            {/* ── Hero band ─────────────────────────────────────── */}
+        <div
+            style={{
+                ...body,
+                background: BG,
+                minHeight: '100vh',
+                color: INK,
+            }}
+        >
             <div
-                className="relative overflow-hidden px-4 sm:px-6 lg:px-8 pt-6 sm:pt-8 pb-16 sm:pb-20"
-                style={{ background: `linear-gradient(135deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)` }}
+                className="w-full px-4 sm:px-6 lg:px-8"
+                style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    paddingTop: 24,
+                    paddingBottom: 40,
+                }}
             >
-                <svg
-                    className="absolute -right-8 -top-10 w-52 h-52 sm:-right-6 sm:-top-8 sm:w-64 sm:h-64 opacity-[0.14] pointer-events-none"
-                    viewBox="0 0 200 200"
-                    fill="none"
+                {/* ───────────────── HERO ───────────────── */}
+                <section
+                    className="relative overflow-hidden"
+                    style={{
+                        background: `linear-gradient(135deg, ${PRIMARY_DARK} 0%, ${PRIMARY} 58%, #7C2D4C 100%)`,
+                        borderRadius: 24,
+                        padding: '24px',
+                        marginBottom: 16,
+                        boxShadow: '0 18px 40px -28px rgba(74,23,48,0.55)',
+                    }}
                 >
-                    <path
-                        d="M100 62c-6-14-20-24-36-24-4 0-8 1-8 1s-2 10 4 22c5 10 15 18 26 19-4 12-6 26-6 38 0 34 18 62 40 62 8 0 12-4 20-4s12 4 20 4c22 0 40-30 40-64 0-24-12-42-30-42-8 0-14 4-20 4s-10-3-16-6c2-11 8-20 16-25-2-1-6-2-10-2-16 0-30 8-40 17z"
-                        fill={GOLD}
+                    <div
+                        aria-hidden="true"
+                        className="absolute"
+                        style={{
+                            width: 260,
+                            height: 260,
+                            right: -80,
+                            top: -120,
+                            borderRadius: '50%',
+                            border: '1px solid rgba(255,255,255,0.09)',
+                        }}
                     />
-                    <path d="M100 62c2-16 10-30 22-38" stroke={GOLD} strokeWidth="6" strokeLinecap="round" />
-                </svg>
+                    <div
+                        aria-hidden="true"
+                        className="absolute"
+                        style={{
+                            width: 180,
+                            height: 180,
+                            right: 30,
+                            bottom: -120,
+                            borderRadius: '50%',
+                            border: '1px solid rgba(255,255,255,0.07)',
+                        }}
+                    />
 
-                <p className="relative text-[10px] sm:text-[11px] font-bold uppercase tracking-[0.2em] sm:tracking-[0.25em] mb-2" style={{ color: GOLD }}>
-                    Scholar Portal
-                </p>
-                <h1 className="relative text-2xl sm:text-3xl md:text-4xl font-bold text-white" style={serif}>Welcome, {name || 'Scholar'}.</h1>
-                <p className="relative text-xs mt-2 max-w-md" style={{ color: '#e9c9a8' }}>
-                    Track your compliance and manage your requirements.
-                </p>
-            </div>
+                    <div className="relative grid grid-cols-1 xl:grid-cols-[1fr_auto] gap-8 items-center">
+                        <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <span
+                                    style={{
+                                        ...body,
+                                        fontSize: '0.62rem',
+                                        fontWeight: 800,
+                                        letterSpacing: '0.15em',
+                                        color: '#E4C28F',
+                                        textTransform: 'uppercase',
+                                    }}
+                                >
+                                    Scholar Portal
+                                </span>
 
-            <div className="px-4 sm:px-6 lg:p-8 lg:pt-0">
+                                <span
+                                    style={{
+                                        width: 4,
+                                        height: 4,
+                                        borderRadius: '50%',
+                                        background: '#E4C28F',
+                                    }}
+                                />
 
-                {loading ? (
-                    <div className="relative -mt-10 sm:-mt-12 space-y-5">
-                        <Skeleton className="h-40" />
-                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                            {Array(4).fill(0).map((_, i) => <Skeleton key={i} className="h-28" />)}
-                        </div>
-                        <Skeleton className="h-64" />
-                    </div>
-                ) : (
-                    <>
-                        {/* ── Instrument panel — gauge + donut, floats over the hero ── */}
-                        <div
-                            className="relative -mt-10 sm:-mt-12 mb-6 sm:mb-8 rounded-2xl bg-white p-5 sm:p-8"
-                            style={{ boxShadow: '0 12px 30px -12px rgba(79,22,32,0.25)' }}
-                        >
-                            <p className="text-[10px] font-bold uppercase tracking-[0.2em] mb-5 text-center sm:text-left" style={{ color: '#c9a9b0' }}>
-                                Compliance At A Glance
+                                <span
+                                    style={{
+                                        ...body,
+                                        fontSize: '0.65rem',
+                                        color: 'rgba(255,255,255,0.62)',
+                                    }}
+                                >
+                                    AY {today.getFullYear()}–{today.getFullYear() + 1}
+                                </span>
+                            </div>
+
+                            <h1
+                                style={{
+                                    ...display,
+                                    fontSize: 'clamp(1.8rem, 4vw, 2.75rem)',
+                                    lineHeight: 1.08,
+                                    fontWeight: 700,
+                                    color: '#fff',
+                                    marginTop: 8,
+                                }}
+                            >
+                                Welcome back, {name || 'Scholar'}.
+                            </h1>
+
+                            <p
+                                style={{
+                                    ...body,
+                                    fontSize: '0.82rem',
+                                    lineHeight: 1.6,
+                                    color: 'rgba(255,255,255,0.72)',
+                                    marginTop: 8,
+                                    maxWidth: 580,
+                                }}
+                            >
+                                Keep your scholarship requirements on track,
+                                review your compliance status, and stay updated
+                                with important notices.
                             </p>
-                            <div className="flex flex-col sm:flex-row items-center justify-center gap-8 sm:gap-12">
-                                <div className="flex flex-col items-center flex-shrink-0">
-                                    <ComplianceGauge score={complianceScore} color={complianceColor} />
-                                    <span
-                                        className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider mt-1"
-                                        style={{ color: complianceColor, background: complianceBg }}
-                                    >
-                                        {complianceScore !== null ? `${Math.round(complianceScore)} Compliance Credits` : 'Loading...'}
-                                    </span>
-                                    <span
-                                        className="inline-flex items-center px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider mt-2"
-                                        style={{ color: riskColor, background: riskBg }}
-                                    >
-                                        {riskLabel} ({Math.round(riskScore)} Risk Points)
-                                    </span>
-                                    <p className="text-[10px] font-bold uppercase tracking-widest mt-2" style={{ color: '#a89890' }}>Compliance and Risk</p>
-                                </div>
 
-                                <div className="hidden sm:block w-px self-stretch" style={{ background: '#f0e6e0' }} />
-                                <div className="block sm:hidden w-full h-px" style={{ background: '#f0e6e0' }} />
+                            <div className="flex items-center gap-2 flex-wrap mt-5">
+                                {scholarId && (
+                                    <span
+                                        style={{
+                                            ...body,
+                                            fontSize: '0.67rem',
+                                            fontWeight: 700,
+                                            color: 'rgba(255,255,255,0.82)',
+                                            background: 'rgba(255,255,255,0.09)',
+                                            border: '1px solid rgba(255,255,255,0.12)',
+                                            borderRadius: 999,
+                                            padding: '6px 11px',
+                                        }}
+                                    >
+                                        {scholarId}
+                                    </span>
+                                )}
 
-                                <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-5">
-                                    <RequirementsDonut completed={completedCount} total={requirements.length} />
-                                    <div className="flex flex-col items-center sm:items-start">
-                                        <p className="text-sm font-bold" style={{ ...serif, color: INK }}>Monthly Requirements</p>
-                                        <p className="text-xs mt-1 text-center sm:text-left" style={{ color: '#a89890' }}>{completedCount} of {requirements.length} filed this month</p>
-                                        <button
-                                            onClick={() => navigate('/scholar/checklist')}
-                                            className="text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 mt-2"
-                                            style={{ color: MAROON }}
-                                        >
-                                            View All <ChevronRight size={11} />
-                                        </button>
-                                    </div>
-                                </div>
+                                <button
+                                    onClick={() => navigate('/scholar/submission')}
+                                    className="inline-flex items-center gap-1.5"
+                                    style={{
+                                        ...body,
+                                        fontSize: '0.7rem',
+                                        fontWeight: 700,
+                                        color: PRIMARY,
+                                        background: '#FFFDF9',
+                                        border: 'none',
+                                        borderRadius: 999,
+                                        padding: '7px 13px',
+                                        cursor: 'pointer',
+                                    }}
+                                >
+                                    Manage submissions
+                                    <ArrowUpRight size={12} />
+                                </button>
                             </div>
                         </div>
 
-                        {/* ── Stat cards — tinted, with soft depth instead of flat blocks ── */}
-                        <section className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
-                            <div className="relative rounded-2xl p-4 sm:p-5" style={{ background: ROSE, boxShadow: '0 8px 20px -14px rgba(127,45,58,0.35)' }}>
+                        {/* Hero compliance score */}
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full xl:w-auto xl:min-w-[560px]">
+                                                    <div
+                                                        className="flex items-center gap-4 self-stretch"
+                            style={{
+                                background: 'rgba(255,255,255,0.07)',
+                                border: '1px solid rgba(255,255,255,0.10)',
+                                borderRadius: 20,
+                                padding: '16px 18px',
+                            }}
+                        >
+                            <ComplianceGauge
+                                score={complianceScore}
+                                loading={complianceLoading}
+                            />
+
+                            <div className="min-w-0">
+                                <p
+                                    style={{
+                                        ...body,
+                                        fontSize: '0.62rem',
+                                        fontWeight: 800,
+                                        letterSpacing: '0.11em',
+                                        color: 'rgba(255,255,255,0.56)',
+                                        textTransform: 'uppercase',
+                                    }}
+                                >
+                                    Current standing
+                                </p>
+
+                                <p
+                                    style={{
+                                        ...display,
+                                        fontSize: '1.12rem',
+                                        fontWeight: 700,
+                                        color: '#fff',
+                                        marginTop: 5,
+                                    }}
+                                >
+                                    {riskLabel}
+                                </p>
+
+                                <p
+                                    style={{
+                                        ...body,
+                                        fontSize: '0.68rem',
+                                        color: 'rgba(255,255,255,0.58)',
+                                        lineHeight: 1.5,
+                                        marginTop: 4,
+                                    }}
+                                >
+                                    {complianceError
+                                        ? 'Compliance data unavailable'
+                                        : `${Math.round(riskScore)} risk points recorded`}
+                                </p>
+
                                 <button
                                     type="button"
                                     onClick={refreshCompliance}
-                                    title="Refresh compliance"
-                                    className="absolute top-4 right-4 w-6 h-6 rounded-full flex items-center justify-center transition-colors bg-white/70 hover:bg-white"
-                                    style={{ color: MAROON }}
+                                    className="inline-flex items-center gap-1.5 mt-3"
+                                    style={{
+                                        ...body,
+                                        fontSize: '0.66rem',
+                                        fontWeight: 700,
+                                        color: '#E4C28F',
+                                        background: 'none',
+                                        border: 'none',
+                                        padding: 0,
+                                        cursor: 'pointer',
+                                    }}
                                 >
                                     <RefreshCw size={11} />
+                                    Refresh status
                                 </button>
-                                <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-3 bg-white/70">
-                                    <TrendingUp size={15} style={{ color: MAROON }} />
-                                </div>
-                                <p className="text-xl sm:text-2xl font-bold" style={{ ...serif, color: MAROON }}>{complianceScore !== null ? Math.round(complianceScore) : '—'}</p>
-                                <p className="text-[9px] font-bold uppercase tracking-widest mt-1" style={{ color: '#a56475' }}>Compliance Credits</p>
                             </div>
-                            <div className="rounded-2xl p-4 sm:p-5" style={{ background: '#EAF3EC', boxShadow: '0 8px 20px -14px rgba(21,128,61,0.3)' }}>
-                                <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-3 bg-white/70">
-                                    <CheckCircle size={15} className="text-[#15803d]" />
+                                                    </div>
+
+                                                    <section
+                                                        className="flex flex-col justify-center"
+                                                        style={{
+                                                                background: 'rgba(255,255,255,0.07)',
+                                                                border: '1px solid rgba(255,255,255,0.10)',
+                                                                borderRadius: 20,
+                                                                padding: '16px 18px',
+                                                                color: '#fff',
+                                                        }}
+                                                    >
+                                                        <p style={{ ...body, fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.11em', color: '#DDB77C', textTransform: 'uppercase' }}>
+                                                                Scholarship status
+                                                        </p>
+                                                        <p style={{ ...display, fontSize: '1.25rem', fontWeight: 700, marginTop: 5 }}>
+                                                                Active
+                                                        </p>
+                                                        <div className="flex items-center gap-2 mt-3">
+                                                                <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#8FE0B0' }} />
+                                                                <span style={{ ...body, fontSize: '0.64rem', fontWeight: 700, color: 'rgba(255,255,255,0.74)' }}>
+                                                                        VERIFIED SCHOLAR
+                                                                </span>
+                                                        </div>
+                                                    </section>
+                                                </div>
+                    </div>
+                </section>
+
+                {/* ───────────────── BENTO STATS ───────────────── */}
+                {loading ? (
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+                        <Skeleton className="col-span-2 lg:col-span-4 h-[128px]" />
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+                        <LatestAnnouncementsCard
+                            announcements={announcements}
+                            onOpen={() => navigate('/scholar/announcements')}
+                        />
+                    </div>
+                )}
+
+                {/* ───────────────── MAIN BENTO GRID ───────────────── */}
+                {loading ? (
+                    <div className="grid grid-cols-1 lg:grid-cols-[1.45fr_0.85fr] gap-4">
+                        <Skeleton className="h-[470px]" />
+                        <div className="space-y-4">
+                            <Skeleton className="h-[220px]" />
+                            <Skeleton className="h-[210px]" />
+                        </div>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 lg:grid-cols-[1.45fr_0.85fr] gap-4">
+                        {/* Requirements */}
+                        <section
+                            style={{
+                                background: SURFACE,
+                                border: `1px solid ${BORDER}`,
+                                borderRadius: RADIUS,
+                                padding: '20px',
+                            }}
+                        >
+                            <div className="flex items-start justify-between gap-4">
+                                <div>
+                                    <p
+                                        style={{
+                                            ...body,
+                                            fontSize: '0.62rem',
+                                            fontWeight: 800,
+                                            letterSpacing: '0.1em',
+                                            color: BRONZE,
+                                            textTransform: 'uppercase',
+                                        }}
+                                    >
+                                        Requirements Checklist
+                                    </p>
+
+                                    <h2
+                                        style={{
+                                            ...display,
+                                            fontSize: '1.28rem',
+                                            fontWeight: 700,
+                                            color: INK,
+                                            marginTop: 4,
+                                        }}
+                                    >
+                                        Requirements
+                                    </h2>
+
+                                    <p
+                                        style={{
+                                            ...body,
+                                            fontSize: '0.72rem',
+                                            color: MUTED,
+                                            marginTop: 4,
+                                        }}
+                                    >
+                                        Your assigned requirements and duty status.
+                                    </p>
                                 </div>
-                                <p className="text-xl sm:text-2xl font-bold text-[#15803d]" style={serif}>{completedCount}</p>
-                                <p className="text-[9px] font-bold uppercase tracking-widest mt-1" style={{ color: '#4c9d6a' }}>Completed</p>
+
+                                <button
+                                    onClick={() => navigate('/scholar/checklist')}
+                                    className="inline-flex items-center gap-1"
+                                    style={{
+                                        ...body,
+                                        fontSize: '0.69rem',
+                                        fontWeight: 700,
+                                        color: PRIMARY,
+                                        background: `${PRIMARY}0A`,
+                                        border: `1px solid ${BORDER}`,
+                                        borderRadius: 999,
+                                        padding: '7px 10px',
+                                        cursor: 'pointer',
+                                        whiteSpace: 'nowrap',
+                                    }}
+                                >
+                                    View all
+                                    <ChevronRight size={12} />
+                                </button>
                             </div>
-                            <div className="rounded-2xl p-4 sm:p-5" style={{ background: '#FBE9E9', boxShadow: '0 8px 20px -14px rgba(153,27,27,0.3)' }}>
-                                <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-3 bg-white/70">
-                                    <XCircle size={15} className="text-[#991b1b]" />
+
+                            <div
+                                className="mt-5"
+                                style={{
+                                    background: BG,
+                                    borderRadius: 15,
+                                    padding: '12px 15px',
+                                }}
+                            >
+                                <div className="flex items-center justify-between gap-3">
+                                    <span
+                                        style={{
+                                            ...body,
+                                            fontSize: '0.69rem',
+                                            fontWeight: 700,
+                                            color: INK,
+                                        }}
+                                    >
+                                        Overall completion
+                                    </span>
+
+                                    <span
+                                        style={{
+                                            ...body,
+                                            fontSize: '0.69rem',
+                                            fontWeight: 800,
+                                            color: SUCCESS,
+                                        }}
+                                    >
+                                        {completedCount}/{requirements.length}
+                                    </span>
                                 </div>
-                                <p className="text-xl sm:text-2xl font-bold text-[#991b1b]" style={serif}>{requirements.length - completedCount}</p>
-                                <p className="text-[9px] font-bold uppercase tracking-widest mt-1" style={{ color: '#c4696e' }}>Missing</p>
-                            </div>
-                            <div className="rounded-2xl p-4 sm:p-5" style={{ background: '#FBF0DE', boxShadow: '0 8px 20px -14px rgba(146,64,14,0.3)' }}>
-                                <div className="w-8 h-8 rounded-lg flex items-center justify-center mb-3 bg-white/70">
-                                    <Clock size={15} className="text-[#92400e]" />
+
+                                <div className="mt-2">
+                                    <ProgressBar
+                                        value={completionPercent}
+                                        color={SUCCESS}
+                                    />
                                 </div>
-                                <p className="text-xl sm:text-2xl font-bold text-[#92400e]" style={serif}>
-                                    {latestSubmission?.status === 'pending' ? '1' : '0'}
-                                </p>
-                                <p className="text-[9px] font-bold uppercase tracking-widest mt-1" style={{ color: '#b9822f' }}>Pending Review</p>
                             </div>
+
+                            <div className="mt-3">
+                                {requirements.map((req, index) => (
+                                    <RequirementRow
+                                        key={req.label}
+                                        requirement={req}
+                                    />
+                                ))}
+                            </div>
+
+                            {completedCount < requirements.length && (
+                                <button
+                                    onClick={() => navigate('/scholar/checklist')}
+                                    className="w-full inline-flex items-center justify-center gap-2"
+                                    style={{
+                                        ...body,
+                                        marginTop: 17,
+                                        padding: '11px 14px',
+                                        borderRadius: 12,
+                                        border: 'none',
+                                        background: PRIMARY,
+                                        color: '#fff',
+                                        fontSize: '0.72rem',
+                                        fontWeight: 700,
+                                        cursor: 'pointer',
+                                    }}
+                                >
+                                    View pending requirements
+                                    <ArrowUpRight size={13} />
+                                </button>
+                            )}
                         </section>
 
-                        {complianceLoading ? null : complianceError ? null : topFlags.length > 0 && (
-                            <div className="rounded-2xl bg-white p-5 mb-6 sm:mb-8" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)' }}>
-                                <p className="text-[10px] font-bold uppercase tracking-widest mb-3" style={{ color: '#a56475' }}>Active Compliance Flags</p>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                                    {topFlags.map((flag, index) => (
-                                        <div key={index} className="rounded-xl p-3 text-xs" style={{ background: IVORY, color: INK }}>
-                                            {flag.description}
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
-
-                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                            {/* Left — Compliance Progress, as a mini bar chart */}
-                            <div className="lg:col-span-2 space-y-6">
-                                <div className="bg-white p-6 rounded-2xl" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)' }}>
-                                    <div className="flex items-center justify-between mb-5">
-                                        <h3 className="font-bold text-sm" style={{ ...serif, color: INK }}>Monthly Compliance Progress</h3>
-                                        <button
-                                            onClick={() => navigate('/scholar/checklist')}
-                                            className="text-[10px] font-bold uppercase tracking-widest flex items-center gap-1 hover:gap-2 transition-all"
-                                            style={{ color: MAROON }}
+                        {/* Right column */}
+                        <div className="flex flex-col gap-4">
+                            {/* Latest submission */}
+                            <section
+                                style={{
+                                    background: SURFACE,
+                                    border: `1px solid ${BORDER}`,
+                                    borderRadius: RADIUS,
+                                    padding: '20px',
+                                }}
+                            >
+                                <div className="flex items-center justify-between gap-3">
+                                    <div>
+                                        <p
+                                            style={{
+                                                ...body,
+                                                fontSize: '0.62rem',
+                                                fontWeight: 800,
+                                                letterSpacing: '0.1em',
+                                                color: BRONZE,
+                                                textTransform: 'uppercase',
+                                            }}
                                         >
-                                            View All <ChevronRight size={12} />
-                                        </button>
-                                    </div>
-
-                                    {/* status rows — boolean checklist items read clearer as pills than fake bars */}
-                                    <div className="divide-y" style={{ borderColor: '#f5eee9' }}>
-                                        {requirements.map((req, i) => (
-                                            <div key={i} className="flex items-center justify-between gap-3 py-2.5">
-                                                <span className="flex items-center gap-2.5 min-w-0">
-                                                    <span
-                                                        className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0"
-                                                        style={{ background: req.done ? '#EAF3EC' : '#FBE9E9', color: req.done ? '#15803d' : '#c4696e' }}
-                                                    >
-                                                        {req.icon}
-                                                    </span>
-                                                    <span className="text-sm font-medium truncate" style={{ color: INK }}>{req.label}</span>
-                                                </span>
-                                                <span
-                                                    className="text-[10px] font-bold uppercase tracking-wider px-2.5 py-1 rounded-full flex-shrink-0"
-                                                    style={req.done ? { color: '#15803d', background: '#EAF3EC' } : { color: '#991b1b', background: '#FBE9E9' }}
-                                                >
-                                                    {req.done ? 'Complied' : 'Missing'}
-                                                </span>
-                                            </div>
-                                        ))}
-                                    </div>
-
-                                    {latestSubmission && (
-                                        <div className="mt-5 pt-4 flex items-center justify-between" style={{ borderTop: '1px solid #f5eee9' }}>
-                                            <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color: '#a89890' }}>Latest Submission Status</p>
-                                            <span
-                                                className="text-[10px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider"
-                                                style={
-                                                    latestSubmission.status === 'approved' ? { background: '#EAF3EC', color: '#15803d' } :
-                                                    latestSubmission.status === 'rejected' ? { background: '#FBE9E9', color: '#991b1b' } :
-                                                    { background: '#FBF0DE', color: '#92400e' }
-                                                }
-                                            >
-                                                {latestSubmission.status}
-                                            </span>
-                                        </div>
-                                    )}
-
-                                    {completedCount < requirements.length && (
-                                        <button
-                                            onClick={() => navigate('/scholar/submission')}
-                                            className="w-full mt-5 py-3 text-white font-bold text-xs rounded-full uppercase tracking-widest transition-opacity hover:opacity-90"
-                                            style={{ background: `linear-gradient(120deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)` }}
-                                        >
-                                            Complete Missing Requirements
-                                        </button>
-                                    )}
-                                </div>
-
-                                {latestSubmission?.status === 'rejected' && latestSubmission?.staff_comment && (
-                                    <div className="p-5 rounded-2xl" style={{ background: '#FBE9E9', border: '1px solid #f3c6c6' }}>
-                                        <p className="text-xs font-bold uppercase tracking-widest mb-2 flex items-center gap-1.5" style={{ color: '#991b1b' }}>
-                                            <AlertTriangle size={13} /> Staff Feedback
+                                            Records
                                         </p>
-                                        <p className="text-xs leading-relaxed" style={{ color: '#991b1b' }}>{latestSubmission.staff_comment}</p>
+                                        <h2
+                                            style={{
+                                                ...display,
+                                                fontSize: '1.15rem',
+                                                fontWeight: 700,
+                                                color: INK,
+                                                marginTop: 4,
+                                            }}
+                                        >
+                                            Latest submission
+                                        </h2>
+                                    </div>
+
+                                    <FileText size={17} style={{ color: PRIMARY }} />
+                                </div>
+
+                                {latestSubmission ? (
+                                    <div
+                                        className="mt-4"
+                                        style={{
+                                            background: BG,
+                                            border: `1px solid ${BORDER}`,
+                                            borderRadius: 14,
+                                            padding: 14,
+                                        }}
+                                    >
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="flex items-start gap-3 min-w-0">
+                                                <div
+                                                    className="flex items-center justify-center flex-shrink-0"
+                                                    style={{
+                                                        width: 38,
+                                                        height: 38,
+                                                        borderRadius: 11,
+                                                        background: `${PRIMARY}12`,
+                                                        color: PRIMARY,
+                                                    }}
+                                                >
+                                                    <FileText size={17} />
+                                                </div>
+
+                                                <div className="min-w-0">
+                                                    <p
+                                                        style={{
+                                                            ...body,
+                                                            fontSize: '0.78rem',
+                                                            fontWeight: 800,
+                                                            color: INK,
+                                                        }}
+                                                    >
+                                                        Monthly submission
+                                                    </p>
+                                                    <p
+                                                        style={{
+                                                            ...body,
+                                                            fontSize: '0.68rem',
+                                                            color: MUTED,
+                                                            marginTop: 3,
+                                                        }}
+                                                        className="truncate"
+                                                    >
+                                                        {latestSubmission.submitted_at
+                                                            ? new Date(
+                                                                  latestSubmission.submitted_at
+                                                              ).toLocaleDateString(
+                                                                  'en-PH',
+                                                                  {
+                                                                      month: 'short',
+                                                                      day: 'numeric',
+                                                                      year: 'numeric',
+                                                                  }
+                                                              )
+                                                            : 'Date unavailable'}
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            <StatusBadge status={latestSubmission.status} />
+                                        </div>
+
+                                        {latestSubmission.staff_comment && (
+                                            <div
+                                                className="mt-3"
+                                                style={{
+                                                    borderTop: `1px solid ${BORDER}`,
+                                                    paddingTop: 11,
+                                                }}
+                                            >
+                                                <p
+                                                    style={{
+                                                        ...body,
+                                                        fontSize: '0.64rem',
+                                                        fontWeight: 800,
+                                                        color: DANGER,
+                                                        textTransform: 'uppercase',
+                                                        letterSpacing: '0.06em',
+                                                    }}
+                                                >
+                                                    Officer feedback
+                                                </p>
+                                                <p
+                                                    style={{
+                                                        ...body,
+                                                        fontSize: '0.71rem',
+                                                        color: MUTED,
+                                                        lineHeight: 1.5,
+                                                        marginTop: 4,
+                                                    }}
+                                                >
+                                                    {latestSubmission.staff_comment}
+                                                </p>
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div
+                                        className="mt-4 text-center"
+                                        style={{
+                                            background: BG,
+                                            borderRadius: 14,
+                                            padding: '28px 14px',
+                                        }}
+                                    >
+                                        <FileText
+                                            size={22}
+                                            style={{ color: MUTED }}
+                                        />
+                                        <p
+                                            style={{
+                                                ...body,
+                                                fontSize: '0.76rem',
+                                                color: MUTED,
+                                                marginTop: 7,
+                                            }}
+                                        >
+                                            No submission recorded yet.
+                                        </p>
                                     </div>
                                 )}
-                            </div>
 
-                            {/* Right — Announcements */}
-                            <div className="flex flex-col gap-4">
-                                <div className="bg-white p-5 rounded-2xl" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)' }}>
-                                    <div className="flex items-center justify-between mb-4">
-                                        <h3 className="font-bold text-sm flex items-center gap-2" style={{ ...serif, color: INK }}>
-                                            <Megaphone size={14} style={{ color: MAROON }} />
-                                            Announcements
-                                        </h3>
-                                        <button
-                                            onClick={() => navigate('/scholar/announcements')}
-                                            className="text-[10px] font-bold uppercase tracking-widest"
-                                            style={{ color: MAROON }}
-                                        >
-                                            View All
-                                        </button>
-                                    </div>
-
-                                    {announcements.length === 0 ? (
-                                        <p className="text-xs text-center py-6" style={{ color: '#c9b3b8' }}>No announcements yet.</p>
-                                    ) : (
-                                        <div className="space-y-3">
-                                            {announcements.map((ann) => (
-                                                <div key={ann.id} className="p-3 rounded-xl" style={{ background: IVORY }}>
-                                                    <p className="text-xs font-bold leading-snug" style={{ color: INK }}>{ann.title}</p>
-                                                    <p className="text-[10px] mt-1 line-clamp-2" style={{ color: '#a89890' }}>{ann.content}</p>
-                                                    <div className="flex items-center gap-1 mt-1.5">
-                                                        <Clock size={9} style={{ color: '#c9b3b8' }} />
-                                                        <p className="text-[10px]" style={{ color: '#c9b3b8' }}>
-                                                            {new Date(ann.created_at).toLocaleDateString('en-PH', {
-                                                                month: 'short', day: 'numeric'
-                                                            })}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-
-                                <div className="rounded-2xl p-6 text-white" style={{ background: `linear-gradient(135deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)`, boxShadow: '0 10px 26px -14px rgba(79,22,32,0.35)' }}>
-                                    <p className="text-[10px] font-bold uppercase tracking-widest mb-2" style={{ color: GOLD }}>Scholarship Status</p>
-                                    <p className="text-lg font-bold" style={serif}>Active / Enrolled</p>
-                                    <div className="flex items-center gap-2 mt-3">
-                                        <div className="w-2 h-2 rounded-full" style={{ background: '#8fe0b0' }} />
-                                        <p className="text-[10px] font-semibold" style={{ color: 'rgba(255,255,255,0.8)' }}>Verified Scholar</p>
-                                    </div>
-                                </div>
-                            </div>
+                                <button
+                                    onClick={() => navigate('/scholar/submission')}
+                                    className="w-full inline-flex items-center justify-center gap-1.5"
+                                    style={{
+                                        ...body,
+                                        marginTop: 12,
+                                        padding: '9px 12px',
+                                        borderRadius: 11,
+                                        border: `1px solid ${BORDER}`,
+                                        background: SURFACE,
+                                        color: PRIMARY,
+                                        fontSize: '0.7rem',
+                                        fontWeight: 700,
+                                        cursor: 'pointer',
+                                    }}
+                                >
+                                    Open submission center
+                                    <ChevronRight size={12} />
+                                </button>
+                            </section>
+                            <ComplianceFlags flags={topFlags} visible={!complianceLoading} />
                         </div>
-                    </>
+                    </div>
                 )}
+
             </div>
         </div>
     );

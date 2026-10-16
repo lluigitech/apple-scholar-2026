@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowUpRight, Bell, Calendar, Clock, Megaphone, ShieldAlert } from 'lucide-react';
+import { ArrowUpRight, Bell, Calendar, Clock, Megaphone } from 'lucide-react';
 
 // ── Token system — shared across the whole portal ──
 const MAROON = '#7f2d3a';
@@ -15,17 +15,19 @@ const ROSE = '#F5E8EA';
 const serif = { fontFamily: "'Playfair Display', serif" };
 const sans = { fontFamily: "'DM Sans', sans-serif" };
 
-export default function OfficerNotifications({ loading, pending, flagged, deadlines, announcements = [], onNavigate }) {
+export default function OfficerNotifications({ loading, pending, pendingReviews = 0, returnedSubmissions = 0, deadlines, announcements = [], preferences = {}, onNavigate }) {
   const [open, setOpen] = useState(false);
   const notifications = [
-    pending > 0 && { label: `${pending} submission${pending === 1 ? '' : 's'} pending review`, path: '/officer/validation', icon: Clock, color: AMBER, bg: `${AMBER}16` },
-    flagged.length > 0 && { label: `${flagged.length} flagged scholar${flagged.length === 1 ? '' : 's'} need follow-up`, path: '/officer/flagged', icon: ShieldAlert, color: CLAY, bg: `${CLAY}16` },
-    deadlines.length > 0 && { label: `${deadlines.length} upcoming task${deadlines.length === 1 ? '' : 's'}`, path: '/officer/task-assignment', icon: Calendar, color: MAROON, bg: ROSE },
-    ...announcements.slice(0, 3).map(announcement => ({
+    preferences.new_submissions !== false && pending > 0 && { key: 'new-submissions', label: `${pending} new submission${pending === 1 ? '' : 's'}`, path: '/officer/validation', icon: Clock, color: AMBER, bg: `${AMBER}16` },
+    preferences.pending_reviews !== false && pendingReviews > 0 && { key: 'pending-reviews', label: `${pendingReviews} submission${pendingReviews === 1 ? '' : 's'} under review`, path: '/officer/validation', icon: Clock, color: AMBER, bg: `${AMBER}16` },
+    preferences.returned_submissions !== false && returnedSubmissions > 0 && { key: 'returned-submissions', label: `${returnedSubmissions} returned submission${returnedSubmissions === 1 ? '' : 's'}`, path: '/officer/validation', icon: Clock, color: AMBER, bg: `${AMBER}16` },
+    preferences.deadlines !== false && deadlines.length > 0 && { key: 'deadlines', label: `${deadlines.length} upcoming task${deadlines.length === 1 ? '' : 's'}`, path: '/officer/task-assignment', icon: Calendar, color: MAROON, bg: ROSE },
+    ...(preferences.announcements === false ? [] : announcements.slice(0, 3).map(announcement => ({
+      key: `announcement-${announcement.id || announcement.title}`,
       label: announcement.title || 'New announcement',
       detail: announcement.priority ? `${announcement.priority} announcement` : 'New announcement',
       path: '/officer/announcements', icon: Megaphone, color: MAROON, bg: ROSE,
-    })),
+    }))),
   ].filter(Boolean);
 
   return (
@@ -55,7 +57,7 @@ export default function OfficerNotifications({ loading, pending, flagged, deadli
               {notifications.map(item => {
                 const Icon = item.icon;
                 return (
-                  <button key={item.path} onClick={() => { setOpen(false); onNavigate(item.path); }}
+                  <button key={item.key} onClick={() => { setOpen(false); onNavigate(item.path); }}
                     className="flex w-full items-center gap-3 rounded-lg p-2.5 text-left transition-colors hover:bg-[#faf6ee]"
                     style={{ background: 'none', border: 'none', cursor: 'pointer' }}>
                     <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg" style={{ background: item.bg, color: item.color }}>

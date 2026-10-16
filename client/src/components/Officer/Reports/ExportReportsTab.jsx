@@ -2,11 +2,31 @@ import {
   Filter, Users, FileText, Loader2, RefreshCw,
   BarChart2, FileSpreadsheet, ClipboardList, GraduationCap, Activity,
 } from "lucide-react";
-import { MAROON, PAPER, RULE, INK, CLAY, serif, sans } from "./ReportsHelpers";
+import { MAROON } from "./ReportsHelpers";
 import {
   SelectField, DateField, StatCard, Section,
   DutyTable, SubmissionsTable, RequirementsTable, ActivitiesTable,
 } from "./ExportTables";
+
+// ── Design tokens — shared Records Office brand system ──
+// This tab lives inside the "Statistics Bureau" page: a ruled filter
+// worksheet ("Form B"), a results table ("Table 2"), and an empty
+// state that reads like an unfiled request slip.
+const MAROON_DEEP = '#4f1620';
+const GOLD = '#b98b4e';
+const BG = '#F6EFE4';
+const CARD = '#fffdf8';
+const RULE = '#e8dccb';
+const INK = '#241512';
+const MUTED = '#a89890';
+const CLAY = '#c1666b';
+
+const display = { fontFamily: "'Lora', Georgia, 'Times New Roman', serif" };
+const body = { fontFamily: "'Work Sans', 'Segoe UI', sans-serif" };
+const mono = { fontFamily: "'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace" };
+
+const outlineBtn = { display: 'flex', alignItems: 'center', gap: 8, padding: '10px 18px', border: `1.5px solid ${MAROON}`, borderRadius: 4, background: CARD, color: MAROON, ...body, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' };
+const filledBtn = { display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px', border: 'none', borderRadius: 4, background: `linear-gradient(120deg, ${MAROON} 0%, ${MAROON_DEEP} 100%)`, color: '#fff', ...body, fontSize: '0.8rem', fontWeight: 600, cursor: 'pointer' };
 
 export default function ExportReportsTab({
   filters, setField, scholars, data, loading, fetched, error,
@@ -21,18 +41,25 @@ export default function ExportReportsTab({
     : [];
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {error && (
-        <div className="rounded-lg px-4 py-3 flex items-center gap-2" style={{ background: `${CLAY}12`, border: `1px solid ${CLAY}45`, ...sans, fontSize: '0.78rem', color: CLAY }}>
+        <div className="flex items-center gap-2" style={{ borderLeft: `3px solid ${CLAY}`, background: `${CLAY}0d`, padding: '10px 14px', ...body, fontSize: '0.78rem', fontWeight: 600, color: CLAY }}>
           <BarChart2 size={15} /> {error}
         </div>
       )}
 
-      <div className="rounded-xl p-5" style={{ background: '#fff', border: `1px solid ${RULE}` }}>
-        <div className="flex items-center gap-2 mb-4">
-          <Filter size={13} style={{ color: MAROON }} />
-          <span style={{ ...sans, fontSize: '0.64rem', fontWeight: 800, letterSpacing: '0.14em', textTransform: 'uppercase', color: '#a89890' }}>Filters</span>
+      {/* ── Filter worksheet — same ruled-panel treatment as the
+            Compliance tab's "Form A" ── */}
+      <div style={{ background: CARD, border: `1px solid ${RULE}`, borderLeft: `3px solid ${GOLD}`, borderRadius: 4, padding: 20 }}>
+        <div className="flex items-baseline gap-3 mb-5">
+          <span style={{ ...mono, fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.1em', color: GOLD }}>FORM B</span>
+          <div className="flex items-center gap-1.5">
+            <Filter size={12} style={{ color: MAROON }} />
+            <h2 style={{ ...display, fontSize: '1.1rem', fontWeight: 600, color: INK }}>Export Filters</h2>
+          </div>
+          <span style={{ flex: 1, borderBottom: `1px dashed ${RULE}` }} />
         </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <SelectField label="Scholar" icon={Users} value={filters.scholar_id} onChange={e => setField("scholar_id", e.target.value)}>
             <option value="">All Scholars</option>
@@ -48,10 +75,8 @@ export default function ExportReportsTab({
             <option value="all-requirements">All Requirements</option>
           </SelectField>
         </div>
-        <div className="mt-4 pt-4 flex justify-end" style={{ borderTop: `1px solid ${RULE}` }}>
-          <button onClick={onGenerate} disabled={loading}
-            className="flex items-center gap-2 rounded-full transition-opacity hover:opacity-90 disabled:opacity-60"
-            style={{ ...sans, fontSize: '0.8rem', fontWeight: 700, background: MAROON, color: '#fff', border: 'none', padding: '10px 22px', cursor: loading ? 'default' : 'pointer' }}>
+        <div className="mt-4 pt-4 flex justify-end" style={{ borderTop: `1px dashed ${RULE}` }}>
+          <button onClick={onGenerate} disabled={loading} style={{ ...filledBtn, opacity: loading ? 0.6 : 1, cursor: loading ? 'default' : 'pointer' }}>
             {loading
               ? <><Loader2 size={15} className="animate-spin" /> Generating…</>
               : <><RefreshCw size={15} /> Generate Report</>}
@@ -82,14 +107,10 @@ export default function ExportReportsTab({
           )}
           {totalRecords > 0 && (
             <div className="flex flex-wrap justify-end gap-2.5 pt-1">
-              <button onClick={onDownload}
-                className="flex items-center gap-2 rounded-full transition-opacity hover:opacity-90"
-                style={{ ...sans, fontSize: '0.78rem', fontWeight: 700, background: MAROON, color: '#fff', border: 'none', padding: '10px 18px', cursor: 'pointer' }}>
+              <button onClick={onDownload} disabled={exportOnHold} style={{ ...filledBtn, opacity: exportOnHold ? 0.5 : 1, cursor: exportOnHold ? 'not-allowed' : 'pointer' }}>
                 <FileSpreadsheet size={15} /> Export to Excel ({totalRecords} records)
               </button>
-              <button onClick={onDownloadPdf}
-                className="flex items-center gap-2 rounded-full transition-colors hover:bg-[#f6efe4]"
-                style={{ ...sans, fontSize: '0.78rem', fontWeight: 700, background: '#fff', color: MAROON, border: `1.5px solid ${MAROON}`, padding: '10px 18px', cursor: 'pointer' }}>
+              <button onClick={onDownloadPdf} disabled={exportOnHold} style={{ ...outlineBtn, opacity: exportOnHold ? 0.5 : 1, cursor: exportOnHold ? 'not-allowed' : 'pointer' }}>
                 <FileText size={15} /> Export PDF ({totalRecords} records)
               </button>
             </div>
@@ -98,13 +119,12 @@ export default function ExportReportsTab({
       )}
 
       {!fetched && !loading && !error && (
-        <div className="rounded-xl py-20 text-center" style={{ background: '#fff', border: `1px dashed ${RULE}` }}>
-          <div className="w-16 h-16 rounded-2xl mx-auto mb-4 flex items-center justify-center"
-            style={{ background: PAPER, border: `2px dashed ${MAROON}30` }}>
-            <BarChart2 size={26} style={{ color: MAROON, opacity: 0.5 }} />
+        <div className="py-20 text-center" style={{ background: CARD, border: `1px dashed ${RULE}`, borderRadius: 4 }}>
+          <div className="w-16 h-16 mx-auto mb-4 flex items-center justify-center" style={{ borderRadius: 4, background: BG, border: `1.5px dashed ${MAROON}44` }}>
+            <BarChart2 size={26} style={{ color: MAROON, opacity: 0.55 }} />
           </div>
-          <p style={{ ...serif, fontSize: '1rem', fontWeight: 700, color: '#a89890' }}>No report generated yet</p>
-          <p style={{ ...sans, fontSize: '0.78rem', color: '#c9b9b0', marginTop: 4 }}>Set your filters above and click <b>Generate Report</b></p>
+          <p style={{ ...display, fontSize: '1rem', fontWeight: 600, color: MUTED }}>No report generated yet</p>
+          <p style={{ ...mono, fontSize: '0.72rem', color: '#c9b9b0', marginTop: 6 }}>Set your filters above and click GENERATE REPORT</p>
         </div>
       )}
     </div>

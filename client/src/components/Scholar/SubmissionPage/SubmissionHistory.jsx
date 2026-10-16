@@ -1,10 +1,22 @@
-import { CheckCircle, XCircle, Clock, TrendingUp, MessageSquare, Mail, GraduationCap, IdCard, Folder } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { CheckCircle, XCircle, Clock, MessageSquare, Mail, GraduationCap, IdCard, Folder, ChevronDown, ChevronUp, Archive } from 'lucide-react';
 
-// ── Token system — shared across the Scholar Portal ──
-const MAROON = '#7f2d3a';
-const GOLD = '#b98b4e';
-const IVORY = '#FBF7F2';
+// ── Design tokens — Apple Scholar Portal system ──
+const BG = '#F7F4EE';
+const SURFACE = '#FFFDF9';
+const BORDER = '#E7D8C7';
+const PRIMARY = '#6D2140';
+const PRIMARY_TINT = 'rgba(109, 33, 64, 0.08)';
+const BRONZE = '#A9784E';
 const INK = '#241512';
+const MUTED = '#8A7A68';
+const SUCCESS = '#6B8F71';
+const WARNING = '#B8863F';
+const DANGER = '#C1666B';
+const RADIUS = 16;
+
+const display = { fontFamily: "'Playfair Display', Georgia, serif" };
+const body = { fontFamily: "'Inter', -apple-system, 'Segoe UI', sans-serif" };
 
 const TYPE_LABELS = {
     letter: 'Monthly Report',
@@ -30,18 +42,40 @@ const formatDate = (value) => {
 };
 
 const STATUS_CONFIG = {
-    approved: { label: 'Approved', color: '#15803d', bg: '#EAF3EC', Icon: CheckCircle },
-    rejected: { label: 'Returned for Revision', color: '#991b1b', bg: '#FBE9E9', Icon: XCircle },
-    returned: { label: 'Returned for Revision', color: '#991b1b', bg: '#FBE9E9', Icon: XCircle },
-    pending:  { label: 'Pending Review', color: '#92400e', bg: '#FBF0DE', Icon: Clock },
+    approved: { label: 'Approved',              color: SUCCESS, Icon: CheckCircle },
+    rejected: { label: 'Returned for Revision',  color: DANGER,  Icon: XCircle },
+    returned: { label: 'Returned for Revision',  color: DANGER,  Icon: XCircle },
+    pending:  { label: 'Pending Review',         color: WARNING, Icon: Clock },
 };
 
-// One card per submission. Monthly letters get the full sentiment/completeness/
-// word-count breakdown (since those fields are only ever populated for
-// submission_type === 'letter' - see submissionController.js normalizedPayload).
-// Report cards / COR / other documents get a simpler card since there's no
-// NLP analysis attached to them.
+// Submission records carry no explicit academic-year field, so the
+// timeline groups them by the Philippine academic year (June–May)
+// derived from `submitted_at` — a real, existing field, not new data.
+const academicYearOf = (dateStr) => {
+    if (!dateStr) return 'Undated';
+    const d = new Date(dateStr);
+    if (isNaN(d)) return 'Undated';
+    const y = d.getFullYear();
+    const m = d.getMonth(); // 0-indexed; June = 5
+    return m >= 5 ? `${y}-${y + 1}` : `${y - 1}-${y}`;
+};
+
+const AlertStrip = ({ color, icon: Icon, title, children }) => (
+    <div className="flex items-start gap-2" style={{ borderLeft: `3px solid ${color}`, background: `${color}0d`, borderRadius: 8, padding: '10px 14px' }}>
+        {Icon && <Icon className="w-3.5 h-3.5 shrink-0 mt-0.5" style={{ color }} />}
+        <div>
+            {title && <p style={{ ...body, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.04em', color, marginBottom: 3, textTransform: 'uppercase' }}>{title}</p>}
+            <p style={{ ...body, fontSize: '0.79rem', color: INK, lineHeight: 1.5 }}>{children}</p>
+        </div>
+    </div>
+);
+
+// One card per submission — same underlying computations as before
+// (sentiment %, completeness, word count, missing-item heuristics),
+// now shown as a compact summary that expands for the full breakdown.
 const HistoryCard = ({ item, onResubmit }) => {
+    const [expanded, setExpanded] = useState(false);
+
     const status = item.status || 'pending';
     const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.pending;
     const StatusIcon = cfg.Icon;
@@ -51,13 +85,10 @@ const HistoryCard = ({ item, onResubmit }) => {
         ? item.letter_content.trim().split(/\s+/).filter(Boolean).length
         : null;
 
-    // sentiment_score from Gemini is -1..1 - convert to a 0-100 scale so it
-    // reads the same way as the quality/completeness score.
     const sentimentPct = item.sentiment_score !== null && item.sentiment_score !== undefined
         ? Math.max(0, Math.min(100, Math.round(((parseFloat(item.sentiment_score) + 1) / 2) * 100)))
         : null;
-    const sentColor = sentimentPct === null ? '#6b7280' : sentimentPct >= 70 ? '#15803d' : sentimentPct >= 40 ? '#92400e' : '#991b1b';
-    const sentBg    = sentimentPct === null ? IVORY : sentimentPct >= 70 ? '#EAF3EC' : sentimentPct >= 40 ? '#FBF0DE' : '#FBE9E9';
+    const sentColor = sentimentPct === null ? MUTED : sentimentPct >= 70 ? SUCCESS : sentimentPct >= 40 ? WARNING : DANGER;
 
     const completeness = isLetter && item.quality_score !== null && item.quality_score !== undefined
         ? Number(item.quality_score)
@@ -65,9 +96,6 @@ const HistoryCard = ({ item, onResubmit }) => {
 
     const hasMedia = !!item.media_paths;
 
-    // Lightweight heuristics based only on what's actually persisted -
-    // there's no stored "missing items" list from submission time, so this
-    // is reconstructed from the saved letter content / media / score.
     const missingItems = [];
     if (isLetter) {
         if (wordCount !== null && wordCount < 150) {
@@ -76,147 +104,241 @@ const HistoryCard = ({ item, onResubmit }) => {
         if (!hasMedia) {
             missingItems.push('No documentation photos attached');
         }
-        if (item.letter_content && !item.letter_content.toLowerCase().includes('gwa')) {
-            missingItems.push('GWA not mentioned');
-        }
     }
 
     const TypeIcon = TYPE_ICONS[item.submission_type] || Mail;
+    const scoreToShow = completeness !== null ? `${completeness}%` : sentimentPct !== null ? `${sentimentPct}/100` : null;
 
     return (
-        <div className="bg-white rounded-2xl overflow-hidden" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)' }}>
-            {/* thin gold rule — same letterhead cue used across the Submission flow */}
-            <div style={{ height: 3, background: `linear-gradient(90deg, ${MAROON} 0%, ${GOLD} 100%)` }} />
-            <div className="p-4">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-                    <div className="flex items-center gap-3">
-                        <span className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0" style={{ background: '#F5E8EA' }}>
-                            <TypeIcon className="w-3.5 h-3.5" style={{ color: MAROON }} />
-                        </span>
-                        <div>
-                            <p className="text-sm font-semibold" style={{ fontFamily: "'DM Sans', sans-serif", color: INK }}>
-                                {TYPE_LABELS[item.submission_type] || 'Submission'}
-                            </p>
-                            <p className="text-xs" style={{ fontFamily: "'DM Sans', sans-serif", color: '#9ca3af' }}>
-                                Submitted: {formatDate(item.submitted_at)}{wordCount !== null ? ` · ${wordCount} words` : ''}
-                            </p>
-                        </div>
-                    </div>
-                    <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide px-2.5 py-1 rounded-full w-fit"
-                        style={{ backgroundColor: cfg.bg, color: cfg.color }}>
-                        <StatusIcon className="w-3.5 h-3.5" />
-                        {cfg.label}
+        <div className="overflow-hidden" style={{ background: SURFACE, border: `1px solid ${status === 'rejected' || status === 'returned' ? `${DANGER}55` : BORDER}`, borderRadius: RADIUS }}>
+            <button
+                onClick={() => setExpanded(v => !v)}
+                className="w-full flex items-center justify-between gap-3 flex-wrap text-left transition-colors"
+                style={{ padding: '16px 18px', background: 'none', border: 'none', cursor: 'pointer' }}
+            >
+                {/* LEFT — icon, title, date, type */}
+                <div className="flex items-center gap-3 min-w-0">
+                    <span className="flex items-center justify-center flex-shrink-0" style={{ width: 34, height: 34, borderRadius: 10, background: PRIMARY_TINT }}>
+                        <TypeIcon className="w-4 h-4" style={{ color: PRIMARY }} />
                     </span>
+                    <div className="min-w-0">
+                        <p style={{ ...body, fontSize: '0.88rem', fontWeight: 700, color: INK }}>
+                            {TYPE_LABELS[item.submission_type] || 'Submission'}
+                        </p>
+                        <p style={{ ...body, fontSize: '0.74rem', color: MUTED, marginTop: 1 }}>
+                            {formatDate(item.submitted_at)}{wordCount !== null ? ` · ${wordCount} words` : ''}
+                        </p>
+                    </div>
                 </div>
 
-                {isLetter && (
-                    <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x rounded-xl mb-3" style={{ background: IVORY, border: '1px solid #f0e6e0', borderColor: '#f0e6e0' }}>
-                        <div className="p-3 sm:px-4">
-                            <p className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{ color: '#c9a9b0' }}>Sentiment</p>
-                            <p className="text-sm font-bold" style={{ fontFamily: "'DM Sans', sans-serif", color: sentColor }}>
-                                {item.sentiment_label || 'N/A'}{sentimentPct !== null ? ` · ${sentimentPct}/100` : ''}
-                            </p>
-                            {sentimentPct !== null && (
-                                <div className="w-full h-1 rounded-full mt-1.5 overflow-hidden" style={{ background: '#e9dfd8' }}>
-                                    <div className="h-full rounded-full" style={{ width: `${sentimentPct}%`, backgroundColor: sentColor }} />
-                                </div>
-                            )}
-                        </div>
-                        <div className="p-3 sm:px-4">
-                            <p className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{ color: '#c9a9b0' }}>Completeness</p>
-                            <p className="text-sm font-bold" style={{ fontFamily: "'DM Sans', sans-serif", color: completeness !== null && completeness >= 80 ? '#15803d' : '#92400e' }}>
-                                {completeness !== null ? `${completeness}%` : 'N/A'}
-                            </p>
-                            {completeness !== null && (
-                                <div className="w-full h-1 rounded-full mt-1.5 overflow-hidden" style={{ background: '#e9dfd8' }}>
-                                    <div className="h-full rounded-full" style={{ width: `${completeness}%`, backgroundColor: completeness >= 80 ? '#15803d' : '#92400e' }} />
-                                </div>
-                            )}
-                        </div>
-                        <div className="p-3 sm:px-4">
-                            <p className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{ color: '#c9a9b0' }}>Word Count</p>
-                            <p className="text-sm font-bold" style={{ fontFamily: "'DM Sans', sans-serif", color: wordCount !== null && wordCount >= 150 ? '#15803d' : '#991b1b' }}>
-                                {wordCount !== null ? `${wordCount} words` : 'N/A'}
-                            </p>
-                            {wordCount !== null && (
-                                <p className="text-[10px] mt-1.5 font-semibold" style={{ fontFamily: "'DM Sans', sans-serif", color: wordCount >= 150 ? '#15803d' : '#991b1b' }}>
-                                    {wordCount >= 150 ? '✓ Meets minimum' : '✗ Below 150 min'}
+                {/* RIGHT — status badge, score, expand indicator */}
+                <div className="flex items-center gap-3 flex-shrink-0">
+                    {scoreToShow && (
+                        <span style={{ ...display, fontSize: '0.95rem', fontWeight: 700, color: sentColor }}>{scoreToShow}</span>
+                    )}
+                    <span className="flex items-center gap-1.5"
+                        style={{ ...body, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.02em', textTransform: 'uppercase', color: cfg.color, background: `${cfg.color}14`, padding: '4px 11px', borderRadius: 999 }}>
+                        <StatusIcon className="w-3 h-3" />
+                        {cfg.label}
+                    </span>
+                    {expanded ? <ChevronUp size={15} style={{ color: MUTED }} /> : <ChevronDown size={15} style={{ color: MUTED }} />}
+                </div>
+            </button>
+
+            {expanded && (
+                <div className="px-[18px] pb-[18px]" style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 14 }}>
+                    {isLetter && (
+                        <div className="grid grid-cols-1 sm:grid-cols-3 divide-y sm:divide-y-0 sm:divide-x mb-3" style={{ background: BG, border: `1px solid ${BORDER}`, borderRadius: 12, borderColor: BORDER }}>
+                            <div className="p-3 sm:px-4">
+                                <p style={{ ...body, fontSize: '0.64rem', fontWeight: 700, color: BRONZE, letterSpacing: '0.03em', marginBottom: 4 }}>SENTIMENT</p>
+                                <p style={{ ...body, fontSize: '0.85rem', fontWeight: 700, color: sentColor }}>
+                                    {item.sentiment_label || 'N/A'}{sentimentPct !== null ? ` · ${sentimentPct}/100` : ''}
                                 </p>
-                            )}
+                                {sentimentPct !== null && (
+                                    <div className="w-full mt-1.5 overflow-hidden" style={{ height: 4, borderRadius: 999, background: BORDER }}>
+                                        <div className="h-full" style={{ width: `${sentimentPct}%`, background: sentColor, borderRadius: 999 }} />
+                                    </div>
+                                )}
+                            </div>
+                            <div className="p-3 sm:px-4">
+                                <p style={{ ...body, fontSize: '0.64rem', fontWeight: 700, color: BRONZE, letterSpacing: '0.03em', marginBottom: 4 }}>COMPLETENESS</p>
+                                <p style={{ ...body, fontSize: '0.85rem', fontWeight: 700, color: completeness !== null && completeness >= 80 ? SUCCESS : WARNING }}>
+                                    {completeness !== null ? `${completeness}%` : 'N/A'}
+                                </p>
+                                {completeness !== null && (
+                                    <div className="w-full mt-1.5 overflow-hidden" style={{ height: 4, borderRadius: 999, background: BORDER }}>
+                                        <div className="h-full" style={{ width: `${completeness}%`, background: completeness >= 80 ? SUCCESS : WARNING, borderRadius: 999 }} />
+                                    </div>
+                                )}
+                            </div>
+                            <div className="p-3 sm:px-4">
+                                <p style={{ ...body, fontSize: '0.64rem', fontWeight: 700, color: BRONZE, letterSpacing: '0.03em', marginBottom: 4 }}>WORD COUNT</p>
+                                <p style={{ ...body, fontSize: '0.85rem', fontWeight: 700, color: wordCount !== null && wordCount >= 150 ? SUCCESS : DANGER }}>
+                                    {wordCount !== null ? `${wordCount} words` : 'N/A'}
+                                </p>
+                                {wordCount !== null && (
+                                    <p style={{ ...body, fontSize: '0.66rem', marginTop: 5, fontWeight: 700, color: wordCount >= 150 ? SUCCESS : DANGER }}>
+                                        {wordCount >= 150 ? '✓ Meets minimum' : '✗ Below 150 min'}
+                                    </p>
+                                )}
+                            </div>
                         </div>
-                    </div>
-                )}
+                    )}
 
-                {missingItems.length > 0 && (
-                    <div className="mb-2 p-3 rounded-lg" style={{ backgroundColor: '#FBF0DE', borderLeft: '3px solid #d9a441' }}>
-                        <p className="text-xs font-semibold mb-1" style={{ fontFamily: "'DM Sans', sans-serif", color: '#92400e' }}>Missing items flagged</p>
-                        {missingItems.map((m, i) => (
-                            <p key={i} className="text-xs" style={{ fontFamily: "'DM Sans', sans-serif", color: '#374151' }}>· {m}</p>
-                        ))}
-                    </div>
-                )}
-
-                {item.staff_comment && (
-                    <div className="flex items-start gap-1.5 p-2.5 rounded-lg"
-                        style={{ backgroundColor: status === 'approved' ? '#EAF3EC' : status === 'rejected' ? '#FBE9E9' : '#FBF0DE' }}>
-                        <MessageSquare className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" style={{ color: cfg.color }} />
-                        <div>
-                            <p className="text-xs font-semibold" style={{ fontFamily: "'DM Sans', sans-serif", color: cfg.color }}>Officer Feedback:</p>
-                            <p className="text-xs" style={{ fontFamily: "'DM Sans', sans-serif", color: '#374151' }}>{item.staff_comment}</p>
+                    {missingItems.length > 0 && (
+                        <div className="mb-3">
+                            <AlertStrip color={WARNING} title="Missing items flagged">
+                                {missingItems.map((m, i) => <span key={i} className="block">· {m}</span>)}
+                            </AlertStrip>
                         </div>
-                    </div>
-                )}
+                    )}
 
-                {status === 'rejected' && onResubmit && (
-                    <button onClick={() => onResubmit(item)}
-                        className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-full text-sm font-semibold"
-                        style={{ backgroundColor: '#FBE9E9', color: '#991b1b', border: '1px solid #f3c6c6', fontFamily: "'DM Sans', sans-serif" }}>
-                        <XCircle className="w-4 h-4" /> Resubmit this item
-                    </button>
-                )}
-            </div>
+                    {/* ── 5. Officer feedback — soft comment container ──── */}
+                    {item.staff_comment && (
+                        <div className="flex items-start gap-2.5" style={{ background: BG, borderRadius: 12, padding: '12px 14px' }}>
+                            <MessageSquare size={14} style={{ color: cfg.color, marginTop: 2, flexShrink: 0 }} />
+                            <div>
+                                <p style={{ ...body, fontSize: '0.68rem', fontWeight: 700, color: cfg.color, letterSpacing: '0.03em', marginBottom: 2 }}>OFFICER REMARKS</p>
+                                <p style={{ ...body, fontSize: '0.82rem', color: INK, lineHeight: 1.55 }}>{item.staff_comment}</p>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ── 6. Resubmission ─────────────────────────────── */}
+                    {status === 'rejected' && onResubmit && (
+                        <button onClick={() => onResubmit(item)}
+                            className="mt-3 inline-flex items-center gap-2 transition-opacity hover:opacity-85"
+                            style={{ padding: '9px 16px', borderRadius: 999, ...body, fontSize: '0.82rem', fontWeight: 700, background: `${DANGER}14`, color: DANGER, border: `1px solid ${DANGER}44`, cursor: 'pointer' }}>
+                            <XCircle className="w-4 h-4" /> Resubmit this item
+                        </button>
+                    )}
+                </div>
+            )}
         </div>
     );
 };
 
 const SubmissionHistory = ({ history = [], loading = false, error = '', onResubmit }) => {
+    const [selectedYear, setSelectedYear] = useState('all');
+
+    // Group by derived academic year, newest first — purely client-side,
+    // no backend logic touched.
+    const years = useMemo(() => {
+        const set = new Set(history.map(item => academicYearOf(item.submitted_at)));
+        return Array.from(set).sort((a, b) => (a < b ? 1 : -1));
+    }, [history]);
+
+    const filteredHistory = selectedYear === 'all'
+        ? history
+        : history.filter(item => academicYearOf(item.submitted_at) === selectedYear);
+
+    const counts = {
+        total: history.length,
+        approved: history.filter(i => i.status === 'approved').length,
+        pending: history.filter(i => !i.status || i.status === 'pending').length,
+    };
+
     return (
-        <div>
-            <header className="mb-8">
-                <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: '1.75rem', fontWeight: 700, color: '#1a1a1a' }}>Submission History</h2>
-                <p className="mt-1 pl-4" style={{ fontFamily: "'DM Sans', sans-serif", color: '#9ca3af', fontWeight: 500, borderLeft: `4px solid ${MAROON}` }}>
-                    Review your previously submitted requirements.
+        <div style={{ ...body }}>
+            <style>{`@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Inter:wght@400;500;600;700&display=swap');`}</style>
+
+            {/* ── 1. Scholar header ─────────────────────────────────── */}
+            <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '18px 22px', marginBottom: 20 }}>
+                <p style={{ ...body, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.08em', color: BRONZE }}>SCHOLAR PORTAL</p>
+                <h1 style={{ ...display, fontSize: '1.5rem', fontWeight: 600, color: INK, marginTop: 4 }}>Submission History</h1>
+                <p style={{ ...body, fontSize: '0.83rem', color: MUTED, marginTop: 5 }}>
+                    Review your submitted reports, grades, and official documents.
                 </p>
-            </header>
+            </div>
 
             {loading && (
-                <div className="bg-white rounded-2xl p-12 text-center" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)' }}>
-                    <p className="text-sm text-slate-400 font-medium">Loading your submission history...</p>
+                <div className="text-center" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '48px 20px' }}>
+                    <p style={{ ...body, fontSize: '0.82rem', color: MUTED }}>Loading your submission history…</p>
                 </div>
             )}
 
             {!loading && error && (
-                <div className="bg-white rounded-2xl p-12 text-center" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)', border: '1px solid #f3c6c6' }}>
-                    <p className="text-sm font-medium" style={{ color: '#991b1b' }}>{error}</p>
+                <div className="text-center" style={{ background: SURFACE, border: `1px solid ${DANGER}44`, borderRadius: RADIUS, padding: '48px 20px' }}>
+                    <p style={{ ...body, fontSize: '0.85rem', fontWeight: 600, color: DANGER }}>{error}</p>
                 </div>
             )}
 
             {!loading && !error && history.length === 0 && (
-                <div className="bg-white rounded-2xl p-12 text-center" style={{ boxShadow: '0 8px 24px -14px rgba(36,21,18,0.15)' }}>
-                    <p className="text-sm text-slate-400 font-medium">You haven't submitted any requirements yet.</p>
+                <div className="flex flex-col items-center gap-3 text-center" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '64px 20px' }}>
+                    <div className="flex items-center justify-center" style={{ width: 48, height: 48, borderRadius: '50%', background: PRIMARY_TINT }}>
+                        <Archive size={22} style={{ color: PRIMARY }} />
+                    </div>
+                    <p style={{ ...display, fontSize: '1.05rem', fontWeight: 600, color: INK }}>No submissions yet</p>
+                    <p className="max-w-sm" style={{ ...body, fontSize: '0.83rem', color: MUTED, lineHeight: 1.6 }}>
+                        Your academic submissions will appear here after your first report.
+                    </p>
                 </div>
             )}
 
             {!loading && !error && history.length > 0 && (
-                <div className="space-y-4">
-                    <div className="flex items-start gap-2 p-3 rounded-xl mb-1" style={{ backgroundColor: '#F5E8EA', border: '1px solid #e9c9d2' }}>
-                        <TrendingUp className="w-4 h-4 mt-0.5 flex-shrink-0" style={{ color: MAROON }} />
-                        <p className="text-xs" style={{ fontFamily: "'DM Sans', sans-serif", color: MAROON }}>
-                            <strong>AI Sentiment Analysis:</strong> Each submitted letter is automatically analyzed for tone and completeness by the system. Officers use this to monitor your well-being and ensure your reports meet foundation standards.
-                        </p>
+                <>
+                    {/* ── 2. Academic overview — 3 stat cards ───────────── */}
+                    <div className="grid grid-cols-3 gap-3 sm:gap-4 mb-5">
+                        <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS - 4, padding: '14px 16px' }}>
+                            <p style={{ ...body, fontSize: '0.68rem', fontWeight: 600, color: BRONZE }}>Total</p>
+                            <p style={{ ...display, fontSize: '1.4rem', fontWeight: 700, color: INK, marginTop: 4 }}>{counts.total}</p>
+                        </div>
+                        <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS - 4, padding: '14px 16px' }}>
+                            <p style={{ ...body, fontSize: '0.68rem', fontWeight: 600, color: BRONZE }}>Approved</p>
+                            <p style={{ ...display, fontSize: '1.4rem', fontWeight: 700, color: SUCCESS, marginTop: 4 }}>{counts.approved}</p>
+                        </div>
+                        <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS - 4, padding: '14px 16px' }}>
+                            <p style={{ ...body, fontSize: '0.68rem', fontWeight: 600, color: BRONZE }}>Pending Review</p>
+                            <p style={{ ...display, fontSize: '1.4rem', fontWeight: 700, color: WARNING, marginTop: 4 }}>{counts.pending}</p>
+                        </div>
                     </div>
-                    {history.map(item => <HistoryCard key={item.id} item={item} onResubmit={onResubmit} />)}
-                </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-[160px_minmax(0,1fr)] gap-5">
+
+                        {/* ── 3. Semester timeline sidebar ────────────────── */}
+                        <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '16px 14px', height: 'fit-content' }}>
+                            <p style={{ ...body, fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.05em', color: BRONZE, marginBottom: 12, paddingLeft: 4 }}>ACADEMIC YEARS</p>
+                            <div className="relative" style={{ paddingLeft: 18 }}>
+                                <div className="absolute" style={{ left: 5, top: 4, bottom: 4, width: 2, background: BORDER }} />
+
+                                <button
+                                    onClick={() => setSelectedYear('all')}
+                                    className="relative flex items-center gap-2 w-full text-left transition-colors"
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0' }}
+                                >
+                                    <span className="absolute" style={{ left: -18, width: 11, height: 11, borderRadius: '50%', background: selectedYear === 'all' ? PRIMARY : '#fff', border: `2px solid ${PRIMARY}` }} />
+                                    <span style={{ ...body, fontSize: '0.8rem', fontWeight: selectedYear === 'all' ? 700 : 500, color: INK }}>All Years</span>
+                                </button>
+
+                                {years.map((y) => (
+                                    <button
+                                        key={y}
+                                        onClick={() => setSelectedYear(y)}
+                                        className="relative flex items-center gap-2 w-full text-left transition-colors"
+                                        style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0' }}
+                                    >
+                                        <span className="absolute" style={{ left: -18, width: 11, height: 11, borderRadius: '50%', background: selectedYear === y ? PRIMARY : '#fff', border: `2px solid ${PRIMARY}` }} />
+                                        <span style={{ ...body, fontSize: '0.8rem', fontWeight: selectedYear === y ? 700 : 500, color: INK }}>
+                                            {y === 'Undated' ? y : `AY ${y}`}
+                                        </span>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* ── 4. Modern submission cards ──────────────────── */}
+                        <div className="space-y-3">
+                            {filteredHistory.map(item => (
+                                <HistoryCard key={item.id} item={item} onResubmit={onResubmit} />
+                            ))}
+                            {filteredHistory.length === 0 && (
+                                <p style={{ ...body, fontSize: '0.82rem', color: MUTED, textAlign: 'center', padding: '32px 0' }}>
+                                    No submissions recorded for this academic year.
+                                </p>
+                            )}
+                        </div>
+                    </div>
+                </>
             )}
         </div>
     );
