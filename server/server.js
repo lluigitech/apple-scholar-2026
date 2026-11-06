@@ -3,6 +3,7 @@ const cors    = require('cors');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, 'utils', '.env') });
 const db = require('./config/db');
+const { ensureColumns, ensureIndexes, runQuery } = require('./utils/mysqlSchemaMigrations');
 
 // ─── Import Routes ────────────────────────────────────────────
 const authRoutes       = require('./routes/authRoutes');
@@ -258,6 +259,9 @@ const initializeDatabase = () => {
         return;
     }
 
+    let submissionsSchemaReady = Promise.resolve();
+    let officerAssignmentsReady = Promise.resolve(false);
+
     db.query('SELECT 1', (err) => {
         if (err) console.error('❌ MySQL connection failed:', err.message);
         else console.log('✅ Connected to MySQL Database!');
@@ -358,85 +362,35 @@ const initializeDatabase = () => {
             return;
         }
 
-        db.query("ALTER TABLE users MODIFY COLUMN role ENUM('admin','scholar','staff','officer') NOT NULL DEFAULT 'scholar'", (roleErr) => {
-            if (roleErr) console.error('Failed to update user role enum:', roleErr.message);
-        });
-
         const allowUserProfileColumnMigration =
             process.env.ALLOW_AUTO_USER_PROFILE_MIGRATION === 'true' ||
             process.env.NODE_ENV !== 'production';
 
-        if (!allowUserProfileColumnMigration) {
-            console.log('Skipping users profile column auto-migration in production.');
-        } else {
-            const requiredProfileColumns = {
-                age: 'INT DEFAULT NULL',
-                birth_date: 'DATE DEFAULT NULL',
-                phone: 'VARCHAR(64) DEFAULT NULL',
-                address: 'VARCHAR(255) DEFAULT NULL',
-                course: 'VARCHAR(255) DEFAULT NULL',
-                school: 'VARCHAR(255) DEFAULT NULL',
-            };
+        runQuery(
+            db,
+            "ALTER TABLE users MODIFY COLUMN role ENUM('admin','scholar','staff','officer') NOT NULL DEFAULT 'scholar'"
+        ).catch((roleError) => {
+            console.error('Failed to update user role enum:', roleError.message);
+        }).then(async () => {
+            if (!allowUserProfileColumnMigration) {
+                console.log('Skipping users profile column auto-migration in production.');
+                return;
+            }
 
-            db.query('SHOW COLUMNS FROM users', (colErr, colRows) => {
-                if (colErr) {
-                    console.error('Failed to inspect users columns:', colErr.message);
-                    return;
-                }
-
-                const existingColumns = new Set(colRows.map((row) => row.Field));
-                const missing = Object.entries(requiredProfileColumns)
-                    .filter(([column]) => !existingColumns.has(column));
-
-                if (missing.length === 0) {
-                    console.log('✅ Users profile columns already present.');
-                } else {
-                    const alterSql = 'ALTER TABLE users ' + missing
-                        .map(([column, definition]) => `ADD COLUMN IF NOT EXISTS ${column} ${definition}`)
-                        .join(', ');
-                    console.log('Adding missing users profile columns:', missing.map(([column]) => column).join(', '));
-                    db.query(alterSql, (alterErr) => {
-                        if (alterErr) {
-                            console.error('Failed to add missing users profile columns using IF NOT EXISTS:', alterErr.message);
-                            console.error('Users profile column migration failed. The following columns may still be missing: %s', missing.map(([column]) => column).join(', '));
-                            console.error('Please add them manually or retry after resolving any table lock issues. Example SQL:');
-                            missing.forEach(([column, definition]) => {
-                                console.error(`  ALTER TABLE users ADD COLUMN ${column} ${definition};`);
-                            });
-
-                            const fallbackQueries = missing.map(
-                                ([column, definition]) => `ALTER TABLE users ADD COLUMN ${column} ${definition}`
-                            );
-
-                            const runFallback = (index = 0) => {
-                                if (index >= fallbackQueries.length) {
-                                    console.log('Completed fallback users profile column migration.');
-                                    return;
-                                }
-
-                                db.query(fallbackQueries[index], (fallbackErr) => {
-                                    const fieldName = missing[index][0];
-                                    if (fallbackErr) {
-                                        if (fallbackErr.message.includes('Duplicate column name')) {
-                                            console.warn(`Column already exists: ${fieldName}`);
-                                        } else {
-                                            console.error(`Failed to add ${fieldName}:`, fallbackErr.message);
-                                        }
-                                    } else {
-                                        console.log(`✅ Added missing users profile column: ${fieldName}`);
-                                    }
-                                    runFallback(index + 1);
-                                });
-                            };
-
-                            runFallback();
-                        } else {
-                            console.log('✅ Added missing users profile columns:', missing.map(([column]) => column).join(', '));
-                        }
-                    });
-                }
-            });
-        }
+            try {
+                await ensureColumns(db, 'users', {
+                    age: 'INT DEFAULT NULL',
+                    birth_date: 'DATE DEFAULT NULL',
+                    phone: 'VARCHAR(64) DEFAULT NULL',
+                    address: 'VARCHAR(255) DEFAULT NULL',
+                    course: 'VARCHAR(255) DEFAULT NULL',
+                    school: 'VARCHAR(255) DEFAULT NULL',
+                });
+                console.log('✅ Users profile columns ensured.');
+            } catch (migrationError) {
+                console.error('Failed to ensure users profile columns:', migrationError.message);
+            }
+        });
 
         db.query(`
             INSERT INTO users (scholar_id, full_name, email, password, role, year_level, qr_code, status, must_change_password)
@@ -473,7 +427,16 @@ const initializeDatabase = () => {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `, (nErr) => {
         if (nErr) console.error('Failed to create notification_logs table:', nErr);
-        else console.log('✅ notification_logs table ensured');
+        else {
+            ensureColumns(db, 'notification_logs', {
+                is_read: 'TINYINT(1) NOT NULL DEFAULT 0',
+                read_at: 'TIMESTAMP NULL DEFAULT NULL',
+            })
+                .then(() => console.log('✅ notification_logs table and read columns ensured'))
+                .catch((migrationError) => {
+                    console.error('Failed to ensure notification read columns:', migrationError.message);
+                });
+        }
     });
 
     db.query(`
@@ -487,15 +450,6 @@ const initializeDatabase = () => {
     `, (thresholdErr) => {
         if (thresholdErr) console.error('Failed to create compliance threshold alert state table:', thresholdErr);
         else console.log('✅ compliance threshold alert state table ensured');
-    });
-
-    db.query(`
-        ALTER TABLE notification_logs
-        ADD COLUMN IF NOT EXISTS is_read TINYINT(1) NOT NULL DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS read_at TIMESTAMP NULL DEFAULT NULL
-    `, (nErr) => {
-        if (nErr) console.error('Failed to add notification read columns:', nErr);
-        else console.log('✅ notification read columns ensured');
     });
 
     db.query(`
@@ -537,7 +491,7 @@ const initializeDatabase = () => {
         console.log('✅ audit_logs table ensured');
     });
 
-    db.query(`
+    officerAssignmentsReady = new Promise((resolve) => db.query(`
         CREATE TABLE IF NOT EXISTS officer_year_level_assignments (
             id INT AUTO_INCREMENT PRIMARY KEY,
             officer_id INT NOT NULL,
@@ -549,33 +503,31 @@ const initializeDatabase = () => {
     `, (assignmentErr) => {
         if (assignmentErr) console.error('Failed to create officer assignment table:', assignmentErr);
         else console.log('✅ officer_year_level_assignments table ensured');
-    });
+        resolve(!assignmentErr);
+    }));
 
     // Keep compliance threshold settings compatible with older databases.
-    db.query(`
-        ALTER TABLE compliance_settings
-        ADD COLUMN IF NOT EXISTS min_compliance DECIMAL(5,2) NOT NULL DEFAULT 70.00,
-        ADD COLUMN IF NOT EXISTS allowed_missed INT NOT NULL DEFAULT 2,
-        ADD COLUMN IF NOT EXISTS required_hours INT NOT NULL DEFAULT 30,
-        ADD COLUMN IF NOT EXISTS missed_submission_deduction INT NOT NULL DEFAULT 2,
-        ADD COLUMN IF NOT EXISTS service_hour_shortfall_deduction INT NOT NULL DEFAULT 1,
-        ADD COLUMN IF NOT EXISTS absent_duty_deduction INT NOT NULL DEFAULT 2,
-        ADD COLUMN IF NOT EXISTS late_submission_deduction INT NOT NULL DEFAULT 1,
-        ADD COLUMN IF NOT EXISTS negative_letter_deduction INT NOT NULL DEFAULT 1,
-        ADD COLUMN IF NOT EXISTS quality_drop_deduction DECIMAL(4,2) NOT NULL DEFAULT 0.50,
-        ADD COLUMN IF NOT EXISTS extra_service_bonus INT NOT NULL DEFAULT 2,
-        ADD COLUMN IF NOT EXISTS good_maintenance_bonus INT NOT NULL DEFAULT 5,
-        ADD COLUMN IF NOT EXISTS missed_submission_grace_count INT NOT NULL DEFAULT 2,
-        ADD COLUMN IF NOT EXISTS late_submission_grace_count INT NOT NULL DEFAULT 2,
-        ADD COLUMN IF NOT EXISTS recovery_enabled TINYINT(1) NOT NULL DEFAULT 1,
-        ADD COLUMN IF NOT EXISTS early_submission_bonus DECIMAL(4,2) NOT NULL DEFAULT 0.50,
-        ADD COLUMN IF NOT EXISTS service_hours_completion_bonus DECIMAL(4,2) NOT NULL DEFAULT 2.00,
-        ADD COLUMN IF NOT EXISTS consecutive_early_bonus DECIMAL(4,2) NOT NULL DEFAULT 1.00,
-        ADD COLUMN IF NOT EXISTS perfect_attendance_bonus DECIMAL(4,2) NOT NULL DEFAULT 0.50,
-        ADD COLUMN IF NOT EXISTS monthly_recovery_cap DECIMAL(4,2) NOT NULL DEFAULT 2.00;
-    `, (alterErr) => {
-        if (alterErr) console.error('Failed to add compliance_settings fields:', alterErr);
-        else {
+    ensureColumns(db, 'compliance_settings', {
+        min_compliance: 'DECIMAL(5,2) NOT NULL DEFAULT 70.00',
+        allowed_missed: 'INT NOT NULL DEFAULT 2',
+        required_hours: 'INT NOT NULL DEFAULT 30',
+        missed_submission_deduction: 'INT NOT NULL DEFAULT 2',
+        service_hour_shortfall_deduction: 'INT NOT NULL DEFAULT 1',
+        absent_duty_deduction: 'INT NOT NULL DEFAULT 2',
+        late_submission_deduction: 'INT NOT NULL DEFAULT 1',
+        negative_letter_deduction: 'INT NOT NULL DEFAULT 1',
+        quality_drop_deduction: 'DECIMAL(4,2) NOT NULL DEFAULT 0.50',
+        extra_service_bonus: 'INT NOT NULL DEFAULT 2',
+        good_maintenance_bonus: 'INT NOT NULL DEFAULT 5',
+        missed_submission_grace_count: 'INT NOT NULL DEFAULT 2',
+        late_submission_grace_count: 'INT NOT NULL DEFAULT 2',
+        recovery_enabled: 'TINYINT(1) NOT NULL DEFAULT 1',
+        early_submission_bonus: 'DECIMAL(4,2) NOT NULL DEFAULT 0.50',
+        service_hours_completion_bonus: 'DECIMAL(4,2) NOT NULL DEFAULT 2.00',
+        consecutive_early_bonus: 'DECIMAL(4,2) NOT NULL DEFAULT 1.00',
+        perfect_attendance_bonus: 'DECIMAL(4,2) NOT NULL DEFAULT 0.50',
+        monthly_recovery_cap: 'DECIMAL(4,2) NOT NULL DEFAULT 2.00',
+    }).then(() => {
             console.log('✅ compliance_settings fields ensured');
             db.query(
                 'INSERT INTO compliance_settings (id) VALUES (1) ON DUPLICATE KEY UPDATE id = id',
@@ -584,117 +536,105 @@ const initializeDatabase = () => {
                     else console.log('✅ compliance settings defaults ensured');
                 }
             );
-        }
+    }).catch((migrationError) => {
+        console.error('Failed to add compliance_settings fields:', migrationError.message);
     });
 
     // Ensure submissions schema is compatible with current application logic.
-    db.query(`
-        ALTER TABLE submissions
-        ADD COLUMN IF NOT EXISTS letter_content TEXT DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS sentiment_score DECIMAL(7,2) DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS sentiment_label VARCHAR(64) DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS content_score INT DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS content_breakdown TEXT DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS quality_label VARCHAR(64) DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS needs_followup TINYINT(1) NOT NULL DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS report_card_path VARCHAR(500) DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS cor_path VARCHAR(500) DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS service_activity VARCHAR(255) DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS service_hours DECIMAL(8,2) DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS service_date DATE DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS quality_score DECIMAL(5,2) DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS quality_status VARCHAR(64) DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS officer_comment TEXT DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP NULL DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP NULL DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS archive_at TIMESTAMP NULL DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS archived_at TIMESTAMP NULL DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS returned_at TIMESTAMP NULL DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS finalized_at DATETIME NULL DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS export_available_at DATETIME NULL DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS finalization_batch_id VARCHAR(64) DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS generated_pdf_path VARCHAR(1000) DEFAULT NULL
-    `, (alterErr) => {
-        if (alterErr) console.error('Failed to ensure submissions schema:', alterErr);
-        else {
-            console.log('✅ submissions table schema ensured');
-            db.query(`
-                UPDATE submissions
-                SET status = 'approved',
-                    finalized_at = COALESCE(archived_at, archive_at, NOW()),
-                    export_available_at = COALESCE(archive_at, archived_at, NOW()),
-                    finalization_batch_id = COALESCE(
-                        finalization_batch_id,
-                        CONCAT('legacy-', scholar_id, '-', DATE_FORMAT(COALESCE(archived_at, archive_at, NOW()), '%Y%m%d%H%i%s'))
-                    )
-                WHERE status = 'archived' AND finalized_at IS NULL
-            `, (legacyFinalizationErr) => {
-                if (legacyFinalizationErr) console.error('Failed to migrate legacy archived submissions:', legacyFinalizationErr.message);
-                else console.log('✅ legacy archived submissions moved to finalized history');
-            });
-            db.query(`
-                UPDATE submissions
-                SET finalized_at = COALESCE(approved_at, reviewed_at, submitted_at, NOW()),
-                    export_available_at = COALESCE(approved_at, reviewed_at, submitted_at, NOW()),
-                    finalization_batch_id = CONCAT('legacy-approved-', scholar_id, '-', id)
-                WHERE LOWER(status) = 'approved'
-                  AND finalized_at IS NULL
-                  AND COALESCE(approved_at, reviewed_at, submitted_at, NOW()) <= DATE_SUB(NOW(), INTERVAL 3 DAY)
-            `, (approvedFinalizationErr) => {
-                if (approvedFinalizationErr) console.error('Failed to migrate approved submissions into Reports:', approvedFinalizationErr.message);
-                else console.log('✅ previously approved submissions moved into Reports');
-            });
-        }
+    submissionsSchemaReady = ensureColumns(db, 'submissions', {
+        letter_content: 'TEXT DEFAULT NULL',
+        sentiment_score: 'DECIMAL(7,2) DEFAULT NULL',
+        sentiment_label: 'VARCHAR(64) DEFAULT NULL',
+        content_score: 'INT DEFAULT NULL',
+        content_breakdown: 'TEXT DEFAULT NULL',
+        quality_label: 'VARCHAR(64) DEFAULT NULL',
+        needs_followup: 'TINYINT(1) NOT NULL DEFAULT 0',
+        report_card_path: 'VARCHAR(500) DEFAULT NULL',
+        cor_path: 'VARCHAR(500) DEFAULT NULL',
+        service_activity: 'VARCHAR(255) DEFAULT NULL',
+        service_hours: 'DECIMAL(8,2) DEFAULT NULL',
+        service_date: 'DATE DEFAULT NULL',
+        quality_score: 'DECIMAL(5,2) DEFAULT NULL',
+        quality_status: 'VARCHAR(64) DEFAULT NULL',
+        officer_comment: 'TEXT DEFAULT NULL',
+        reviewed_at: 'TIMESTAMP NULL DEFAULT NULL',
+        approved_at: 'TIMESTAMP NULL DEFAULT NULL',
+        archive_at: 'TIMESTAMP NULL DEFAULT NULL',
+        archived_at: 'TIMESTAMP NULL DEFAULT NULL',
+        returned_at: 'TIMESTAMP NULL DEFAULT NULL',
+        finalized_at: 'DATETIME NULL DEFAULT NULL',
+        export_available_at: 'DATETIME NULL DEFAULT NULL',
+        finalization_batch_id: 'VARCHAR(64) DEFAULT NULL',
+        generated_pdf_path: 'VARCHAR(1000) DEFAULT NULL',
+    }).then(async () => {
+        console.log('✅ submissions table schema ensured');
+        await runQuery(db, "UPDATE submissions SET status = 'approved' WHERE status = 'Approved'");
+        await runQuery(db, "UPDATE submissions SET status = 'rejected' WHERE status = 'Rejected'");
+        await runQuery(db, "UPDATE submissions SET status = 'pending' WHERE status = 'Pending'");
+        await runQuery(db, `
+            UPDATE submissions
+            SET status = 'approved',
+                finalized_at = COALESCE(archived_at, archive_at, NOW()),
+                export_available_at = COALESCE(archive_at, archived_at, NOW()),
+                finalization_batch_id = COALESCE(
+                    finalization_batch_id,
+                    CONCAT('legacy-', scholar_id, '-', DATE_FORMAT(COALESCE(archived_at, archive_at, NOW()), '%Y%m%d%H%i%s'))
+                )
+            WHERE status = 'archived' AND finalized_at IS NULL
+        `);
+        console.log('✅ legacy archived submissions moved to finalized history');
+        await runQuery(db, `
+            UPDATE submissions
+            SET finalized_at = COALESCE(approved_at, reviewed_at, submitted_at, NOW()),
+                export_available_at = COALESCE(approved_at, reviewed_at, submitted_at, NOW()),
+                finalization_batch_id = CONCAT('legacy-approved-', scholar_id, '-', id)
+            WHERE LOWER(status) = 'approved'
+              AND finalized_at IS NULL
+              AND COALESCE(approved_at, reviewed_at, submitted_at, NOW()) <= DATE_SUB(NOW(), INTERVAL 3 DAY)
+        `);
+        console.log('✅ previously approved submissions moved into Reports');
+        await ensureIndexes(db, 'submissions', {
+            idx_submissions_scholar_id: ['scholar_id'],
+        });
+        console.log('✅ submissions.scholar_id index ensured');
+        return true;
+    }).catch((migrationError) => {
+        console.error('Failed to migrate submissions schema or legacy records:', migrationError.message);
+        return false;
     });
 
-    db.query(`
-        UPDATE submissions
-        SET status = 'approved'
-        WHERE status = 'Approved'
-    `, (statusErr) => {
-        if (statusErr) console.error('Failed to normalize legacy approved status:', statusErr.message);
+    ensureColumns(db, 'duty_attendance', {
+        check_out_at: 'DATETIME DEFAULT NULL',
+    }).then(() => ensureIndexes(db, 'duty_attendance', {
+        idx_duty_attendance_scholar_id: ['scholar_id'],
+    })).then(() => {
+        console.log('✅ duty_attendance check-out field and scholar_id index ensured');
+    }).catch((migrationError) => {
+        console.error('Failed to ensure duty_attendance schema:', migrationError.message);
     });
 
-    db.query(`
-        UPDATE submissions
-        SET status = 'rejected'
-        WHERE status = 'Rejected'
-    `, (statusErr) => {
-        if (statusErr) console.error('Failed to normalize legacy rejected status:', statusErr.message);
-    });
-
-    db.query(`
-        UPDATE submissions
-        SET status = 'pending'
-        WHERE status = 'Pending'
-    `, (statusErr) => {
-        if (statusErr) console.error('Failed to normalize legacy pending status:', statusErr.message);
-    });
-
-    // Speed up Scholar queries by indexing common filter columns.
-    db.query(`
-        ALTER TABLE submissions
-        ADD INDEX IF NOT EXISTS idx_submissions_scholar_id (scholar_id);
-    `, (idxErr) => {
-        if (idxErr) console.error('Failed to add submissions scholar_id index:', idxErr.message);
-        else console.log('✅ submissions.scholar_id index ensured');
-    });
-
-    db.query(`
-        ALTER TABLE duty_attendance
-        ADD COLUMN IF NOT EXISTS check_out_at DATETIME DEFAULT NULL,
-        ADD INDEX IF NOT EXISTS idx_duty_attendance_scholar_id (scholar_id);
-    `, (idxErr) => {
-        if (idxErr) console.error('Failed to ensure duty_attendance check-out field and scholar_id index:', idxErr.message);
-        else console.log('✅ duty_attendance check-out field and scholar_id index ensured');
-    });
-
-    db.query(`
-        ALTER TABLE submission_media
-        ADD INDEX IF NOT EXISTS idx_submission_media_submission_id (submission_id);
-    `, (idxErr) => {
-        if (idxErr) console.error('Failed to add submission_media submission_id index:', idxErr.message);
-        else console.log('✅ submission_media.submission_id index ensured');
+    ensureColumns(db, 'submission_media', {
+        photo_path: 'VARCHAR(1000) DEFAULT NULL',
+        consent: 'BOOLEAN NOT NULL DEFAULT FALSE',
+        uploaded_at: 'TIMESTAMP NULL DEFAULT NULL',
+        retention_until: 'DATETIME NULL',
+        is_archived: 'BOOLEAN NOT NULL DEFAULT FALSE',
+        archived_at: 'DATETIME DEFAULT NULL',
+        approved_for_donor: 'TINYINT(1) NOT NULL DEFAULT 0',
+        approved_at: 'TIMESTAMP NULL DEFAULT NULL',
+        approved_by: 'INT DEFAULT NULL',
+    }).then(() => ensureIndexes(db, 'submission_media', {
+        idx_submission_media_submission_id: ['submission_id'],
+    })).then(() => runQuery(db, `
+        UPDATE submission_media
+        SET photo_path = COALESCE(photo_path, file_path),
+            uploaded_at = COALESCE(uploaded_at, created_at),
+            retention_until = COALESCE(retention_until, DATE_ADD(COALESCE(uploaded_at, created_at), INTERVAL 5 YEAR))
+        WHERE photo_path IS NULL OR uploaded_at IS NULL OR retention_until IS NULL
+    `)).then(() => {
+        console.log('✅ submission_media retention and donor approval fields ensured');
+    }).catch((migrationError) => {
+        console.error('Failed to ensure submission_media schema:', migrationError.message);
     });
 
     db.query(`
@@ -718,8 +658,13 @@ const initializeDatabase = () => {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `, (documentErr) => {
         if (documentErr) console.error('Failed to ensure documents table:', documentErr.message);
-                else {
-                             db.query(`
+        else {
+            submissionsSchemaReady.then((schemaReady) => {
+                if (!schemaReady) {
+                    console.error('Skipping retention document backfill because submissions migration did not complete.');
+                    return;
+                }
+                return runQuery(db, `
                               INSERT INTO documents (scholar_id, category, file_name, file_path, mime_type, status, uploaded_at, retention_until, source_submission_id)
                               SELECT s.scholar_id,
                                   CASE WHEN s.generated_pdf_path IS NOT NULL THEN 'monthly_letter'
@@ -737,31 +682,11 @@ const initializeDatabase = () => {
                               FROM submissions s
                               WHERE COALESCE(s.generated_pdf_path, s.cor_path, s.report_card_path) IS NOT NULL
                                 AND NOT EXISTS (SELECT 1 FROM documents d WHERE d.source_submission_id = s.id)
-                             `, (backfillErr) => {
-                                if (backfillErr) console.error('Failed to backfill retention documents:', backfillErr.message);
-                        });
-                }
-    });
-
-    db.query(`
-        ALTER TABLE submission_media
-        ADD COLUMN IF NOT EXISTS photo_path VARCHAR(1000) DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS consent BOOLEAN NOT NULL DEFAULT FALSE,
-        ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMP NULL DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS retention_until DATETIME NULL,
-        ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT FALSE,
-        ADD COLUMN IF NOT EXISTS archived_at DATETIME DEFAULT NULL
-    `, (mediaRetentionErr) => {
-        if (mediaRetentionErr) console.error('Failed to ensure media retention fields:', mediaRetentionErr.message);
-        else db.query(`
-            UPDATE submission_media
-            SET photo_path = COALESCE(photo_path, file_path),
-                uploaded_at = COALESCE(uploaded_at, created_at),
-                retention_until = COALESCE(retention_until, DATE_ADD(COALESCE(uploaded_at, created_at), INTERVAL 5 YEAR))
-            WHERE photo_path IS NULL OR uploaded_at IS NULL OR retention_until IS NULL
-        `, (mediaBackfillErr) => {
-            if (mediaBackfillErr) console.error('Failed to backfill media retention fields:', mediaBackfillErr.message);
-        });
+                `);
+            }).catch((backfillError) => {
+                console.error('Failed to backfill retention documents:', backfillError.message);
+            });
+        }
     });
 
     // Ensure tasks table exists
@@ -782,68 +707,51 @@ const initializeDatabase = () => {
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
     `, (tErr) => {
-        if (tErr) console.error('Failed to ensure tasks table:', tErr);
-        else db.query(
-            'ALTER TABLE tasks ADD COLUMN IF NOT EXISTS target_year_levels JSON DEFAULT NULL',
-            (alterTaskErr) => {
-                if (alterTaskErr) console.error('Failed to ensure task target levels:', alterTaskErr.message);
-                else {
-                    db.query(
-                        `SELECT id, created_by FROM tasks
-                         WHERE created_by_role = 'officer' AND target_year_levels IS NULL`,
-                        (legacyErr, legacyTasks) => {
-                            if (legacyErr) {
-                                console.error('Failed to find legacy officer tasks:', legacyErr.message);
-                                return;
-                            }
-
-                            let remaining = legacyTasks.length;
-                            if (!remaining) {
-                                console.log('✅ tasks table and target levels ensured');
-                                return;
-                            }
-                            legacyTasks.forEach(task => {
-                                db.query(
-                                    `SELECT year_level FROM officer_year_level_assignments WHERE officer_id = ?`,
-                                    [task.created_by],
-                                    (levelsErr, levels) => {
-                                        if (!levelsErr && levels.length) {
-                                            db.query(
-                                                'UPDATE tasks SET target_year_levels = ? WHERE id = ?',
-                                                [JSON.stringify(levels.map(row => row.year_level)), task.id],
-                                                () => {}
-                                            );
-                                        }
-                                        remaining -= 1;
-                                        if (!remaining) console.log('✅ tasks table and target levels ensured');
-                                    }
-                                );
-                            });
-                        }
+        if (tErr) {
+            console.error('Failed to ensure tasks table:', tErr.message);
+            return;
+        }
+        ensureColumns(db, 'tasks', {
+            target_year_levels: 'JSON DEFAULT NULL',
+        }).then(async () => {
+            if (!await officerAssignmentsReady) {
+                console.error('Skipping legacy task target migration because officer assignments table is unavailable.');
+                return;
+            }
+            const legacyTasks = await runQuery(db, `
+                SELECT id, created_by FROM tasks
+                WHERE created_by_role = 'officer' AND target_year_levels IS NULL
+            `);
+            for (const task of legacyTasks) {
+                const levels = await runQuery(
+                    db,
+                    'SELECT year_level FROM officer_year_level_assignments WHERE officer_id = ?',
+                    [task.created_by]
+                );
+                if (levels.length) {
+                    await runQuery(
+                        db,
+                        'UPDATE tasks SET target_year_levels = ? WHERE id = ?',
+                        [JSON.stringify(levels.map((row) => row.year_level)), task.id]
                     );
                 }
             }
-        );
-    });
-};
-
-const enableDbAutoMigration = process.env.DB_AUTO_MIGRATION !== 'false';
-
-db.ready
-    .then(() => {
-        if (enableDbAutoMigration) {
-            initializeDatabase();
-        } else {
-            console.log('Skipping automatic DB schema migration because DB_AUTO_MIGRATION=false');
-        }
-    })
-    .catch((err) => {
-        console.error('Database initialization skipped because the connection is not ready:', err.message || err);
+            console.log('✅ tasks table and target levels ensured');
+        }).catch((migrationError) => {
+            console.error('Failed to ensure task target levels:', migrationError.message);
+        });
     });
 
-    db.query("ALTER TABLE scholar_groups ADD COLUMN IF NOT EXISTS assigned_staff_id INT DEFAULT NULL", (groupErr) => {
-        if (groupErr) console.error('Failed to add staff assignment column:', groupErr.message);
-        else db.query('UPDATE scholar_groups SET assigned_staff_id = created_by WHERE assigned_staff_id IS NULL AND created_by IS NOT NULL', () => {});
+    ensureColumns(db, 'scholar_groups', {
+        assigned_staff_id: 'INT DEFAULT NULL',
+    }).then(() => runQuery(db, `
+        UPDATE scholar_groups
+        SET assigned_staff_id = created_by
+        WHERE assigned_staff_id IS NULL AND created_by IS NOT NULL
+    `)).then(() => {
+        console.log('✅ scholar group staff assignments ensured');
+    }).catch((migrationError) => {
+        console.error('Failed to migrate scholar group staff assignments:', migrationError.message);
     });
 
     db.query(`
@@ -896,32 +804,37 @@ db.ready
         else console.log('✅ privacy_requests table ensured');
     });
 
-    db.query('ALTER TABLE submission_media ADD COLUMN IF NOT EXISTS approved_for_donor TINYINT(1) NOT NULL DEFAULT 0, ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP NULL DEFAULT NULL, ADD COLUMN IF NOT EXISTS approved_by INT DEFAULT NULL', (mediaApprovalErr) => {
-        if (mediaApprovalErr) console.error('Failed to ensure donor media approval fields:', mediaApprovalErr.message);
+    ensureColumns(db, 'grades', {
+        approved_at: 'DATETIME NULL DEFAULT NULL',
+        finalized_at: 'DATETIME NULL DEFAULT NULL',
+        export_available_at: 'DATETIME NULL DEFAULT NULL',
+        finalization_batch_id: 'VARCHAR(64) DEFAULT NULL',
+    }).then(() => runQuery(db, `
+        UPDATE grades
+        SET approved_at = COALESCE(approved_at, created_at),
+            finalized_at = NOW(),
+            export_available_at = NOW(),
+            finalization_batch_id = CONCAT('legacy-grade-', scholar_id, '-', semester, '-', academic_year)
+        WHERE verification_status = 'approved'
+          AND finalized_at IS NULL
+          AND COALESCE(approved_at, created_at) <= DATE_SUB(NOW(), INTERVAL 3 DAY)
+    `)).then(() => {
+        console.log('✅ grades finalization fields ensured; approved grades moved into Reports');
+    }).catch((migrationError) => {
+        console.error('Failed to ensure grade finalization schema:', migrationError.message);
     });
+};
 
-    db.query(`
-        ALTER TABLE grades
-        ADD COLUMN IF NOT EXISTS approved_at DATETIME NULL DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS finalized_at DATETIME NULL DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS export_available_at DATETIME NULL DEFAULT NULL,
-        ADD COLUMN IF NOT EXISTS finalization_batch_id VARCHAR(64) DEFAULT NULL
-    `, (gradeFinalizationErr) => {
-        if (gradeFinalizationErr) console.error('Failed to ensure grade finalization schema:', gradeFinalizationErr);
-        else {
-            console.log('✅ grades finalization fields ensured');
-            db.query(`
-                UPDATE grades
-                SET approved_at = COALESCE(approved_at, created_at),
-                    finalized_at = NOW(),
-                    export_available_at = NOW(),
-                    finalization_batch_id = CONCAT('legacy-grade-', scholar_id, '-', semester, '-', academic_year)
-                WHERE verification_status = 'approved'
-                  AND finalized_at IS NULL
-                  AND COALESCE(approved_at, created_at) <= DATE_SUB(NOW(), INTERVAL 3 DAY)
-            `, (approvedGradeErr) => {
-                if (approvedGradeErr) console.error('Failed to migrate approved grades into Reports:', approvedGradeErr.message);
-                else console.log('✅ previously approved grades moved into Reports');
-            });
+const enableDbAutoMigration = process.env.DB_AUTO_MIGRATION !== 'false';
+
+db.ready
+    .then(() => {
+        if (enableDbAutoMigration) {
+            initializeDatabase();
+        } else {
+            console.log('Skipping automatic DB schema migration because DB_AUTO_MIGRATION=false');
         }
+    })
+    .catch((err) => {
+        console.error('Database initialization skipped because the connection is not ready:', err.message || err);
     });

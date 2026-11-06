@@ -17,13 +17,65 @@ CREATE TABLE IF NOT EXISTS documents (
   INDEX idx_documents_category (category)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
-ALTER TABLE submission_media
-  ADD COLUMN IF NOT EXISTS photo_path VARCHAR(1000) DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS consent BOOLEAN NOT NULL DEFAULT FALSE,
-  ADD COLUMN IF NOT EXISTS uploaded_at TIMESTAMP NULL DEFAULT NULL,
-  ADD COLUMN IF NOT EXISTS retention_until DATETIME NULL,
-  ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT FALSE,
-  ADD COLUMN IF NOT EXISTS archived_at DATETIME DEFAULT NULL;
+SET @migration_sql = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema = DATABASE() AND table_name = 'submission_media' AND column_name = 'photo_path') = 0,
+  'ALTER TABLE submission_media ADD COLUMN photo_path VARCHAR(1000) DEFAULT NULL',
+  'SELECT 1'
+);
+PREPARE migration_stmt FROM @migration_sql;
+EXECUTE migration_stmt;
+DEALLOCATE PREPARE migration_stmt;
+
+SET @migration_sql = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema = DATABASE() AND table_name = 'submission_media' AND column_name = 'consent') = 0,
+  'ALTER TABLE submission_media ADD COLUMN consent BOOLEAN NOT NULL DEFAULT FALSE',
+  'SELECT 1'
+);
+PREPARE migration_stmt FROM @migration_sql;
+EXECUTE migration_stmt;
+DEALLOCATE PREPARE migration_stmt;
+
+SET @migration_sql = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema = DATABASE() AND table_name = 'submission_media' AND column_name = 'uploaded_at') = 0,
+  'ALTER TABLE submission_media ADD COLUMN uploaded_at TIMESTAMP NULL DEFAULT NULL',
+  'SELECT 1'
+);
+PREPARE migration_stmt FROM @migration_sql;
+EXECUTE migration_stmt;
+DEALLOCATE PREPARE migration_stmt;
+
+SET @migration_sql = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema = DATABASE() AND table_name = 'submission_media' AND column_name = 'retention_until') = 0,
+  'ALTER TABLE submission_media ADD COLUMN retention_until DATETIME NULL',
+  'SELECT 1'
+);
+PREPARE migration_stmt FROM @migration_sql;
+EXECUTE migration_stmt;
+DEALLOCATE PREPARE migration_stmt;
+
+SET @migration_sql = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema = DATABASE() AND table_name = 'submission_media' AND column_name = 'is_archived') = 0,
+  'ALTER TABLE submission_media ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT FALSE',
+  'SELECT 1'
+);
+PREPARE migration_stmt FROM @migration_sql;
+EXECUTE migration_stmt;
+DEALLOCATE PREPARE migration_stmt;
+
+SET @migration_sql = IF(
+  (SELECT COUNT(*) FROM information_schema.columns
+   WHERE table_schema = DATABASE() AND table_name = 'submission_media' AND column_name = 'archived_at') = 0,
+  'ALTER TABLE submission_media ADD COLUMN archived_at DATETIME DEFAULT NULL',
+  'SELECT 1'
+);
+PREPARE migration_stmt FROM @migration_sql;
+EXECUTE migration_stmt;
+DEALLOCATE PREPARE migration_stmt;
 
 UPDATE submission_media
 SET photo_path = file_path,
