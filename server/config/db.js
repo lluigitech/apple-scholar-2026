@@ -34,24 +34,26 @@ let dbReadyResolved = false;
 let dbReadyRejected = false;
 
 const dbReady = new Promise((resolve, reject) => {
-  db.getConnection((err, connection) => {
-    if (err) {
-      dbReadyRejected = true;
-      console.error('[MYSQL CONNECTION ERROR]', {
-        code: err.code,
-        errno: err.errno,
-        syscall: err.syscall,
-        fatal: err.fatal,
-        message: err.message,
-      });
-      reject(err);
-      return;
-    }
+  setImmediate(() => {
+    db.getConnection((err, connection) => {
+      if (err) {
+        dbReadyRejected = true;
+        console.error('[MYSQL CONNECTION ERROR]', {
+          code: err.code,
+          errno: err.errno,
+          syscall: err.syscall,
+          fatal: err.fatal,
+          message: err.message,
+        });
+        reject(err);
+        return;
+      }
 
-    connection.release();
-    dbReadyResolved = true;
-    console.log('Connected to MySQL Database!');
-    resolve();
+      connection.release();
+      dbReadyResolved = true;
+      console.log('Connected to MySQL Database!');
+      resolve();
+    });
   });
 });
 
