@@ -1,8 +1,15 @@
 const { spawnSync } = require('child_process');
+const fs = require('fs');
 const path = require('path');
 
 const MODEL_DIR = path.resolve(__dirname, '..', 'ml-service');
-const PYTHON_BIN = process.env.PYTHON_BIN || 'python';
+const VENV_PYTHON = path.resolve(
+    __dirname,
+    '..',
+    '.venv',
+    process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'
+);
+const PYTHON_BIN = process.env.PYTHON_BIN || (fs.existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python');
 const PREDICTOR_SCRIPT = path.resolve(MODEL_DIR, 'predict_letter_score.py');
 const MODEL_PATH = path.resolve(MODEL_DIR, 'letter_score_regressor.pkl');
 const VECTORIZER_PATH = path.resolve(MODEL_DIR, 'letter_score_tfidf.pkl');
