@@ -110,7 +110,10 @@ app.use((err, req, res, next) => {
 
 loadModelAtStartup();
 
+let databaseReady = false;
+
 const runDutyAbsenceSweep = async () => {
+    if (!databaseReady) return;
     try {
         const result = await markEndedDutyAbsences();
         if (!result.skipped && result.markedCount > 0) {
@@ -131,7 +134,7 @@ setInterval(runDutyAbsenceSweep, 60 * 1000);
 const complianceThresholdIntervalMs = 24 * 60 * 60 * 1000;
 let complianceThresholdRunInProgress = false;
 const runComplianceThresholdNotifications = async () => {
-    if (complianceThresholdRunInProgress) return;
+    if (!databaseReady || complianceThresholdRunInProgress) return;
     complianceThresholdRunInProgress = true;
     try {
         const result = await sendComplianceThresholdNotifications();
@@ -148,7 +151,7 @@ setInterval(runComplianceThresholdNotifications, complianceThresholdIntervalMs);
 
 let approvedSubmissionFinalizationInProgress = false;
 const runApprovedSubmissionFinalization = async () => {
-    if (approvedSubmissionFinalizationInProgress) return;
+    if (!databaseReady || approvedSubmissionFinalizationInProgress) return;
     approvedSubmissionFinalizationInProgress = true;
     try {
         const result = await finalizeApprovedSubmissions();
@@ -175,7 +178,7 @@ const reminderIntervalMs = 24 * 60 * 60 * 1000;
 let reminderRunInProgress = false;
 
 const runTaskDeadlineReminders = async () => {
-    if (process.env.ENABLE_DEADLINE_REMINDERS === 'false' || reminderRunInProgress) return;
+    if (!databaseReady || process.env.ENABLE_DEADLINE_REMINDERS === 'false' || reminderRunInProgress) return;
     reminderRunInProgress = true;
     try {
         const result = await sendTaskDeadlineReminders();
@@ -194,8 +197,13 @@ if (process.env.ENABLE_DEADLINE_REMINDERS !== 'false') {
     setInterval(runTaskDeadlineReminders, reminderIntervalMs);
 }
 
-cleanupExpired().catch((error) => console.error('[resumable-upload] cleanup failed:', error.message));
-setInterval(() => cleanupExpired().catch((error) => console.error('[resumable-upload] cleanup failed:', error.message)), 60 * 60 * 1000);
+const runResumableUploadCleanup = () => {
+    if (!databaseReady) return;
+    cleanupExpired().catch((error) => console.error('[resumable-upload] cleanup failed:', error.message));
+};
+
+runResumableUploadCleanup();
+setInterval(runResumableUploadCleanup, 60 * 60 * 1000);
 
 let backupScheduleTimer = null;
 let backupSchedule = {
@@ -204,7 +212,7 @@ let backupSchedule = {
 };
 let backupScheduleLoaded = false;
 const runScheduledBackupIfEnabled = async () => {
-    if (!backupSchedule.enabled) return;
+    if (!databaseReady || !backupSchedule.enabled) return;
     try {
         const result = await runScheduledBackups({
             enabled: backupSchedule.enabled,
@@ -231,6 +239,7 @@ process.on('admin-backup-settings-updated', (settings) => {
     configureBackupSchedule(settings);
 });
 setInterval(() => {
+    if (!databaseReady) return;
     db.query(
         'SELECT scheduled_backups, backup_retention_count FROM admin_system_settings WHERE id = 1',
         (error, rows) => {
@@ -848,6 +857,7 @@ const diagnoseDatabaseNetwork = async () => {
 
         socket.once('connect', () => {
             console.log('[db-network] TCP CONNECT SUCCESS');
+            socket.setTimeout(0);
             socket.end();
         });
 
@@ -870,6 +880,7 @@ const enableDbAutoMigration = process.env.DB_AUTO_MIGRATION !== 'false';
 
 db.ready
     .then(() => {
+        databaseReady = true;
         if (enableDbAutoMigration) {
             initializeDatabase();
         } else {
