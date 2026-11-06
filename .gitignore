@@ -17,6 +17,7 @@ build/
 *.log
 server/uploads/generated-letters/
 server/backups/
+server/certs/
 submission-*.docx
 submission-*.pdf
 submission-*.png

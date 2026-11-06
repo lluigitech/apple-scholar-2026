@@ -34,15 +34,31 @@ const app = express();
 
 // ─── Middleware ───────────────────────────────────────────────
 // CORS at JSON — dapat UNA bago lahat ng routes
-// Allow any local Vite origin for dev convenience
+
+const allowedOrigins = [
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'https://applescholar.org',
+    'https://www.applescholar.org',
+    ...(process.env.FRONTEND_URLS || '')
+        .split(',')
+        .map(url => url.trim())
+        .filter(Boolean),
+];
+
 app.use(cors({
     origin: (origin, cb) => {
         if (!origin) return cb(null, true);
-        if (origin.startsWith('http://localhost')) return cb(null, true);
-        cb(new Error('CORS not allowed'));
+
+        if (allowedOrigins.includes(origin)) {
+            return cb(null, true);
+        }
+
+        return cb(new Error('CORS not allowed'));
     },
     credentials: true,
 }));
+
 app.use(express.json());
 app.use(rateLimit({ max: 120, skipPaths: ['/api/submission/score'] }));
 app.use((req, res, next) => {
