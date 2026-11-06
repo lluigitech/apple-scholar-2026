@@ -44,6 +44,7 @@ const dbReady = new Promise((resolve, reject) => {
           syscall: err.syscall,
           fatal: err.fatal,
           message: err.message,
+          stack: err.stack,
         });
         reject(err);
         return;

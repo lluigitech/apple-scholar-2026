@@ -857,8 +857,20 @@ const diagnoseDatabaseNetwork = async () => {
 
         socket.once('connect', () => {
             console.log('[db-network] TCP CONNECT SUCCESS');
-            socket.setTimeout(0);
-            socket.end();
+        });
+
+        socket.once('data', (data) => {
+            const packetLength = data.length >= 3
+                ? data[0] | (data[1] << 8) | (data[2] << 16)
+                : null;
+            console.log('[db-network] first response header:', {
+                bytesReceived: data.length,
+                packetLength,
+                sequenceId: data.length >= 4 ? data[3] : null,
+                protocolVersion: data.length >= 5 ? data[4] : null,
+                looksLikeMySqlGreeting: data.length >= 5 && data[4] === 10,
+            });
+            socket.destroy();
         });
 
         socket.once('timeout', () => {
