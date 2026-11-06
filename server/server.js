@@ -1,6 +1,8 @@
 const express = require('express');
 const cors    = require('cors');
 const path = require('path');
+const net = require('node:net');
+const dns = require('node:dns').promises;
 require('dotenv').config({ path: path.resolve(__dirname, 'utils', '.env') });
 const db = require('./config/db');
 const { ensureColumns, ensureIndexes, runQuery } = require('./utils/mysqlSchemaMigrations');
@@ -824,6 +826,45 @@ const initializeDatabase = () => {
         console.error('Failed to ensure grade finalization schema:', migrationError.message);
     });
 };
+
+// Temporary production database network diagnostic
+const diagnoseDatabaseNetwork = async () => {
+    const host = process.env.DB_HOST;
+    const port = Number(process.env.DB_PORT);
+
+    if (!host || !port) {
+        console.error('[db-network] Missing DB_HOST or DB_PORT');
+        return;
+    }
+
+    try {
+        const addresses = await dns.lookup(host, { all: true });
+
+        console.log('[db-network] DNS resolved:', addresses);
+
+        const socket = net.createConnection({ host, port });
+
+        socket.setTimeout(10000);
+
+        socket.once('connect', () => {
+            console.log('[db-network] TCP CONNECT SUCCESS');
+            socket.end();
+        });
+
+        socket.once('timeout', () => {
+            console.error('[db-network] TCP TIMEOUT');
+            socket.destroy();
+        });
+
+        socket.once('error', (error) => {
+            console.error('[db-network] TCP ERROR:', error.code);
+        });
+    } catch (error) {
+        console.error('[db-network] DNS ERROR:', error.code);
+    }
+};
+
+diagnoseDatabaseNetwork();
 
 const enableDbAutoMigration = process.env.DB_AUTO_MIGRATION !== 'false';
 
