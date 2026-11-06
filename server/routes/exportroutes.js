@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const exportController = require('../controllers/exportController');
+const exportController = require('../controllers/exportcontroller');
 const { verifyToken, requireRole } = require('../middleware/authMiddleware'); // ✅ fixed path
 
 const allowReportExport = [verifyToken, requireRole(['admin'], { action: 'DOWNLOAD_REPORT', resourceType: 'scholar_report' })];
