@@ -37,7 +37,13 @@ const dbReady = new Promise((resolve, reject) => {
   db.getConnection((err, connection) => {
     if (err) {
       dbReadyRejected = true;
-      console.error('Error connecting to database:', err.message);
+      console.error('[MYSQL CONNECTION ERROR]', {
+        code: err.code,
+        errno: err.errno,
+        syscall: err.syscall,
+        fatal: err.fatal,
+        message: err.message,
+      });
       reject(err);
       return;
     }
