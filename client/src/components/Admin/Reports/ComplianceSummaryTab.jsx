@@ -17,6 +17,12 @@ const WARNING_BG = '#FBF1DF';
 const DANGER = '#A24A4A';
 const DANGER_BG = '#FBEAE8';
 const RADIUS = 18;
+const COLLEGE_YEAR_LEVELS = [
+  '1st Year College',
+  '2nd Year College',
+  '3rd Year College',
+  '4th Year College',
+];
 
 const display = { fontFamily: "'Playfair Display', Georgia, 'Times New Roman', serif" };
 const body = { fontFamily: "'Inter', 'Segoe UI', sans-serif" };
@@ -129,15 +135,6 @@ export default function ComplianceSummaryTab({
     return SUCCESS;
   };
 
-  const availableGrades = useMemo(() => {
-    const grades = new Set();
-    rows.forEach(row => {
-      const grade = row.year_level || row.yearLevel || row.grade;
-      if (grade) grades.add(grade);
-    });
-    return Array.from(grades).sort();
-  }, [rows]);
-
   const filteredRows = useMemo(() => {
     return rows.filter(row => {
       const name = (row.name || row.scholarName || row.full_name || '').toLowerCase();
@@ -147,7 +144,7 @@ export default function ComplianceSummaryTab({
 
       const searchTerm = nameSearch.toLowerCase();
       const matchesSearch = searchTerm === '' || name.includes(searchTerm) || studentId.includes(searchTerm);
-      const matchesGrade = gradeFilter === '' || grade === gradeFilter;
+      const matchesGrade = gradeFilter === '' || formatYearLevelLabel(grade) === gradeFilter;
       const matchesRisk = riskFilter === 'all' || risk === riskFilter;
 
       return matchesSearch && matchesGrade && matchesRisk;
@@ -212,7 +209,7 @@ export default function ComplianceSummaryTab({
           onBlur={e => { e.target.style.borderColor = BORDER; }}
         >
           <option value="">All Year Levels</option>
-          {availableGrades.map(grade => (
+          {COLLEGE_YEAR_LEVELS.map(grade => (
             <option key={grade} value={grade}>{grade}</option>
           ))}
         </select>

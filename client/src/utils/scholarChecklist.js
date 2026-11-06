@@ -2,6 +2,7 @@ const PORTAL_TYPE_TO_SUBMISSION_TYPE = {
   'Monthly Report': 'letter',
   'Report Card': 'report_card',
   'COR Upload': 'cor',
+  'Other Documents': 'other',
 };
 
 const latestSubmissionOfType = (history, submissionType, taskCreatedAt) => {
@@ -26,6 +27,19 @@ const normalizeReviewStatus = (item) => String(
 ).trim().toLowerCase();
 
 const isApprovedReviewStatus = (item) => ['approved', 'accepted', 'completed', 'complied'].includes(normalizeReviewStatus(item));
+
+const isPastDue = (dueDate) => {
+  if (!dueDate) return false;
+  const dateValue = dueDate instanceof Date
+    ? `${dueDate.getFullYear()}-${String(dueDate.getMonth() + 1).padStart(2, '0')}-${String(dueDate.getDate()).padStart(2, '0')}`
+    : String(dueDate).slice(0, 10);
+  const [year, month, day] = dateValue.split('-').map(Number);
+  if (!year || !month || !day) return false;
+  const dueDay = new Date(year, month - 1, day);
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return !Number.isNaN(dueDay.getTime()) && dueDay < todayStart;
+};
 
 export const buildScholarChecklist = ({ duties = [], history = [], grades = [], tasks = [] }) => {
   const dutyItems = duties.map((duty) => ({
@@ -54,16 +68,16 @@ export const buildScholarChecklist = ({ duties = [], history = [], grades = [], 
       const done = isApprovedReviewStatus(latest);
       const isGoogleClassroom = String(task.source || '').toLowerCase() === 'google_classroom';
       const dueDate = task.due_date || null;
-      const duePassed = dueDate && new Date(dueDate).getTime() < Date.now();
+      const duePassed = isPastDue(dueDate);
       const status = done
         ? 'completed'
-        : rawStatus === 'rejected'
+        : duePassed && (!latest || ['rejected', 'returned', 'needs_revision', 'needs-revision'].includes(rawStatus))
+          ? 'closed'
+          : ['rejected', 'returned', 'needs_revision', 'needs-revision'].includes(rawStatus)
           ? 'rejected'
           : latest
             ? 'pending_review'
-              : duePassed
-              ? 'missing'
-              : 'pending';
+            : 'pending';
 
       return {
         id: `portal-${task.id}`,

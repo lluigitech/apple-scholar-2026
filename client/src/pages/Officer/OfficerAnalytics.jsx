@@ -6,7 +6,7 @@ import {
 } from 'recharts';
 import {
   Download, TrendingUp, Users, FileText, AlertTriangle, BarChart3,
-  CalendarDays, ShieldCheck, PieChart as PieChartIcon,
+  ShieldCheck, PieChart as PieChartIcon,
 } from 'lucide-react';
 import { API_BASE, authHeaders } from '../../components/Officer/Reports/ReportsHelpers';
 import { formatYearLevelLabel } from '../../utils/yearLevelLabels';
@@ -270,7 +270,6 @@ const OfficerAnalytics = () => {
     axios.post(`${API_BASE}/export/google-sheets`, { log_only: true, module: 'Officer Analytics', report_resource: 'Analytics', spreadsheet_title: 'Officer Analytics Export', details: 'officer_analytics.csv' }, authHeaders()).catch(() => {});
   };
 
-  const todayLabel = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   const yearChartMinWidth = Math.max(480, yearLevelCompliance.length * 72);
   const hasBody = !loading && !error;
 
@@ -286,23 +285,14 @@ const OfficerAnalytics = () => {
 
       <div className="flex flex-col gap-4 px-4 py-5 sm:px-6 lg:px-8" style={{ minWidth: 0 }}>
 
-        {/* ── Standard Officer header: title card + date card ── */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_auto]">
+        {/* ── Standard Officer header ── */}
+        <div>
           <div style={{ ...tile, padding: '20px 24px' }}>
             <p style={{ ...sans, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.1em', color: GOLD }}>OFFICER PORTAL</p>
             <h1 style={{ ...serif, fontSize: '1.75rem', fontWeight: 700, color: MAROON_DEEP, marginTop: 4, lineHeight: 1.2 }}>Analytics</h1>
             <p style={{ ...sans, fontSize: '0.84rem', color: '#a89890', marginTop: 6, maxWidth: 640 }}>
               Track submission trends, compliance rates, and scholar performance.
             </p>
-          </div>
-          <div className="flex items-center gap-3" style={{ ...tile, padding: '16px 24px' }}>
-            <span className="inline-flex flex-shrink-0 items-center justify-center" style={{ width: 42, height: 42, borderRadius: 12, background: `${MAROON}10` }}>
-              <CalendarDays size={19} style={{ color: MAROON }} />
-            </span>
-            <div>
-              <p style={{ ...sans, fontSize: '0.68rem', color: '#a89890' }}>Today</p>
-              <p style={{ ...sans, fontSize: '0.92rem', fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>{todayLabel}</p>
-            </div>
           </div>
         </div>
 
@@ -375,7 +365,7 @@ const OfficerAnalytics = () => {
               <ChartCard icon={TrendingUp} title="Monthly Submissions Trend" description="Compliance and sentiment percentages per month.">
                 {displayTrend.length === 0 ? <EmptyNote>No submissions in this period.</EmptyNote> : (
                   <div style={{ width: '100%', height: 240, minWidth: 0 }}>
-                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 600, height: 240 }}>
                       <LineChart data={displayTrend}>
                         <CartesianGrid strokeDasharray="3 3" stroke={RULE} />
                         <XAxis dataKey="month" stroke="#a89890" style={chartStyle} />
@@ -395,7 +385,7 @@ const OfficerAnalytics = () => {
                 {monthlySubs.length === 0 ? <EmptyNote>No letters in this period.</EmptyNote> : (
                   <div className="flex flex-col items-center gap-4 sm:flex-row">
                     <div className="relative w-full sm:w-3/5" style={{ height: 220, minWidth: 0 }}>
-                      <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                      <ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 300, height: 220 }}>
                         <PieChart>
                           <Pie data={sentimentDist} cx="50%" cy="50%" innerRadius={52} outerRadius={84} dataKey="pct" label={({ value }) => `${value}%`} labelLine={false}>
                             {sentimentDist.map((e, i) => <Cell key={i} fill={e.color} />)}
@@ -468,7 +458,7 @@ const OfficerAnalytics = () => {
               {yearLevelCompliance.length === 0 ? <EmptyNote>No year-level data available.</EmptyNote> : (
                 <div className="oa-scroll overflow-x-auto">
                   <div style={{ minWidth: yearChartMinWidth, height: 260 }}>
-                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0} initialDimension={{ width: 600, height: 260 }}>
                       <AreaChart data={yearLevelCompliance} margin={{ top: 8, right: 16, left: 0, bottom: 4 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke={RULE} />
                         <XAxis dataKey="level" stroke="#a89890" style={chartStyle} interval={0} tickMargin={6} tickFormatter={(v) => formatYearLevelLabel(v)} />

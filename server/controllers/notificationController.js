@@ -3,6 +3,7 @@ const { URL } = require('url');
 const http = require('http');
 const https = require('https');
 const db = require('../config/db');
+const { buildTestEmail } = require('../utils/emailTemplates');
 
 const getTransporter = () => {
   const host = process.env.SMTP_HOST;
@@ -107,6 +108,7 @@ exports.testGmail = async (req, res) => {
         to,
         subject: 'Kalinga Scholar — Test Email',
         text: 'This is a test message from Kalinga Scholar notification system.',
+        html: buildTestEmail(),
       });
       sendInfo = info.messageId || info.response || info;
     } catch (sErr) {

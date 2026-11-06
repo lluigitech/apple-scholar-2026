@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Eye, X, ClipboardList, ArrowUpRight, FileDown, Search, CalendarDays, SlidersHorizontal,
-  RefreshCw, Clock3, AlertTriangle, CheckCircle2,
+  Eye, X, ClipboardList, ArrowUpRight, FileDown, Search, SlidersHorizontal,
+  Clock3, AlertTriangle, CheckCircle2,
 } from 'lucide-react';
 
 // ── Apple Scholar design system — same identity as Admin/Staff/Scholar ──
@@ -48,7 +48,7 @@ const saveStoredTasks = (storageKey, tasks) => {
   window.localStorage.setItem(storageKey, JSON.stringify(tasks));
 };
 
-const BOARD_TASK_TYPES = ['Monthly Report', 'Report Card', 'COR Upload'];
+const BOARD_TASK_TYPES = ['Monthly Report', 'Report Card', 'COR Upload', 'Other Documents'];
 const normalizeYearLevel = (value) => {
   const normalized = String(value || '').trim().toLowerCase().replace(/_/g, ' ');
   const aliases = {
@@ -97,6 +97,8 @@ const getTaskKeyForType = (type) => {
       return 'report_cards';
     case 'COR Upload':
       return 'cors';
+    case 'Other Documents':
+      return 'other_documents';
     default:
       return 'other_documents';
   }
@@ -146,14 +148,24 @@ const STATUS_BADGE = {
 const isPastDue = (dueDate) => {
   if (!dueDate) return false;
 
-  const parsed = new Date(dueDate);
-  if (Number.isNaN(parsed.getTime())) {
-    const fallback = new Date(`${dueDate}T23:59:59`);
-    if (Number.isNaN(fallback.getTime())) return false;
-    return new Date() > fallback;
+  const dateValue = dueDate instanceof Date
+    ? `${dueDate.getFullYear()}-${String(dueDate.getMonth() + 1).padStart(2, '0')}-${String(dueDate.getDate()).padStart(2, '0')}`
+    : String(dueDate).slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateValue);
+  if (match) {
+    const [, year, month, day] = match;
+    const dueDay = new Date(Number(year), Number(month) - 1, Number(day));
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    return todayStart > dueDay;
   }
 
-  return new Date() > parsed;
+  const parsed = new Date(dueDate);
+  if (Number.isNaN(parsed.getTime())) return false;
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const dueDay = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+  return todayStart > dueDay;
 };
 
 const formatDisplayDate = (value) => {
@@ -169,18 +181,16 @@ const formatDisplayDate = (value) => {
   return date.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
 };
 
-// Task classification — the single rule behind taskGroups, the row status
-// badges and the Status filter: complete when every eligible scholar is
-// accepted; otherwise overdue once the due date has passed; else in progress.
+// Completed tasks remain completed; unfinished tasks close when their deadline passes.
 const classifyTask = (task) => {
   const isComplete = task.total > 0 && task.submitted >= task.total;
   if (isComplete) return 'done';
-  return isPastDue(task.dueDate) ? 'overdue' : 'pending';
+  return isPastDue(task.dueDate) ? 'closed' : 'pending';
 };
 
 const TASK_STATUS_META = {
   pending: { label: 'In Progress', color: WARNING },
-  overdue: { label: 'Overdue', color: DANGER },
+  closed: { label: 'Closed', color: DANGER },
   done: { label: 'Completed', color: SUCCESS },
 };
 
@@ -188,6 +198,7 @@ const TYPE_COLORS = {
   'Monthly Report': PRIMARY,
   'Report Card': GOLD,
   'COR Upload': MUTED,
+  'Other Documents': '#565A8A',
 };
 
 // ── Year-level helpers (display + filtering; reuse normalizeYearLevel) ──
@@ -311,7 +322,6 @@ const TaskAssignmentBoard = ({ title, subtitle, role, storageKey }) => {
   const [tasks, setTasks] = useState(() => getStoredTasks(storageKey) || []);
   const [scholarData, setScholarData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const [showViewModal, setShowViewModal] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
   const [viewRows, setViewRows] = useState([]);
@@ -435,31 +445,23 @@ const TaskAssignmentBoard = ({ title, subtitle, role, storageKey }) => {
     };
   }, [showViewModal]);
 
-  // Presentation-only: spins the Refresh button icon and re-runs the exact
-  // same loadTasks() used everywhere else — no new request logic.
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    await loadTasks();
-    setTimeout(() => setRefreshing(false), 400);
-  };
-
   const taskGroups = useMemo(() => {
     const pending = [];
-    const overdue = [];
+    const closed = [];
     const done = [];
 
     tasks.forEach((task) => {
       const status = classifyTask(task);
       if (status === 'done') {
         done.push(task);
-      } else if (status === 'overdue') {
-        overdue.push(task);
+      } else if (status === 'closed') {
+        closed.push(task);
       } else {
         pending.push(task);
       }
     });
 
-    return { pending, overdue, done };
+    return { pending, closed, done };
   }, [tasks]);
 
   // Year-level options: every level that actually has scholars or is targeted by a task.
@@ -487,9 +489,6 @@ const TaskAssignmentBoard = ({ title, subtitle, role, storageKey }) => {
 
   // Any filter change returns to page 1.
   useEffect(() => { setPage(1); }, [search, typeFilter, statusFilter, yearFilter]);
-
-  const hasFilters = !!search || typeFilter !== 'all' || statusFilter !== 'all' || yearFilter !== 'all';
-  const resetFilters = () => { setSearch(''); setTypeFilter('all'); setStatusFilter('all'); setYearFilter('all'); };
 
   const pages = Math.max(1, Math.ceil(filteredTasks.length / PAGE_SIZE));
   const currentPage = Math.min(page, pages);
@@ -593,7 +592,6 @@ const TaskAssignmentBoard = ({ title, subtitle, role, storageKey }) => {
     setShowViewModal(true);
   };
 
-  const todayLabel = new Date().toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   const detailsOpen = showViewModal && !!selectedTask;
   const approvedRowCount = viewRows.filter((row) => row.statusKey === 'approved').length;
   const totalSubmissionCount = viewRows.reduce((sum, row) => sum + Number(row.count || 0), 0);
@@ -606,21 +604,12 @@ const TaskAssignmentBoard = ({ title, subtitle, role, storageKey }) => {
       <GlobalStyle />
       <div className="mx-auto flex flex-col gap-5" style={{ maxWidth: 1560 }}>
 
-        {/* ── Standard Officer header: title card + date card ── */}
-        <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-4">
+        {/* ── Standard Officer header ── */}
+        <div>
           <Card style={{ padding: '20px 24px' }}>
             <p style={{ ...body, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', color: GOLD }}>{role ? `${role} Portal` : 'Officer Portal'}</p>
             <h1 style={{ ...display, fontSize: '1.9rem', fontWeight: 700, color: INK, marginTop: 4, lineHeight: 1.15 }}>{title || 'Task Assignment'}</h1>
             <p style={{ ...body, fontSize: '0.85rem', color: MUTED, marginTop: 6 }}>{subtitle || 'Create and manage document submission tasks for your assigned scholars.'}</p>
-          </Card>
-          <Card className="flex items-center gap-3.5" style={{ padding: '16px 22px', minWidth: 230 }}>
-            <span className="flex items-center justify-center flex-shrink-0 rounded-full" style={{ width: 44, height: 44, background: `${PRIMARY}12`, color: PRIMARY }}>
-              <CalendarDays size={20} strokeWidth={1.8} />
-            </span>
-            <div>
-              <p style={{ ...body, fontSize: '0.7rem', color: MUTED }}>Today</p>
-              <p style={{ ...body, fontSize: '0.92rem', fontWeight: 600, color: INK }}>{todayLabel}</p>
-            </div>
           </Card>
         </div>
 
@@ -628,7 +617,7 @@ const TaskAssignmentBoard = ({ title, subtitle, role, storageKey }) => {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <KpiCard icon={ClipboardList} label="Total Tasks" value={tasks.length} color={PRIMARY} />
           <KpiCard icon={Clock3} label="In Progress" value={taskGroups.pending.length} color={WARNING} />
-          <KpiCard icon={AlertTriangle} label="Overdue" value={taskGroups.overdue.length} color={DANGER} />
+          <KpiCard icon={AlertTriangle} label="Closed" value={taskGroups.closed.length} color={DANGER} />
           <KpiCard icon={CheckCircle2} label="Completed" value={taskGroups.done.length} color={SUCCESS} />
         </div>
 
@@ -658,7 +647,7 @@ const TaskAssignmentBoard = ({ title, subtitle, role, storageKey }) => {
               <select className="ta-input" style={controlStyle} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} aria-label="Status">
                 <option value="all">All Statuses</option>
                 <option value="pending">In Progress</option>
-                <option value="overdue">Overdue</option>
+                <option value="closed">Closed</option>
                 <option value="done">Completed</option>
               </select>
             </FilterField>
@@ -668,14 +657,6 @@ const TaskAssignmentBoard = ({ title, subtitle, role, storageKey }) => {
                 {yearLevelOptions.map((k) => <option key={k} value={k}>{yearLevelLabel(k)}</option>)}
               </select>
             </FilterField>
-            <button type="button" onClick={resetFilters} disabled={!hasFilters} className="ta-btn"
-              style={{ ...outlineBtn, height: 40, padding: '0 16px', color: PRIMARY, border: `1px solid ${PRIMARY}`, opacity: hasFilters ? 1 : 0.5, cursor: hasFilters ? 'pointer' : 'default' }}>
-              Reset Filters
-            </button>
-            <button type="button" onClick={handleRefresh} className="ta-btn"
-              style={{ ...outlineBtn, height: 40, padding: '0 16px', color: '#fff', background: PRIMARY, border: `1px solid ${PRIMARY}` }}>
-              <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} /> Refresh
-            </button>
           </div>
         </Card>
 
@@ -747,7 +728,7 @@ const TaskAssignmentBoard = ({ title, subtitle, role, storageKey }) => {
                               <LevelChips keys={getTaskTargetKeys(task)} />
                               <p style={{ ...body, fontSize: '0.7rem', color: MUTED, marginTop: 3 }}>{task.total} scholar{task.total === 1 ? '' : 's'}</p>
                             </td>
-                            <td style={{ ...tdStyle, whiteSpace: 'nowrap', ...body, fontSize: '0.8rem', fontWeight: 600, color: status === 'overdue' ? DANGER : INK }}>
+                            <td style={{ ...tdStyle, whiteSpace: 'nowrap', ...body, fontSize: '0.8rem', fontWeight: 600, color: status === 'closed' ? DANGER : INK }}>
                               {formatDisplayDate(task.dueDate)}
                             </td>
                             <td style={tdStyle}><TaskStatusBadge status={status} /></td>
@@ -823,7 +804,7 @@ const TaskAssignmentBoard = ({ title, subtitle, role, storageKey }) => {
                       <TaskStatusBadge status={status} />
                     </div>
                     <p style={{ ...body, fontSize: '0.76rem', color: MUTED, marginTop: 4 }}>
-                      {selectedTask.isPastDue ? 'Due date has passed — final compliance list' : 'Real scholar submission breakdown for this task'}
+                      {status === 'closed' ? 'Deadline passed — submissions are closed; this is the final compliance list' : 'Real scholar submission breakdown for this task'}
                     </p>
 
                     <dl className="mt-4 grid gap-2.5" style={{ gridTemplateColumns: 'auto minmax(0, 1fr)', columnGap: 18 }}>
@@ -835,7 +816,7 @@ const TaskAssignmentBoard = ({ title, subtitle, role, storageKey }) => {
                         <span style={{ display: 'block', fontSize: '0.72rem', fontWeight: 400, color: MUTED, marginTop: 3 }}>{selectedTask.total} scholar{selectedTask.total === 1 ? '' : 's'}</span>
                       </dd>
                       <dt style={{ ...body, fontSize: '0.76rem', color: MUTED }}>Deadline</dt>
-                      <dd style={{ ...body, fontSize: '0.8rem', fontWeight: 600, color: status === 'overdue' ? DANGER : INK }}>{formatDisplayDate(selectedTask.dueDate)}</dd>
+                      <dd style={{ ...body, fontSize: '0.8rem', fontWeight: 600, color: status === 'closed' ? DANGER : INK }}>{formatDisplayDate(selectedTask.dueDate)}</dd>
                       <dt style={{ ...body, fontSize: '0.76rem', color: MUTED }}>Recurring</dt>
                       <dd style={{ ...body, fontSize: '0.8rem', fontWeight: 600, color: INK }}>{selectedTask.recurring}</dd>
                     </dl>

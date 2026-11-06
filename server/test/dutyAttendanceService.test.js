@@ -41,7 +41,7 @@ const invokeCheckout = () => new Promise(resolve => {
   checkOutDutyAttendance(18, 'SCH-18', (error, result) => resolve({ error, result }));
 });
 
-test('make-up duty check-out requires one hour after the scheduled end', async () => {
+test('make-up duty check-out is available at the scheduled end', async () => {
   attendanceRow = {
     id: 8,
     status: 'present',
@@ -55,11 +55,11 @@ test('make-up duty check-out requires one hour after the scheduled end', async (
   const response = await invokeCheckout();
 
   assert.equal(response.error.status, 409);
-  assert.match(response.error.error, /one hour after the scheduled duty ends/);
+  assert.match(response.error.error, /after the scheduled duty ends/);
   assert.equal(updateCalled, false);
 });
 
-test('make-up duty can be checked out after the extra hour', async () => {
+test('make-up duty can be checked out after the scheduled end', async () => {
   attendanceRow = {
     id: 8,
     status: 'late',
@@ -121,7 +121,7 @@ test('automatically checks out present scholars after the grace period using sch
   assert.match(autoCheckoutSql, /UPDATE duty_attendance da/);
   assert.match(autoCheckoutSql, /DATE_ADD\(UTC_TIMESTAMP\(\), INTERVAL 8 HOUR\)/);
   assert.match(autoCheckoutSql, /INTERVAL 15 MINUTE/);
-  assert.match(autoCheckoutSql, /SET da\.check_out_at = CASE/);
-  assert.match(autoCheckoutSql, /COALESCE\(da\.is_makeup, 0\) = 1/);
+  assert.match(autoCheckoutSql, /SET da\.check_out_at = TIMESTAMP\(d\.duty_date, COALESCE\(d\.time_end, '23:59:59'\)\)/);
+  assert.match(autoCheckoutSql, /DATE_ADD\(TIMESTAMP\(d\.duty_date, COALESCE\(d\.time_end, '23:59:59'\)\), INTERVAL 15 MINUTE\)/);
   assert.match(autoCheckoutSql, /da\.check_out_at IS NULL/);
 });

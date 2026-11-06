@@ -72,6 +72,9 @@ router.post('/submit', rateLimit({ windowMs: 60 * 60 * 1000, max: 10, message: '
 // SCORE LETTER (Scholar-only) — safe model score preview route
 router.post('/score', scoreLimiter, verifyToken, requireRole(['scholar']), submissionController.predictLetterScore);
 
+// Active assigned task deadline state for the authenticated scholar.
+router.get('/deadlines', verifyToken, requireRole(['scholar']), submissionController.getScholarTaskDeadlines);
+
 // HISTORY (Owner or Staff/Admin)
 router.get('/history/:scholar_id', verifyToken, authorizeScholarAccess({
     getScholarId: (req) => req.params.scholar_id,
@@ -82,17 +85,17 @@ router.get('/history/:scholar_id', verifyToken, authorizeScholarAccess({
 // PREVIEW FILE (used by the officer/scholar review UI to show uploaded files inline)
 router.get('/preview', verifyToken, submissionController.previewCloudinaryFile);
 
-// Letter review data is available to Officers and Admins; Staff handle attendance only.
+// Officer task and document workflows are scoped to their assigned year levels.
 router.get('/all', verifyToken, requireRole(['admin', 'officer'], { action: 'VIEW_LETTER', resourceType: 'letter' }), submissionController.getAllSubmissions);
 router.get('/letters', verifyToken, requireRole(['admin', 'officer'], { action: 'VIEW_LETTER', resourceType: 'letter' }), submissionController.getLetters);
-router.get('/scholar-view', verifyToken, requireRole(['admin', 'officer'], { action: 'VIEW_LETTER', resourceType: 'letter' }), submissionController.getScholarSubmissions);
+router.get('/scholar-view', verifyToken, requireRole(['officer'], { action: 'VIEW_SCHOLAR', resourceType: 'submission_report' }), submissionController.getScholarSubmissions);
 router.post('/archive/bulk', verifyToken, requireRole(['admin']), submissionController.archiveSubmissionsBulk);
 router.put('/archive/:id/restore', verifyToken, requireRole(['admin']), archiveController.restoreSubmission);
 
 // REVIEW SUBMISSION (Admin/Officer)
-router.put('/review/:id', verifyToken, requireRole(['admin', 'officer'], {
-    action: 'VALIDATE_LETTER',
-    resourceType: 'letter',
+router.put('/review/:id', verifyToken, requireRole(['officer'], {
+    action: 'VALIDATE_SUBMISSION',
+    resourceType: 'submission',
     logAllowed: false,
 }), submissionController.reviewSubmission);
 
@@ -102,7 +105,10 @@ router.get('/generate-pdf/:id', verifyToken, requireRole(['admin', 'officer'], {
     resourceType: 'letter',
     logAllowed: false,
 }), submissionController.getOrGenerateSubmissionPdf);
+router.post('/letters/pdf', verifyToken, requireRole(['admin'], { action: 'DOWNLOAD_DOCUMENT', resourceType: 'letter' }), submissionController.downloadMonthlyLetterPdf);
 router.post('/letters/bulk-pdf', verifyToken, requireRole(['admin'], { action: 'DOWNLOAD_DOCUMENT', resourceType: 'letter' }), submissionController.downloadMonthlyLetterPdfs);
+router.post('/letters/docx', verifyToken, requireRole(['admin'], { action: 'DOWNLOAD_DOCUMENT', resourceType: 'letter' }), submissionController.downloadMonthlyLetterDocx);
+router.post('/letters/bulk-docx', verifyToken, requireRole(['admin'], { action: 'DOWNLOAD_DOCUMENT', resourceType: 'letter' }), submissionController.downloadMonthlyLetterDocxs);
 
 // ALL GRADES (Admin)
 // NOTE: Must come BEFORE /grades/:scholar_id to avoid being shadowed by the :scholar_id parameter
@@ -130,7 +136,7 @@ router.get('/grades/:scholar_id/check/:semester/:academic_year', verifyToken, re
 router.post('/grades/submit', rateLimit({ windowMs: 60 * 60 * 1000, max: 10, message: 'Upload limit reached. Please try again later.' }), verifyToken, requireRole(['scholar']), uploadCloud.single('proof'), validateUploadedFileSignatures, scanUploadedFiles, submissionController.submitGrades);
 router.post('/grades/submit-resumable', rateLimit({ windowMs: 60 * 60 * 1000, max: 10, message: 'Upload limit reached. Please try again later.' }), verifyToken, requireRole(['scholar']), uploadCloud.none(), submissionController.submitGradesResumable);
 
-// REVIEW GRADES (Admin)
-router.put('/grades/review', verifyToken, requireRole(['admin']), submissionController.reviewGrades);
+// REVIEW GRADES (Officer)
+router.put('/grades/review', verifyToken, requireRole(['officer']), submissionController.reviewGrades);
 
 module.exports = router;

@@ -7,9 +7,12 @@ const submissionUi = fs.readFileSync(
   'utf8'
 );
 
-assert.ok(submissionUi.includes('70% weight'), 'Submission UI should describe the report/media split as 70% Report and 30% Media');
-assert.ok(submissionUi.includes('30% weight'), 'Submission UI should describe the report/media split as 70% Report and 30% Media');
-assert.ok(!submissionUi.includes('75% weight'), 'Submission UI must not describe the report/media split incorrectly as 75%/25%');
-assert.ok(!submissionUi.includes('25% weight'), 'Submission UI must not describe the report/media split incorrectly as 75%/25%');
+assert.ok(submissionUi.includes('70 pts'), 'Report should have 70 points');
+assert.ok(submissionUi.includes('20 pts'), 'Media should have 20 points');
+assert.ok(submissionUi.includes('10 pts'), 'Information should have 10 points');
+
+assert.ok(!submissionUi.includes('75% weight'), 'Incorrect 75% report weight');
+assert.ok(!submissionUi.includes('25% weight'), 'Incorrect 25% media weight');
+assert.ok(!submissionUi.includes('30% weight'), 'Incorrect 30% media weight');
 
 console.log('submissionUiWeightRegression test passed');

@@ -65,11 +65,12 @@ test('officer profile is loaded using the authenticated identity and assignment 
   queryCalls.length = 0;
   promiseQuery = async sql => {
     assert.match(sql, /WHERE id = \? AND role = 'officer'/);
+    assert.match(sql, /scholar_id AS officer_id/);
+    assert.doesNotMatch(sql, /SELECT\s+id\s+AS\s+officer_id/);
     return [[{
-      officer_id: 8,
+      officer_id: 'OFF-2026-0001',
       full_name: 'Officer Name',
       email: 'officer@example.test',
-      contact_number: '09123456789',
       role: 'officer',
     }], []];
   };
@@ -79,7 +80,8 @@ test('officer profile is loaded using the authenticated identity and assignment 
   });
 
   assert.equal(response.statusCode, 200);
-  assert.equal(response.body.officer_id, 8);
+  assert.equal(response.body.officer_id, 'OFF-2026-0001');
+  assert.equal(Object.prototype.hasOwnProperty.call(response.body, 'contact_number'), false);
   assert.deepEqual(response.body.assigned_year_levels, ['Grade 12']);
 });
 
@@ -90,7 +92,6 @@ test('officer profile update rejects privilege fields before writing', async () 
     body: {
       full_name: 'Officer Name',
       email: 'officer@example.test',
-      contact_number: '',
       role: 'admin',
     },
   });
@@ -99,9 +100,48 @@ test('officer profile update rejects privilege fields before writing', async () 
   assert.equal(queryCalls.length, 0);
 });
 
+test('Officer settings password verification accepts the current password and rejects an incorrect one', async () => {
+  queryCalls.length = 0;
+  promiseQuery = async () => [[{ password: 'current-password' }], []];
+
+  const valid = await invoke(officerSettingsController.verifyPassword, {
+    user: { id: 8, role: 'officer' },
+    body: { currentPassword: 'current-password' },
+  });
+  const invalid = await invoke(officerSettingsController.verifyPassword, {
+    user: { id: 8, role: 'officer' },
+    body: { currentPassword: 'wrong-password' },
+  });
+
+  assert.equal(valid.statusCode, 200);
+  assert.deepEqual(valid.body, { verified: true });
+  assert.equal(invalid.statusCode, 401);
+  assert.match(invalid.body.error, /password is incorrect/i);
+});
+
+test('officer profile cannot be changed with an incorrect current password', async () => {
+  queryCalls.length = 0;
+  promiseQuery = async sql => {
+    assert.match(sql, /^SELECT password FROM users/);
+    return [[{ password: 'current-password' }], []];
+  };
+  const response = await invoke(officerSettingsController.updateProfile, {
+    user: { id: 8, role: 'officer' },
+    body: {
+      full_name: 'Changed Name',
+      email: 'officer@example.test',
+      currentPassword: 'wrong-password',
+    },
+  });
+
+  assert.equal(response.statusCode, 401);
+  assert.equal(queryCalls.some(({ sql }) => sql.startsWith('UPDATE users')), false);
+});
+
 test('officer profile update trims fields and scopes the database update to the authenticated officer', async () => {
   queryCalls.length = 0;
   promiseQuery = async sql => {
+    if (sql.startsWith('SELECT password FROM users')) return [[{ password: 'current-password' }], []];
     assert.match(sql, /WHERE id = \? AND role = 'officer'/);
     return [{ affectedRows: 1 }, []];
   };
@@ -111,7 +151,7 @@ test('officer profile update trims fields and scopes the database update to the 
     body: {
       full_name: '  Officer Name  ',
       email: '  OFFICER@example.test ',
-      contact_number: '  09123456789 ',
+      currentPassword: 'current-password',
     },
   });
 
@@ -119,20 +159,22 @@ test('officer profile update trims fields and scopes the database update to the 
   assert.deepEqual(response.body, {
     full_name: 'Officer Name',
     email: 'officer@example.test',
-    contact_number: '09123456789',
   });
-  assert.deepEqual(queryCalls[0].values, ['Officer Name', 'officer@example.test', '09123456789', 8]);
+  const update = queryCalls.find(({ sql }) => sql.startsWith('UPDATE users'));
+  assert.match(update.sql, /SET full_name = \?, email = \?/);
+  assert.doesNotMatch(update.sql, /phone/i);
+  assert.deepEqual(update.values, ['Officer Name', 'officer@example.test', 8]);
 });
 
 test('officer profile update treats an unchanged profile as successful', async () => {
   queryCalls.length = 0;
   promiseQuery = async sql => {
+    if (sql.startsWith('SELECT password FROM users')) return [[{ password: 'current-password' }], []];
     if (sql.startsWith('UPDATE users')) return [{ affectedRows: 0 }, []];
     if (sql.startsWith('SELECT id FROM users')) return [[{ id: 8 }], []];
     return [[{
       full_name: 'Officer Name',
       email: 'officer@example.test',
-      contact_number: '',
     }], []];
   };
 
@@ -141,12 +183,12 @@ test('officer profile update treats an unchanged profile as successful', async (
     body: {
       full_name: 'Officer Name',
       email: 'officer@example.test',
-      contact_number: '',
+      currentPassword: 'current-password',
     },
   });
 
   assert.equal(response.statusCode, 200);
-  assert.equal(queryCalls.length, 3);
+  assert.equal(queryCalls.length, 4);
 });
 
 test('notification preferences are loaded and saved per authenticated officer', async () => {
@@ -159,7 +201,6 @@ test('notification preferences are loaded and saved per authenticated officer', 
       new_submissions: 1,
       pending_reviews: 0,
       deadlines: 1,
-      returned_submissions: 0,
       announcements: 1,
     }], []];
   };
@@ -171,12 +212,12 @@ test('notification preferences are loaded and saved per authenticated officer', 
     new_submissions: true,
     pending_reviews: false,
     deadlines: true,
-    returned_submissions: false,
     announcements: true,
   });
 
   queryCalls.length = 0;
   promiseQuery = async sql => {
+    if (sql.startsWith('SELECT password FROM users')) return [[{ password: 'current-password' }], []];
     if (sql.includes('INSERT INTO officer_notification_preferences')) {
       assert.match(sql, /ON DUPLICATE KEY UPDATE/);
       return [{ affectedRows: 1 }, []];
@@ -188,16 +229,21 @@ test('notification preferences are loaded and saved per authenticated officer', 
     new_submissions: false,
     pending_reviews: true,
     deadlines: false,
-    returned_submissions: true,
     announcements: false,
+    currentPassword: 'current-password',
   };
   const putResponse = await invoke(officerSettingsController.updateNotificationPreferences, {
     user: { id: 8, role: 'officer' },
     body: settings,
   });
   assert.equal(putResponse.statusCode, 200);
-  assert.deepEqual(putResponse.body, settings);
-  assert.equal(queryCalls[0].values.at(-1), 8);
+  assert.deepEqual(putResponse.body, {
+    new_submissions: false,
+    pending_reviews: true,
+    deadlines: false,
+    announcements: false,
+  });
+  assert.equal(queryCalls.find(({ sql }) => sql.startsWith('INSERT INTO officer_notification_preferences')).values.at(-1), 8);
 });
 
 test('password change verifies current password and uses the shared auth handler', async () => {
@@ -236,6 +282,7 @@ test('Officer Settings routes are role-protected and reuse the shared password h
   assert.match(officerRoutes, /router\.get\('\/profile', officerSettingsController\.getProfile\)/);
   assert.match(officerRoutes, /router\.put\('\/profile', officerSettingsController\.updateProfile\)/);
   assert.match(officerRoutes, /router\.post\('\/change-password', authController\.changePassword\)/);
+  assert.match(officerRoutes, /router\.post\('\/settings\/verify-password', officerSettingsController\.verifyPassword\)/);
   assert.match(officerRoutes, /router\.get\('\/settings\/notifications', officerSettingsController\.getNotificationPreferences\)/);
   assert.match(officerRoutes, /router\.put\('\/settings\/notifications', officerSettingsController\.updateNotificationPreferences\)/);
   assert.match(authRoutes, /router\.post\('\/change-password', verifyToken, authController\.changePassword\)/);

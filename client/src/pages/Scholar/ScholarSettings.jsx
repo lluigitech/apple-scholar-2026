@@ -1,19 +1,41 @@
 ﻿import { useState, useEffect } from 'react';
 import axios from 'axios';
 import {
-    Lock, Eye, EyeOff,
-    ShieldCheck, Bell, User, ChevronRight, KeyRound, Download, Trash2,
+    Lock, Eye, EyeOff, Mail, Phone, Hash, GraduationCap,
+    Bell, User, KeyRound, X,
+    CheckCircle2, AlertCircle, RotateCcw, Save, ClipboardList, ClipboardCheck, Megaphone, CalendarClock,
 } from 'lucide-react';
 
 const API_BASE = 'http://localhost:5000/api';
+const YEAR_LEVEL_OPTIONS = [
+    { value: 'grade_7', label: 'Grade 7' },
+    { value: 'grade_8', label: 'Grade 8' },
+    { value: 'grade_9', label: 'Grade 9' },
+    { value: 'grade_10', label: 'Grade 10' },
+    { value: 'grade_11', label: 'Grade 11' },
+    { value: 'grade_12', label: 'Grade 12' },
+    { value: 'college_1', label: '1st Year College' },
+    { value: 'college_2', label: '2nd Year College' },
+    { value: 'college_3', label: '3rd Year College' },
+    { value: 'college_4', label: '4th Year College' },
+    { value: 'college_5', label: '5th Year College' },
+];
 
-// ── Scholar Portal design system — same tokens as ScholarProfile /
-// ScholarNotification, so this page reads as one continuous workspace. ──
+const normalizeYearLevelValue = (value) => {
+    const normalized = String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
+    return YEAR_LEVEL_OPTIONS.find(option =>
+        option.value === normalized || option.label.toLowerCase().replace(/\s+/g, '_') === normalized
+    )?.value || '';
+};
+
+// ── Scholar Portal design system — same tokens as the Scholar Dashboard ──
 const BG = '#F7F4EE';
 const SURFACE = '#FFFDF9';
 const BORDER = '#E7D8C7';
 const PRIMARY = '#6D2140';
 const PRIMARY_DARK = '#4A1730';
+const PRIMARY_ACCENT = '#7C2D4C';
+const GOLD = '#E4C28F';
 const BRONZE = '#A9784E';
 const SUCCESS = '#6B8F71';
 const WARNING = '#C08A3E';
@@ -25,13 +47,89 @@ const RADIUS = 18;
 const display = { fontFamily: "'Playfair Display', Georgia, serif" };
 const body = { fontFamily: "'Inter', -apple-system, 'Segoe UI', sans-serif" };
 
+const cardShadow = '0 1px 2px rgba(36,21,18,0.04), 0 12px 28px -24px rgba(74,23,48,0.3)';
+
 const authHeader = () => {
     const token = localStorage.getItem('token');
     return token ? { Authorization: `Bearer ${token}` } : {};
 };
 
-// Password-strength dial — same semi-circle gauge motif used for the
-// compliance score on the Profile page, recolored for this context.
+// ─── Reusable building blocks ───────────────────────────────────────────
+
+const IconChip = ({ icon: Icon, color = PRIMARY, size = 38 }) => (
+    <span className="flex items-center justify-center flex-shrink-0" style={{ width: size, height: size, borderRadius: 11, background: `${color}12`, border: `1px solid ${color}22` }}>
+        <Icon size={size > 34 ? 17 : 15} style={{ color }} />
+    </span>
+);
+
+const Label = ({ htmlFor, children, hint }) => (
+    <div className="flex items-center justify-between gap-2" style={{ marginBottom: 6 }}>
+        <label htmlFor={htmlFor} style={{ ...body, fontSize: '0.72rem', fontWeight: 600, color: MUTED }}>{children}</label>
+        {hint && <span style={{ ...body, fontSize: '0.66rem', color: '#B8AA9B' }}>{hint}</span>}
+    </div>
+);
+
+const IconInput = ({ icon: Icon, trailing, className = '', ...props }) => (
+    <div className="relative">
+        <Icon size={15} className="absolute pointer-events-none" style={{ left: 14, top: '50%', transform: 'translateY(-50%)', color: MUTED }} />
+        <input {...props} className={`st-field ${className}`} style={{ paddingLeft: 40, paddingRight: trailing ? 44 : 14, ...(props.style || {}) }} />
+        {trailing}
+    </div>
+);
+
+const EyeButton = ({ shown, onClick }) => (
+    <button type="button" onClick={onClick} aria-label={shown ? 'Hide password' : 'Show password'} className="st-eye absolute flex items-center justify-center" style={{ right: 6, top: 4, width: 36, height: 36, background: 'none', border: 'none', cursor: 'pointer', color: MUTED }}>
+        {shown ? <EyeOff size={16} /> : <Eye size={16} />}
+    </button>
+);
+
+const Toggle = ({ checked, onChange, label }) => (
+    <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        aria-label={label}
+        onClick={onChange}
+        className="st-toggle relative"
+        style={{ width: 44, height: 26, borderRadius: 999, background: checked ? PRIMARY : '#D9CBB9', border: 'none', cursor: 'pointer', flexShrink: 0, transition: 'background .25s ease' }}
+    >
+        <span
+            className="absolute"
+            style={{ top: 3, width: 20, height: 20, borderRadius: '50%', boxShadow: '0 1px 3px rgba(36,21,18,0.3)', left: checked ? 21 : 3, background: '#fff', transition: 'left .25s ease' }}
+        />
+    </button>
+);
+
+const Banner = ({ type, children }) => {
+    const color = type === 'error' ? DANGER : SUCCESS;
+    const Icon = type === 'error' ? AlertCircle : CheckCircle2;
+    return (
+        <div role={type === 'error' ? 'alert' : 'status'} className="flex items-start gap-2" style={{ background: `${color}0d`, border: `1px solid ${color}30`, color, borderRadius: 12, padding: '10px 14px', ...body, fontSize: '0.8rem', fontWeight: 500 }}>
+            <Icon size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span className="min-w-0" style={{ overflowWrap: 'anywhere' }}>{children}</span>
+        </div>
+    );
+};
+
+// Section card: tinted header with icon chip, body, optional footer actions.
+const Card = ({ icon, title, description, children, footer, accent = PRIMARY }) => (
+    <section className="min-w-0" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, boxShadow: cardShadow, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div className="flex items-center gap-3 px-5 sm:px-6" style={{ paddingTop: 18, paddingBottom: 16, borderBottom: `1px solid ${BORDER}`, background: `linear-gradient(180deg, ${accent}0A, transparent)` }}>
+            <IconChip icon={icon} color={accent} />
+            <div className="min-w-0">
+                <h2 style={{ ...display, fontSize: '1.1rem', fontWeight: 600, color: INK, lineHeight: 1.25 }}>{title}</h2>
+                <p style={{ ...body, fontSize: '0.74rem', color: MUTED, marginTop: 2 }}>{description}</p>
+            </div>
+        </div>
+        <div style={{ flex: 1 }}>{children}</div>
+        {footer && (
+            <div className="px-5 sm:px-6" style={{ paddingTop: 14, paddingBottom: 14, background: BG, borderTop: `1px solid ${BORDER}` }}>
+                {footer}
+            </div>
+        )}
+    </section>
+);
+
 const StrengthDial = ({ level, color }) => {
     const angle = -60 + (level / 4) * 120;
     return (
@@ -57,54 +155,22 @@ const StrengthDial = ({ level, color }) => {
     );
 };
 
-// Section tabs — doubles as this page's "toolbar" row, since there is no
-// searchable record list here to filter.
-const SectionTabs = ({ tabs, active, onSelect }) => (
-    <div className="inline-flex flex-wrap" style={{ background: BG, border: `1px solid ${BORDER}`, borderRadius: 999, padding: 3, gap: 2 }}>
-        {tabs.map((tab) => {
-            const isActive = active === tab.key;
-            return (
-                <button
-                    key={tab.key}
-                    onClick={() => onSelect(tab.key)}
-                    className="flex items-center gap-1.5 transition-all"
-                    style={{
-                        ...body, fontSize: '0.78rem', fontWeight: 600,
-                        padding: '8px 14px', borderRadius: 999, border: 'none', cursor: 'pointer',
-                        color: isActive ? '#fff' : MUTED,
-                        background: isActive ? `linear-gradient(120deg, ${PRIMARY} 0%, ${PRIMARY_DARK} 100%)` : 'transparent',
-                        whiteSpace: 'nowrap',
-                    }}
-                >
-                    <tab.icon size={13} />
-                    {tab.label}
-                </button>
-            );
-        })}
-    </div>
-);
+const DEFAULT_NOTIFS = {
+    deadline_reminders: true,
+    submission_updates: true,
+    announcement_alerts: true,
+    duty_reminders: true,
+};
 
-const ToggleSwitch = ({ checked, onChange }) => (
-    <button
-        onClick={onChange}
-        className="relative transition-all duration-300"
-        style={{ width: 42, height: 24, borderRadius: 999, background: checked ? PRIMARY : BORDER, border: 'none', cursor: 'pointer', flexShrink: 0 }}
-    >
-        <span
-            className="absolute top-1 transition-all duration-300"
-            style={{ width: 16, height: 16, borderRadius: '50%', boxShadow: '0 1px 2px rgba(36,21,18,0.3)', left: checked ? 22 : 4, background: '#fff' }}
-        />
-    </button>
-);
-
-const fieldLabelStyle = { ...body, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.04em', color: MUTED, marginBottom: 6, display: 'block' };
-const inputStyle = { width: '100%', paddingBottom: 10, border: 'none', borderBottom: `1.5px solid ${BORDER}`, background: 'none', outline: 'none', ...body, fontSize: '0.85rem', color: INK };
-const onInputFocus = (e) => (e.target.style.borderBottom = `1.5px solid ${PRIMARY}`);
-const onInputBlur = (e) => (e.target.style.borderBottom = `1.5px solid ${BORDER}`);
+const NOTIF_ITEMS = [
+    { key: 'deadline_reminders', label: 'Deadline Reminders', desc: 'Get notified before submission deadlines', icon: CalendarClock },
+    { key: 'submission_updates', label: 'Submission Status Updates', desc: 'Get notified when staff reviews your submission', icon: ClipboardCheck },
+    { key: 'announcement_alerts', label: 'Announcement Alerts', desc: 'Get notified for new foundation announcements', icon: Megaphone },
+    { key: 'duty_reminders', label: 'Duty Reminders', desc: 'Get notified for upcoming duty assignments', icon: ClipboardList },
+];
 
 const ScholarSettings = () => {
     const userId = localStorage.getItem('id');
-    const [activeTab, setActiveTab] = useState('profile');
 
     const [profile, setProfile] = useState({
         fullName: localStorage.getItem('name') || '',
@@ -112,14 +178,17 @@ const ScholarSettings = () => {
         age: localStorage.getItem('age') || '',
         phone: localStorage.getItem('phone') || '',
         studentId: localStorage.getItem('scholar_id') || '',
-        yearLevel: localStorage.getItem('year_level') || '',
+        yearLevel: normalizeYearLevelValue(localStorage.getItem('year_level')),
         status: 'Active',
     });
+    const [savedProfile, setSavedProfile] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [profileSuccess, setProfileSuccess] = useState('');
     const [profileError, setProfileError] = useState('');
+    const [profileSaving, setProfileSaving] = useState(false);
 
+    const [showPasswordModal, setShowPasswordModal] = useState(false);
     const [currentPassword, setCurrentPassword] = useState('');
     const [newPassword, setNewPassword] = useState('');
     const [confirmPassword, setConfirmPassword] = useState('');
@@ -130,17 +199,9 @@ const ScholarSettings = () => {
     const [passwordSuccess, setPasswordSuccess] = useState('');
     const [passwordError, setPasswordError] = useState('');
 
-    const [notifSettings, setNotifSettings] = useState({
-        deadline_reminders: true,
-        submission_updates: true,
-        announcement_alerts: true,
-        duty_reminders: true,
-    });
+    const [notifSettings, setNotifSettings] = useState(DEFAULT_NOTIFS);
+    const [savedNotifSettings, setSavedNotifSettings] = useState(DEFAULT_NOTIFS);
     const [notifSuccess, setNotifSuccess] = useState('');
-    const [dataConsent, setDataConsent] = useState({ consented: false, consented_at: null });
-    const [consentLoading, setConsentLoading] = useState(false);
-    const [consentMessage, setConsentMessage] = useState('');
-    const [privacyRequestLoading, setPrivacyRequestLoading] = useState(false);
 
     useEffect(() => {
         const loadSettings = async () => {
@@ -161,12 +222,12 @@ const ScholarSettings = () => {
                     fullName: data.full_name || prev.fullName,
                     email: data.email || prev.email,
                     age: data.age ?? prev.age,
+                    phone: data.phone ?? prev.phone,
                     studentId: data.scholar_id || prev.studentId,
-                    yearLevel: data.year_level || prev.yearLevel,
+                    yearLevel: normalizeYearLevelValue(data.year_level) || prev.yearLevel,
                     status: data.status || prev.status,
                 }));
-                const consentRes = await axios.get(`${API_BASE}/scholar/data-consent`, { headers: authHeader() });
-                setDataConsent({ consented: Boolean(consentRes.data?.consented), consented_at: consentRes.data?.consented_at || null });
+                if (data.year_level) localStorage.setItem('year_level', data.year_level);
             } catch (err) {
                 console.error('Error loading scholar profile', err);
                 setError('Unable to load profile data. Please refresh or log in again.');
@@ -177,7 +238,9 @@ const ScholarSettings = () => {
             const savedNotif = localStorage.getItem('notif_settings');
             if (savedNotif) {
                 try {
-                    setNotifSettings(JSON.parse(savedNotif));
+                    const parsed = JSON.parse(savedNotif);
+                    setNotifSettings(parsed);
+                    setSavedNotifSettings(parsed);
                 } catch (ignored) {
                     console.warn('Unable to restore notification preferences:', ignored);
                 }
@@ -186,6 +249,18 @@ const ScholarSettings = () => {
 
         loadSettings();
     }, [userId]);
+
+    useEffect(() => {
+        if (!loading) {
+            setSavedProfile({ fullName: profile.fullName, email: profile.email, phone: profile.phone, yearLevel: profile.yearLevel });
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [loading]);
+
+    const profileDirty = savedProfile
+        ? ['fullName', 'email', 'phone', 'yearLevel'].some((k) => profile[k] !== savedProfile[k])
+        : false;
+    const notifDirty = JSON.stringify(notifSettings) !== JSON.stringify(savedNotifSettings);
 
     const getPasswordStrength = (pass) => {
         if (!pass) return { level: 0, label: '', color: '' };
@@ -203,7 +278,7 @@ const ScholarSettings = () => {
 
     const strength = getPasswordStrength(newPassword);
 
-    const handleSaveProfile = () => {
+    const handleSaveProfile = async () => {
         setProfileError('');
         setProfileSuccess('');
 
@@ -212,10 +287,68 @@ const ScholarSettings = () => {
             return;
         }
 
-        localStorage.setItem('name', profile.fullName);
-        localStorage.setItem('email', profile.email);
-        setProfileSuccess('Profile details updated locally.');
-        setTimeout(() => setProfileSuccess(''), 3000);
+        const updates = {
+            full_name: profile.fullName.trim(),
+            email: profile.email.trim(),
+            phone: profile.phone,
+        };
+        if (profile.yearLevel) updates.year_level = profile.yearLevel;
+
+        try {
+            setProfileSaving(true);
+            const response = await axios.patch(
+                `${API_BASE}/scholar/profile/${userId}`,
+                updates,
+                { headers: authHeader() }
+            );
+            const data = response.data || {};
+            const nextFullName = data.full_name || updates.full_name;
+            const nextEmail = data.email || updates.email;
+            const nextPhone = data.phone ?? updates.phone;
+            const nextYearLevel = normalizeYearLevelValue(data.year_level) || profile.yearLevel;
+            setProfile(current => ({
+                ...current,
+                fullName: nextFullName,
+                email: nextEmail,
+                phone: nextPhone,
+                yearLevel: normalizeYearLevelValue(data.year_level) || current.yearLevel,
+            }));
+            setSavedProfile({ fullName: nextFullName, email: nextEmail, phone: nextPhone, yearLevel: nextYearLevel });
+            localStorage.setItem('name', data.full_name || updates.full_name);
+            localStorage.setItem('email', data.email || updates.email);
+            if (data.year_level) localStorage.setItem('year_level', data.year_level);
+            setProfileSuccess('Profile updated successfully.');
+            setTimeout(() => setProfileSuccess(''), 3000);
+        } catch (err) {
+            setProfileError(err.response?.data?.error || err.response?.data?.message || 'Unable to update profile. Please try again.');
+        } finally {
+            setProfileSaving(false);
+        }
+    };
+
+    const handleResetProfile = () => {
+        if (!savedProfile) return;
+        setProfile((current) => ({ ...current, ...savedProfile }));
+        setProfileError('');
+        setProfileSuccess('');
+    };
+
+    const openPasswordModal = () => {
+        setPasswordError('');
+        setPasswordSuccess('');
+        setShowPasswordModal(true);
+    };
+
+    const closePasswordModal = () => {
+        setShowPasswordModal(false);
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+        setShowCurrent(false);
+        setShowNew(false);
+        setShowConfirm(false);
+        setPasswordError('');
+        setPasswordSuccess('');
     };
 
     const handleChangePassword = async () => {
@@ -250,7 +383,7 @@ const ScholarSettings = () => {
             setCurrentPassword('');
             setNewPassword('');
             setConfirmPassword('');
-            setTimeout(() => setPasswordSuccess(''), 4000);
+            setTimeout(() => closePasswordModal(), 1500);
         } catch (err) {
             setPasswordError(err.response?.data?.error || err.response?.data?.message || 'Unable to change password. Please try again.');
         } finally {
@@ -260,378 +393,354 @@ const ScholarSettings = () => {
 
     const handleSaveNotifications = () => {
         localStorage.setItem('notif_settings', JSON.stringify(notifSettings));
+        setSavedNotifSettings(notifSettings);
         setNotifSuccess('Notification preferences saved!');
         setTimeout(() => setNotifSuccess(''), 3000);
     };
 
-    const handleConsentChange = async () => {
-        setConsentLoading(true);
-        setConsentMessage('');
-        try {
-            const res = await axios.patch(`${API_BASE}/scholar/data-consent`, { consented: !dataConsent.consented }, { headers: authHeader() });
-            setDataConsent(current => ({ ...current, consented: Boolean(res.data?.consented), consented_at: res.data?.consented ? new Date().toISOString() : null }));
-            setConsentMessage(res.data?.consented ? 'Data collection consent recorded.' : 'Data collection consent revoked.');
-        } catch (err) {
-            setConsentMessage(err.response?.data?.error || 'Unable to update data consent.');
-        } finally {
-            setConsentLoading(false);
-        }
+    const handleResetNotifications = () => {
+        setNotifSettings(savedNotifSettings);
+        setNotifSuccess('');
     };
 
-    const handlePrivacyRequest = async (requestType) => {
-        setPrivacyRequestLoading(true);
-        setConsentMessage('');
-        try {
-            await axios.post(`${API_BASE}/scholar/privacy-requests`, { request_type: requestType }, { headers: authHeader() });
-            const label = requestType === 'export' ? 'data export' : 'account deletion';
-            setConsentMessage(`Your ${label} request has been submitted and is now pending admin review.`);
-        } catch (err) {
-            setConsentMessage(err.response?.data?.error || 'Unable to create privacy request.');
-        } finally {
-            setPrivacyRequestLoading(false);
-        }
-    };
-
-    const handleDataExport = async () => {
-        setPrivacyRequestLoading(true);
-        setConsentMessage('');
-        try {
-            const response = await axios.get(`${API_BASE}/scholar/privacy-export`, { headers: authHeader(), responseType: 'blob' });
-            const url = URL.createObjectURL(response.data);
-            const link = document.createElement('a');
-            link.href = url;
-            link.download = `apple-scholar-data-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
-            link.click();
-            URL.revokeObjectURL(url);
-            setConsentMessage('Your personal data export has been downloaded.');
-        } catch (err) {
-            setConsentMessage(err.response?.data?.error || 'Unable to download your data export.');
-        } finally {
-            setPrivacyRequestLoading(false);
-        }
-    };
-
-    const displayName = profile.fullName || localStorage.getItem('name') || 'Scholar';
-    const displayEmail = profile.email || localStorage.getItem('email') || 'you@example.com';
-
-    // Quick-overview figures — existing values only, no new calculations.
     const notifOnCount = Object.values(notifSettings).filter(Boolean).length;
+    const initial = (profile.fullName || 'S').trim().charAt(0).toUpperCase();
+    const yearLabel = YEAR_LEVEL_OPTIONS.find(option => option.value === profile.yearLevel)?.label || 'Not set';
+
+    const newPwHint = newPassword && newPassword.length < 8 ? 'Password must be at least 8 characters.' : '';
+    const confirmHint = confirmPassword && newPassword !== confirmPassword ? 'New passwords do not match.' : '';
+
+    const primaryBtn = (disabled) => ({
+        ...body, fontSize: '0.82rem', fontWeight: 600, color: '#fff', background: PRIMARY, border: 'none', borderRadius: 12,
+        padding: '10px 22px', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.6 : 1,
+        boxShadow: '0 4px 12px rgba(109,33,64,0.22)',
+    });
+    const ghostBtn = (disabled) => ({
+        ...body, fontSize: '0.82rem', fontWeight: 600, color: INK, background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: 12,
+        padding: '10px 18px', cursor: disabled ? 'not-allowed' : 'pointer', opacity: disabled ? 0.5 : 1,
+    });
 
     return (
-        <div style={{ ...body, background: BG, minHeight: '100vh' }}>
+        <div className="w-full min-w-0 max-w-full overflow-x-hidden" style={{ ...body, background: BG, minHeight: '100vh' }}>
             <style>{`
                 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Inter:wght@400;500;600;700&display=swap');
-                .settings-toolbar { position: sticky; top: 12px; z-index: 5; box-shadow: 0 12px 28px -18px rgba(36,21,18,0.25); }
+                .st-field { width: 100%; height: 44px; padding: 0 14px; background: #fff; border: 1px solid ${BORDER}; border-radius: 12px; outline: none;
+                    font-family: 'Inter', -apple-system, 'Segoe UI', sans-serif; font-size: 0.85rem; color: ${INK};
+                    transition: border-color .15s ease, box-shadow .15s ease; }
+                .st-field::placeholder { color: #B8AA9B; }
+                .st-field:hover:not(:disabled) { border-color: #d8c4ad; }
+                .st-field:focus { border-color: ${PRIMARY}66; box-shadow: 0 0 0 4px ${PRIMARY}1a; }
+                .st-field:disabled { background: #F1EADD; color: ${MUTED}; cursor: not-allowed; }
+                .st-select { appearance: none; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238A7A68' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; }
+                .st-primary { transition: background .15s ease, transform .1s ease; }
+                .st-primary:hover:not(:disabled) { background: ${PRIMARY_DARK} !important; }
+                .st-primary:active:not(:disabled) { transform: scale(0.98); }
+                .st-ghost { transition: background .15s ease; }
+                .st-ghost:hover:not(:disabled) { background: #F3ECE0 !important; }
+                .st-eye:hover { color: ${PRIMARY} !important; }
+                .st-toggle:focus-visible { outline: none; box-shadow: 0 0 0 4px ${PRIMARY}26; }
+                .st-notif { transition: border-color .15s ease, background .15s ease; }
+                .st-notif:hover { border-color: #d8c4ad !important; background: #FBF8F2 !important; }
+                @keyframes st-pop { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: translateY(0) scale(1); } }
+                .st-modal { animation: st-pop .2s ease; }
+                @media (prefers-reduced-motion: reduce) { .st-modal { animation: none; } }
             `}</style>
 
-            <div className="w-full px-4 sm:px-6 lg:p-8">
+            <div className="w-full min-w-0 px-4 sm:px-6 lg:px-8" style={{ paddingTop: 20, paddingBottom: 32 }}>
 
-                {/* ── 1. Scholar header ─────────────────────────────────── */}
-                <div className="flex items-start justify-between gap-4 flex-wrap" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '20px 24px', marginBottom: 20 }}>
-                    <div>
-                        <p style={{ ...body, fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.08em', color: BRONZE }}>SCHOLAR PORTAL</p>
-                        <h1 style={{ ...display, fontSize: '1.6rem', fontWeight: 600, color: INK, marginTop: 4 }}>Account Settings</h1>
-                        <p style={{ ...body, fontSize: '0.84rem', color: MUTED, marginTop: 6, maxWidth: 480 }}>
-                            Manage your profile details, password, and notification preferences in one place.
-                        </p>
+                {/* ── Hero (compact burgundy, same as the Dashboard) ── */}
+                <section
+                    className="relative"
+                    style={{
+                        background: `linear-gradient(120deg, ${PRIMARY_DARK} 0%, ${PRIMARY} 60%, ${PRIMARY_ACCENT} 100%)`,
+                        borderRadius: 22,
+                        padding: 'clamp(14px, 2vw, 18px) clamp(16px, 2.4vw, 24px)',
+                        marginBottom: 16,
+                        boxShadow: '0 18px 36px -28px rgba(74,23,48,0.65)',
+                    }}
+                >
+                    <div aria-hidden="true" className="absolute inset-0 overflow-hidden" style={{ borderRadius: 22, pointerEvents: 'none' }}>
+                        <div className="absolute" style={{ width: 260, height: 260, right: -70, top: -150, borderRadius: '50%', border: '1px solid rgba(228,194,143,0.16)' }} />
+                        <div className="absolute" style={{ left: 0, right: 0, bottom: 0, height: 2, background: `linear-gradient(90deg, transparent, ${GOLD}88, transparent)` }} />
                     </div>
-                    <span style={{ ...body, fontSize: '0.76rem', fontWeight: 600, color: PRIMARY, background: `${PRIMARY}12`, border: `1px solid ${BORDER}`, borderRadius: 999, padding: '7px 16px', flexShrink: 0 }}>
-                        {profile.status || 'Active'}
-                    </span>
-                </div>
+                    <div className="relative flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                        <div className="flex items-center gap-4 min-w-0">
+                            <span
+                                className="flex items-center justify-center flex-shrink-0"
+                                style={{ width: 54, height: 54, borderRadius: '50%', background: 'rgba(255,255,255,0.12)', border: `2px solid ${GOLD}`, color: '#fff', ...display, fontSize: '1.4rem', fontWeight: 700 }}
+                            >
+                                {initial}
+                            </span>
+                            <div className="min-w-0">
+                                <p style={{ ...body, fontSize: '0.62rem', fontWeight: 800, letterSpacing: '0.15em', color: GOLD, textTransform: 'uppercase' }}>Scholar Portal</p>
+                                <h1 style={{ ...display, fontSize: 'clamp(1.4rem, 2.6vw, 1.9rem)', lineHeight: 1.12, fontWeight: 700, color: '#fff', marginTop: 4 }}>
+                                    Account Settings
+                                </h1>
+                                <p className="truncate" style={{ ...body, fontSize: '0.74rem', color: 'rgba(255,255,255,0.72)', marginTop: 3 }}>
+                                    {profile.fullName || 'Scholar'}{profile.email ? ` · ${profile.email}` : ''}
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                            {[
+                                { icon: Hash, text: profile.studentId || '—', mono: true },
+                                { icon: GraduationCap, text: yearLabel },
+                            ].map(({ icon: Icon, text, mono }) => (
+                                <span key={text} className="inline-flex items-center gap-1.5" style={{ ...body, fontSize: '0.68rem', fontWeight: 600, color: 'rgba(255,255,255,0.9)', background: 'rgba(255,255,255,0.09)', border: '1px solid rgba(255,255,255,0.16)', borderRadius: 999, padding: '5px 11px', ...(mono ? { fontFamily: "'IBM Plex Mono', ui-monospace, Menlo, monospace" } : {}) }}>
+                                    <Icon size={12} style={{ color: GOLD }} />
+                                    {text}
+                                </span>
+                            ))}
+                            <span className="inline-flex items-center gap-1.5" style={{ ...body, fontSize: '0.68rem', fontWeight: 700, color: '#fff', background: 'rgba(143,224,176,0.16)', border: '1px solid rgba(143,224,176,0.35)', borderRadius: 999, padding: '5px 11px', textTransform: 'capitalize' }}>
+                                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#8FE0B0' }} />
+                                {profile.status || 'Active'}
+                            </span>
+                        </div>
+                    </div>
+                </section>
 
                 {loading && (
                     <p className="mb-4" style={{ ...body, fontSize: '0.8rem', color: MUTED }}>Loading account settings…</p>
                 )}
                 {error && (
-                    <div className="mb-5" style={{ background: `${DANGER}0d`, color: DANGER, border: `1px solid ${DANGER}33`, borderRadius: 12, padding: 14, ...body, fontSize: '0.82rem' }}>
-                        {error}
+                    <div className="mb-4">
+                        <Banner type="error">{error}</Banner>
                     </div>
                 )}
 
-                {/* ── 2. Hero information card (burgundy) ───────────────── */}
-                <div
-                    className="flex flex-col sm:flex-row sm:items-center gap-6"
-                    style={{ background: `linear-gradient(135deg, ${PRIMARY} 0%, ${PRIMARY_DARK} 100%)`, borderRadius: RADIUS, padding: '24px 26px', marginBottom: 20, color: '#fff' }}
-                >
-                    <div className="flex items-center gap-4 flex-shrink-0">
-                        <div className="flex items-center justify-center flex-shrink-0" style={{ width: 54, height: 54, borderRadius: '50%', background: 'rgba(255,255,255,0.14)', border: `2px solid ${BRONZE}` }}>
-                            <span style={{ ...display, fontSize: '1.2rem', fontWeight: 700, color: '#fff' }}>{displayName.charAt(0).toUpperCase()}</span>
-                        </div>
-                        <div className="min-w-0">
-                            <p style={{ ...body, fontSize: '0.7rem', fontWeight: 700, letterSpacing: '0.08em', color: 'rgba(255,255,255,0.7)' }}>FEATURED INFORMATION</p>
-                            <p style={{ ...display, fontSize: '1.15rem', fontWeight: 600, color: '#fff', marginTop: 2 }} className="truncate">{displayName}</p>
-                            <p style={{ ...body, fontSize: '0.76rem', color: 'rgba(255,255,255,0.75)' }} className="truncate">{displayEmail}</p>
-                        </div>
-                    </div>
+                <div className="min-w-0">
+<div className="flex flex-col gap-4">
 
-                    <div className="flex-1 min-w-0" style={{ borderLeft: '1px solid rgba(255,255,255,0.2)', paddingLeft: 24 }}>
-                        <div className="flex items-center gap-2 mb-1">
-                            <ShieldCheck size={13} style={{ color: '#fff' }} />
-                            <span style={{ ...body, fontSize: '0.72rem', fontWeight: 700, color: 'rgba(255,255,255,0.85)' }}>VERIFIED SCHOLAR</span>
-                        </div>
-                        <p style={{ ...body, fontSize: '0.82rem', color: 'rgba(255,255,255,0.9)', lineHeight: 1.5 }}>
-                            {dataConsent.consented
-                                ? `Data consent given${dataConsent.consented_at ? ` on ${new Date(dataConsent.consented_at).toLocaleDateString('en-PH')}` : ''}.`
-                                : 'Data collection consent has not been recorded yet.'}
-                        </p>
-                    </div>
-
-                    <button
-                        onClick={() => setActiveTab('profile')}
-                        className="flex-shrink-0 transition-opacity hover:opacity-90"
-                        style={{ ...body, fontSize: '0.8rem', fontWeight: 700, color: PRIMARY, background: '#fff', border: 'none', borderRadius: 10, padding: '11px 22px', cursor: 'pointer' }}
-                    >
-                        Manage Privacy
-                    </button>
-                </div>
-
-                {/* ── 3. Quick overview — 3 KPI cards ───────────────────── */}
-                <div className="grid grid-cols-3 gap-3 sm:gap-4" style={{ marginBottom: 20 }}>
-                    <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '16px 16px 14px' }}>
-                        <div className="flex items-center justify-center" style={{ width: 30, height: 30, borderRadius: 9, background: `${PRIMARY}14` }}>
-                            <Bell size={14} style={{ color: PRIMARY }} />
-                        </div>
-                        <p style={{ ...display, fontSize: '1.35rem', fontWeight: 600, color: INK, marginTop: 10 }}>{notifOnCount}/4</p>
-                        <p style={{ ...body, fontSize: '0.74rem', color: MUTED, marginTop: 2 }}>Notifications On</p>
-                    </div>
-                    <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '16px 16px 14px' }}>
-                        <div className="flex items-center justify-center" style={{ width: 30, height: 30, borderRadius: 9, background: `${dataConsent.consented ? SUCCESS : WARNING}14` }}>
-                            <ShieldCheck size={14} style={{ color: dataConsent.consented ? SUCCESS : WARNING }} />
-                        </div>
-                        <p style={{ ...display, fontSize: '1.1rem', fontWeight: 600, color: INK, marginTop: 10 }}>{dataConsent.consented ? 'Given' : 'Not Given'}</p>
-                        <p style={{ ...body, fontSize: '0.74rem', color: MUTED, marginTop: 2 }}>Data Consent</p>
-                    </div>
-                    <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '16px 16px 14px' }}>
-                        <div className="flex items-center justify-center" style={{ width: 30, height: 30, borderRadius: 9, background: `${BRONZE}14` }}>
-                            <User size={14} style={{ color: BRONZE }} />
-                        </div>
-                        <p style={{ ...display, fontSize: '1.1rem', fontWeight: 600, color: INK, marginTop: 10 }}>{profile.status || 'Active'}</p>
-                        <p style={{ ...body, fontSize: '0.74rem', color: MUTED, marginTop: 2 }}>Account Status</p>
-                    </div>
-                </div>
-
-                {/* ── 4. Section toolbar (tabs, in place of search/filter — no record list exists on this page) ── */}
-                <div className="settings-toolbar flex items-center justify-between flex-wrap gap-3" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: 14, marginBottom: 20 }}>
-                    <SectionTabs
-                        tabs={[
-                            { key: 'profile', label: 'Profile', icon: User },
-                            { key: 'password', label: 'Password', icon: Lock },
-                            { key: 'notifications', label: 'Notifications', icon: Bell },
-                        ]}
-                        active={activeTab}
-                        onSelect={setActiveTab}
-                    />
-                    <div className="flex items-center gap-2 flex-wrap">
-                        <button
-                            onClick={() => window.location.href = '/scholar/checklist'}
-                            className="flex items-center gap-1.5 transition-colors"
-                            style={{ ...body, fontSize: '0.78rem', fontWeight: 600, color: INK, background: BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '8px 14px', cursor: 'pointer' }}
-                        >
-                            Checklist <ChevronRight size={13} style={{ color: PRIMARY }} />
-                        </button>
-                        <button
-                            onClick={() => window.location.href = '/scholar/duties'}
-                            className="flex items-center gap-1.5 transition-colors"
-                            style={{ ...body, fontSize: '0.78rem', fontWeight: 600, color: INK, background: BG, border: `1px solid ${BORDER}`, borderRadius: 10, padding: '8px 14px', cursor: 'pointer' }}
-                        >
-                            Duties <ChevronRight size={13} style={{ color: PRIMARY }} />
-                        </button>
-                    </div>
-                </div>
-
-                {/* ── 5. Section content, styled as premium cards ───────── */}
-                {activeTab === 'profile' && (
-                    <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '22px 24px', marginBottom: 20 }}>
-                        <h3 style={{ ...display, fontSize: '1.15rem', fontWeight: 600, color: INK, marginBottom: 18 }}>Profile Settings</h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-5">
-                            <div>
-                                <label style={fieldLabelStyle}>FULL NAME</label>
-                                <input type="text" value={profile.fullName} onChange={(e) => setProfile({ ...profile, fullName: e.target.value })} style={inputStyle} onFocus={onInputFocus} onBlur={onInputBlur} />
-                            </div>
-                            <div>
-                                <label style={fieldLabelStyle}>EMAIL</label>
-                                <input type="email" value={profile.email} onChange={(e) => setProfile({ ...profile, email: e.target.value })} style={inputStyle} onFocus={onInputFocus} onBlur={onInputBlur} />
-                            </div>
-                            <div>
-                                <label style={fieldLabelStyle}>PHONE</label>
-                                <input type="tel" value={profile.phone} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} style={inputStyle} onFocus={onInputFocus} onBlur={onInputBlur} />
-                            </div>
-                            <div>
-                                <label style={fieldLabelStyle}>STUDENT ID</label>
-                                <input type="text" value={profile.studentId} disabled style={{ width: '100%', padding: '10px 12px', borderRadius: 10, ...body, fontSize: '0.85rem', color: MUTED, background: BG, border: `1px solid ${BORDER}`, outline: 'none' }} />
-                            </div>
-                        </div>
-
-                        {profileError && <div className="mt-5" style={{ background: `${DANGER}0d`, color: DANGER, borderRadius: 10, padding: '10px 14px', ...body, fontSize: '0.8rem' }}>{profileError}</div>}
-                        {profileSuccess && <div className="mt-5" style={{ background: `${SUCCESS}0d`, color: SUCCESS, borderRadius: 10, padding: '10px 14px', ...body, fontSize: '0.8rem' }}>{profileSuccess}</div>}
-
-                        <button
-                            onClick={handleSaveProfile}
-                            className="w-full mt-5 transition-opacity hover:opacity-90"
-                            style={{ padding: '12px 0', borderRadius: 12, border: 'none', cursor: 'pointer', ...body, fontSize: '0.82rem', fontWeight: 700, color: '#fff', background: `linear-gradient(120deg, ${PRIMARY} 0%, ${PRIMARY_DARK} 100%)` }}
-                        >
-                            Save Profile
-                        </button>
-
-                        {/* Privacy consent — styled as a registry-card row: left icon+desc, right status+action */}
-                        <div className="mt-6 pt-6" style={{ borderTop: `1px solid ${BORDER}` }}>
-                            <div className="flex items-start gap-3" style={{ background: BG, borderRadius: 14, padding: 18 }}>
-                                <span className="flex items-center justify-center flex-shrink-0" style={{ width: 34, height: 34, borderRadius: 10, background: `${PRIMARY}14` }}>
-                                    <ShieldCheck size={16} style={{ color: PRIMARY }} />
-                                </span>
-                                <div className="flex-1 min-w-0">
-                                    <p style={{ ...body, fontSize: '0.86rem', fontWeight: 700, color: INK }}>Data Privacy Consent</p>
-                                    <p style={{ ...body, fontSize: '0.78rem', color: MUTED, marginTop: 4, lineHeight: 1.55 }}>
-                                        I consent to the collection and processing of my scholar profile, submissions, attendance, grades, and uploaded documents for scholarship monitoring and reporting. No external AI service is used to evaluate this data.
+                    {/* Account Profile */}
+                        <Card
+                            icon={User}
+                            title="Account Profile"
+                            description="Your personal and scholarship details"
+                            footer={
+                                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                                    <p className="flex items-center gap-2" style={{ ...body, fontSize: '0.72rem', fontWeight: 600, color: profileDirty ? WARNING : MUTED }}>
+                                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: profileDirty ? WARNING : SUCCESS }} />
+                                        {profileDirty ? 'You have unsaved changes' : 'All changes saved'}
                                     </p>
-                                    <div className="mt-3 flex flex-col xs:flex-row sm:flex-row items-start sm:items-center justify-between gap-3">
-                                        <span style={{ ...body, fontSize: '0.72rem', fontWeight: 700, color: dataConsent.consented ? SUCCESS : WARNING }}>
-                                            {dataConsent.consented ? `Consented${dataConsent.consented_at ? ` on ${new Date(dataConsent.consented_at).toLocaleDateString('en-PH')}` : ''}` : 'Consent not recorded'}
-                                        </span>
-                                        <button onClick={handleConsentChange} disabled={consentLoading}
-                                            style={{ padding: '8px 16px', borderRadius: 10, border: 'none', cursor: 'pointer', ...body, fontSize: '0.76rem', fontWeight: 700, color: '#fff', background: dataConsent.consented ? DANGER : PRIMARY, opacity: consentLoading ? 0.6 : 1, flexShrink: 0 }}>
-                                            {consentLoading ? 'Saving…' : dataConsent.consented ? 'Revoke Consent' : 'Give Consent'}
+                                    <div className="flex flex-col-reverse sm:flex-row gap-2.5">
+                                        <button type="button" onClick={handleResetProfile} disabled={!profileDirty || profileSaving} className="st-ghost flex items-center justify-center gap-1.5 w-full sm:w-auto" style={ghostBtn(!profileDirty || profileSaving)}>
+                                            <RotateCcw size={14} /> Reset changes
                                         </button>
-                                    </div>
-                                    {consentMessage && <p style={{ ...body, fontSize: '0.76rem', color: MUTED, marginTop: 8 }}>{consentMessage}</p>}
-                                    <div className="mt-4 flex flex-wrap gap-2" style={{ borderTop: `1px solid ${BORDER}`, paddingTop: 12 }}>
-                                        <button type="button" onClick={handleDataExport} disabled={privacyRequestLoading}
-                                            className="flex items-center gap-1.5"
-                                            style={{ padding: '8px 14px', borderRadius: 999, border: `1.5px solid ${BRONZE}`, background: 'none', cursor: 'pointer', ...body, fontSize: '0.74rem', fontWeight: 700, color: PRIMARY, opacity: privacyRequestLoading ? 0.6 : 1 }}>
-                                            <Download size={13} /> Download My Data
-                                        </button>
-                                        <button type="button" onClick={() => handlePrivacyRequest('deletion')} disabled={privacyRequestLoading}
-                                            className="flex items-center gap-1.5"
-                                            style={{ padding: '8px 14px', borderRadius: 999, border: `1.5px solid ${DANGER}88`, background: 'none', cursor: 'pointer', ...body, fontSize: '0.74rem', fontWeight: 700, color: DANGER, opacity: privacyRequestLoading ? 0.6 : 1 }}>
-                                            <Trash2 size={13} /> Request Data Deletion
+                                        <button type="button" onClick={handleSaveProfile} disabled={profileSaving || loading} className="st-primary flex items-center justify-center gap-1.5 w-full sm:w-auto" style={primaryBtn(profileSaving || loading)}>
+                                            <Save size={14} /> {profileSaving ? 'Saving…' : 'Save Changes'}
                                         </button>
                                     </div>
                                 </div>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {activeTab === 'password' && (
-                    <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '22px 24px', marginBottom: 20 }}>
-                        <h3 style={{ ...display, fontSize: '1.15rem', fontWeight: 600, color: INK, marginBottom: 18 }}>Change Password</h3>
-                        <div className="grid gap-5 lg:grid-cols-[1fr_220px]">
-                            <div className="space-y-5">
-                                <div>
-                                    <label style={fieldLabelStyle}>CURRENT PASSWORD</label>
-                                    <div className="relative">
-                                        <input type={showCurrent ? 'text' : 'password'} value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} placeholder="Enter current password" style={{ ...inputStyle, paddingRight: 28 }} onFocus={onInputFocus} onBlur={onInputBlur} />
-                                        <button onClick={() => setShowCurrent(!showCurrent)} className="absolute right-0 top-0" style={{ background: 'none', border: 'none', cursor: 'pointer', color: MUTED }}>
-                                            {showCurrent ? <EyeOff size={16} /> : <Eye size={16} />}
-                                        </button>
+                            }
+                        >
+                            <div className="px-5 sm:px-6" style={{ paddingTop: 20, paddingBottom: 22 }}>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-5 gap-y-4">
+                                    <div>
+                                        <Label htmlFor="st-fullname">Full Name</Label>
+                                        <IconInput id="st-fullname" icon={User} type="text" value={profile.fullName} onChange={(e) => setProfile({ ...profile, fullName: e.target.value })} />
                                     </div>
-                                </div>
-                                <div>
-                                    <label style={fieldLabelStyle}>NEW PASSWORD</label>
-                                    <div className="relative">
-                                        <input type={showNew ? 'text' : 'password'} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Enter new password" style={{ ...inputStyle, paddingRight: 28 }} onFocus={onInputFocus} onBlur={onInputBlur} />
-                                        <button onClick={() => setShowNew(!showNew)} className="absolute right-0 top-0" style={{ background: 'none', border: 'none', cursor: 'pointer', color: MUTED }}>
-                                            {showNew ? <EyeOff size={16} /> : <Eye size={16} />}
-                                        </button>
+                                    <div>
+                                        <Label htmlFor="st-email">Email</Label>
+                                        <IconInput id="st-email" icon={Mail} type="email" value={profile.email} onChange={(e) => setProfile({ ...profile, email: e.target.value })} />
                                     </div>
-                                    {newPassword && (
-                                        <div className="flex items-center gap-3 mt-3 flex-wrap">
-                                            <StrengthDial level={strength.level} color={strength.color} />
-                                            <p style={{ ...body, fontSize: '0.76rem', fontWeight: 700, color: strength.color }}>Password strength: {strength.label}</p>
+                                    <div>
+                                        <Label htmlFor="st-phone">Phone</Label>
+                                        <IconInput id="st-phone" icon={Phone} type="tel" value={profile.phone} onChange={(e) => setProfile({ ...profile, phone: e.target.value })} />
+                                    </div>
+                                    <div>
+                                        <Label htmlFor="scholar-year-level">Year Level</Label>
+                                        <div className="relative">
+                                            <GraduationCap size={15} className="absolute pointer-events-none" style={{ left: 14, top: '50%', transform: 'translateY(-50%)', color: MUTED, zIndex: 1 }} />
+                                            <select
+                                                id="scholar-year-level"
+                                                className="st-field st-select"
+                                                style={{ paddingLeft: 40, paddingRight: 36 }}
+                                                value={profile.yearLevel}
+                                                onChange={event => setProfile(current => ({ ...current, yearLevel: event.target.value }))}
+                                                disabled={profileSaving || loading}
+                                            >
+                                                <option value="">Select year level</option>
+                                                {YEAR_LEVEL_OPTIONS.map(option => (
+                                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                                ))}
+                                            </select>
                                         </div>
-                                    )}
-                                </div>
-                                <div>
-                                    <label style={fieldLabelStyle}>CONFIRM NEW PASSWORD</label>
-                                    <div className="relative">
-                                        <input type={showConfirm ? 'text' : 'password'} value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Re-enter new password" style={{ ...inputStyle, paddingRight: 28 }} onFocus={onInputFocus} onBlur={onInputBlur} />
-                                        <button onClick={() => setShowConfirm(!showConfirm)} className="absolute right-0 top-0" style={{ background: 'none', border: 'none', cursor: 'pointer', color: MUTED }}>
-                                            {showConfirm ? <EyeOff size={16} /> : <Eye size={16} />}
-                                        </button>
+                                        <p style={{ ...body, fontSize: '0.7rem', color: MUTED, marginTop: 5 }}>
+                                            Update this when you advance to a new school year.
+                                        </p>
+                                    </div>
+                                    <div className="md:col-span-2">
+                                        <Label htmlFor="st-studentid" hint="Read-only">Student ID</Label>
+                                        <IconInput
+                                            id="st-studentid" icon={Hash} type="text" value={profile.studentId} disabled readOnly
+                                            style={{ fontFamily: "'IBM Plex Mono', ui-monospace, Menlo, monospace", paddingRight: 40 }}
+                                            trailing={<Lock size={14} className="absolute pointer-events-none" style={{ right: 14, top: '50%', transform: 'translateY(-50%)', color: MUTED }} />}
+                                        />
                                     </div>
                                 </div>
 
-                                {(passwordError || passwordSuccess) && (
-                                    <div style={{ borderRadius: 10, padding: '10px 14px', ...body, fontSize: '0.8rem', color: passwordError ? DANGER : SUCCESS, background: passwordError ? `${DANGER}0d` : `${SUCCESS}0d` }}>
-                                        {passwordError || passwordSuccess}
+                                {(profileError || profileSuccess) && (
+                                    <div className="mt-4">
+                                        <Banner type={profileError ? 'error' : 'success'}>{profileError || profileSuccess}</Banner>
                                     </div>
                                 )}
-
-                                <button
-                                    onClick={handleChangePassword}
-                                    disabled={passwordLoading}
-                                    className="w-full transition-opacity hover:opacity-90"
-                                    style={{ padding: '12px 0', borderRadius: 12, border: 'none', cursor: 'pointer', ...body, fontSize: '0.82rem', fontWeight: 700, color: '#fff', background: `linear-gradient(120deg, ${PRIMARY} 0%, ${PRIMARY_DARK} 100%)`, opacity: passwordLoading ? 0.6 : 1 }}
-                                >
-                                    {passwordLoading ? 'Updating…' : 'Update Password'}
-                                </button>
                             </div>
+                        </Card>
 
-                            <div style={{ background: BG, borderRadius: 14, padding: 16, borderLeft: `3px solid ${PRIMARY}`, height: 'fit-content' }}>
-                                <div className="flex items-center gap-2 mb-2.5">
-                                    <KeyRound size={13} style={{ color: PRIMARY }} />
-                                    <p style={{ ...body, fontSize: '0.72rem', fontWeight: 700, color: PRIMARY_DARK }}>SECURITY TIPS</p>
+                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
+{/* Notification Preferences */}
+                        <Card
+                            icon={Bell}
+                            title="Notification Preferences"
+                            description={`Choose which alerts you want to receive · ${notifOnCount} of 4 on`}
+                            accent={BRONZE}
+                            footer={
+                                <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-2.5">
+                                    <button type="button" onClick={handleResetNotifications} disabled={!notifDirty} className="st-ghost flex items-center justify-center gap-1.5 w-full sm:w-auto" style={ghostBtn(!notifDirty)}>
+                                        <RotateCcw size={14} /> Reset to Saved
+                                    </button>
+                                    <button type="button" onClick={handleSaveNotifications} className="st-primary flex items-center justify-center gap-1.5 w-full sm:w-auto" style={primaryBtn(false)}>
+                                        <Save size={14} /> Save Preferences
+                                    </button>
                                 </div>
-                                <ul className="space-y-1.5 list-disc pl-4" style={{ ...body, fontSize: '0.78rem', color: MUTED }}>
-                                    <li>Use at least 8 characters.</li>
-                                    <li>Mix uppercase and lowercase.</li>
-                                    <li>Add numbers and symbols.</li>
-                                    <li>Never share your password.</li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {activeTab === 'notifications' && (
-                    <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '22px 24px', marginBottom: 20 }}>
-                        <h3 style={{ ...display, fontSize: '1.15rem', fontWeight: 600, color: INK, marginBottom: 18 }}>Notification Preferences</h3>
-                        <div className="space-y-2.5">
-                            {[
-                                { key: 'deadline_reminders', label: 'Deadline Reminders', desc: 'Get notified before submission deadlines', icon: Lock },
-                                { key: 'submission_updates', label: 'Submission Status Updates', desc: 'Get notified when staff reviews your submission', icon: ShieldCheck },
-                                { key: 'announcement_alerts', label: 'Announcement Alerts', desc: 'Get notified for new foundation announcements', icon: Bell },
-                                { key: 'duty_reminders', label: 'Duty Reminders', desc: 'Get notified for upcoming duty assignments', icon: User },
-                            ].map((item) => (
-                                <div key={item.key} className="flex items-start gap-3" style={{ background: BG, borderRadius: 14, padding: '14px 16px' }}>
-                                    <span className="flex items-center justify-center flex-shrink-0" style={{ width: 32, height: 32, borderRadius: 10, background: `${PRIMARY}14`, marginTop: 1 }}>
-                                        <item.icon size={14} style={{ color: PRIMARY }} />
-                                    </span>
-                                    <div className="flex-1 min-w-0">
-                                        <p style={{ ...body, fontSize: '0.84rem', fontWeight: 700, color: INK }}>{item.label}</p>
-                                        <p style={{ ...body, fontSize: '0.74rem', color: MUTED, marginTop: 2 }}>{item.desc}</p>
-                                    </div>
-                                    <ToggleSwitch
-                                        checked={notifSettings[item.key]}
-                                        onChange={() => setNotifSettings(prev => ({ ...prev, [item.key]: !prev[item.key] }))}
-                                    />
-                                </div>
-                            ))}
-                        </div>
-
-                        {notifSuccess && (
-                            <div className="mt-4" style={{ background: `${SUCCESS}0d`, color: SUCCESS, borderRadius: 10, padding: '10px 14px', ...body, fontSize: '0.8rem' }}>
-                                {notifSuccess}
-                            </div>
-                        )}
-
-                        <button
-                            onClick={handleSaveNotifications}
-                            className="w-full transition-colors"
-                            style={{ marginTop: 18, padding: '11px 0', borderRadius: 12, border: `1.5px solid ${PRIMARY}`, background: '#fff', cursor: 'pointer', ...body, fontSize: '0.82rem', fontWeight: 700, color: PRIMARY }}
+                            }
                         >
-                            Save Preferences
-                        </button>
-                    </div>
-                )}
+                            <div className="px-5 sm:px-6" style={{ paddingTop: 18, paddingBottom: 20 }}>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    {NOTIF_ITEMS.map((item) => (
+                                        <div key={item.key} className="st-notif flex items-center gap-3 min-w-0" style={{ padding: '12px 14px', background: SURFACE, border: `1px solid ${checkedBorder(notifSettings[item.key])}`, borderRadius: 14 }}>
+                                            <IconChip icon={item.icon} size={36} color={notifSettings[item.key] ? PRIMARY : MUTED} />
+                                            <div className="flex-1 min-w-0">
+                                                <p style={{ ...body, fontSize: '0.84rem', fontWeight: 600, color: INK }}>{item.label}</p>
+                                                <p style={{ ...body, fontSize: '0.72rem', color: MUTED, marginTop: 2, lineHeight: 1.45 }}>{item.desc}</p>
+                                            </div>
+                                            <Toggle
+                                                label={item.label}
+                                                checked={notifSettings[item.key]}
+                                                onChange={() => setNotifSettings(prev => ({ ...prev, [item.key]: !prev[item.key] }))}
+                                            />
+                                        </div>
+                                    ))}
+                                </div>
 
-                <div className="text-center mb-10" style={{ ...body, fontSize: '0.72rem', color: MUTED }}>
-                    Apple Scholar · Academic Year 2026 — Scholarship Management System
+                                {notifSuccess && (
+                                    <div className="mt-4">
+                                        <Banner type="success">{notifSuccess}</Banner>
+                                    </div>
+                                )}
+                            </div>
+                        </Card>
+
+                        <div className="flex flex-col gap-4 min-w-0">
+{/* Password & Security */}
+                        <Card icon={KeyRound} title="Password & Security" description="Keep your Scholar account protected" accent={PRIMARY}>
+                            <div className="px-5 sm:px-6" style={{ paddingTop: 18, paddingBottom: 20 }}>
+                                <div className="flex flex-col sm:flex-row sm:items-center gap-4" style={{ background: BG, border: `1px solid ${BORDER}`, borderRadius: 14, padding: '14px 16px' }}>
+                                    <div className="flex-1 min-w-0">
+                                        <p style={{ ...body, fontSize: '0.86rem', fontWeight: 700, color: INK }}>Password</p>
+                                        <p style={{ ...body, fontSize: '0.75rem', color: MUTED, marginTop: 2, lineHeight: 1.5 }}>
+                                            Change the password you use to access your Scholar account.
+                                        </p>
+                                    </div>
+                                    <button type="button" onClick={openPasswordModal} className="st-ghost flex items-center justify-center gap-1.5 w-full sm:w-auto flex-shrink-0" style={{ ...ghostBtn(false), borderColor: BRONZE, color: PRIMARY }}>
+                                        <KeyRound size={14} /> Change Password
+                                    </button>
+                                </div>
+                            </div>
+                        </Card>
+
+                        </div>
+</div>
+<div className="text-center" style={{ ...body, fontSize: '0.72rem', color: MUTED, paddingTop: 4 }}>
+                            Apple Scholar · Academic Year 2026 — Scholarship Management System
+                        </div>
+                    </div>
                 </div>
             </div>
+
+            {/* ── Change Password modal ─────────────────────────────── */}
+            {showPasswordModal && (
+                <div
+                    className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4"
+                    style={{ background: 'rgba(36,21,18,0.55)', backdropFilter: 'blur(4px)' }}
+                    onMouseDown={(e) => { if (e.target === e.currentTarget && !passwordLoading) closePasswordModal(); }}
+                >
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="st-pw-title"
+                        className="st-modal w-full sm:max-w-md rounded-t-3xl sm:rounded-3xl overflow-y-auto"
+                        style={{ background: SURFACE, border: `1px solid ${BORDER}`, boxShadow: '0 24px 48px -20px rgba(36,21,18,0.5)', maxHeight: '92vh' }}
+                    >
+                        <div className="flex items-center justify-between gap-3" style={{ padding: '20px 22px 16px', borderBottom: `1px solid ${BORDER}`, background: `linear-gradient(180deg, ${PRIMARY}0A, transparent)` }}>
+                            <div className="flex items-center gap-3 min-w-0">
+                                <IconChip icon={KeyRound} />
+                                <div className="min-w-0">
+                                    <h3 id="st-pw-title" style={{ ...display, fontSize: '1.1rem', fontWeight: 600, color: INK, lineHeight: 1.2 }}>Change Password</h3>
+                                    <p style={{ ...body, fontSize: '0.74rem', color: MUTED, marginTop: 2 }}>Choose a strong, unique password</p>
+                                </div>
+                            </div>
+                            <button type="button" onClick={closePasswordModal} disabled={passwordLoading} aria-label="Close" className="st-ghost flex-shrink-0" style={{ padding: 8, borderRadius: 10, border: 'none', background: 'none', color: MUTED, cursor: 'pointer' }}>
+                                <X size={17} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-4" style={{ padding: '20px 22px' }}>
+                            <div>
+                                <Label htmlFor="st-current-pw">Current Password</Label>
+                                <IconInput
+                                    id="st-current-pw" icon={Lock} type={showCurrent ? 'text' : 'password'}
+                                    value={currentPassword} onChange={(e) => setCurrentPassword(e.target.value)} placeholder="Enter current password"
+                                    trailing={<EyeButton shown={showCurrent} onClick={() => setShowCurrent(!showCurrent)} />}
+                                />
+                            </div>
+                            <div>
+                                <Label htmlFor="st-new-pw">New Password</Label>
+                                <IconInput
+                                    id="st-new-pw" icon={KeyRound} type={showNew ? 'text' : 'password'}
+                                    value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Enter new password"
+                                    trailing={<EyeButton shown={showNew} onClick={() => setShowNew(!showNew)} />}
+                                />
+                                {newPwHint && <p style={{ ...body, fontSize: '0.72rem', color: DANGER, marginTop: 6 }}>{newPwHint}</p>}
+                                {newPassword && (
+                                    <div className="flex items-center gap-3 mt-3 flex-wrap">
+                                        <StrengthDial level={strength.level} color={strength.color} />
+                                        <p style={{ ...body, fontSize: '0.78rem', fontWeight: 700, color: strength.color }}>Password strength: {strength.label}</p>
+                                    </div>
+                                )}
+                            </div>
+                            <div>
+                                <Label htmlFor="st-confirm-pw">Confirm New Password</Label>
+                                <IconInput
+                                    id="st-confirm-pw" icon={KeyRound} type={showConfirm ? 'text' : 'password'}
+                                    value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Re-enter new password"
+                                    trailing={<EyeButton shown={showConfirm} onClick={() => setShowConfirm(!showConfirm)} />}
+                                />
+                                {confirmHint && <p style={{ ...body, fontSize: '0.72rem', color: DANGER, marginTop: 6 }}>{confirmHint}</p>}
+                            </div>
+
+                            {(passwordError || passwordSuccess) && (
+                                <Banner type={passwordError ? 'error' : 'success'}>{passwordError || passwordSuccess}</Banner>
+                            )}
+                        </div>
+
+                        <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2.5" style={{ padding: '16px 22px 20px', background: BG, borderTop: `1px solid ${BORDER}` }}>
+                            <button type="button" onClick={closePasswordModal} disabled={passwordLoading} className="st-ghost w-full sm:w-auto" style={ghostBtn(passwordLoading)}>
+                                Cancel
+                            </button>
+                            <button type="button" onClick={handleChangePassword} disabled={passwordLoading} className="st-primary w-full sm:w-auto" style={primaryBtn(passwordLoading)}>
+                                {passwordLoading ? 'Updating…' : 'Update Password'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
+
+// Border for a notification tile: tinted when the alert is on.
+const checkedBorder = (on) => (on ? `${PRIMARY}33` : BORDER);
 
 export default ScholarSettings;

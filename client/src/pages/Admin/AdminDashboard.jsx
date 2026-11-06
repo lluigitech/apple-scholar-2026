@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -12,6 +12,7 @@ import {
     ClipboardList, Settings, Star, BarChart3, PieChart as PieChartIcon,
 } from 'lucide-react';
 import { formatAdminDate, formatAdminMonth } from '../../utils/adminPreferences';
+import AdminNotifications from '../../components/Admin/AdminNotifications';
 
 // ── Executive design tokens ──────────────────────────────────────
 const BG           = '#F7F4EE';
@@ -31,8 +32,8 @@ const SHADOW       = '0 1px 2px rgba(74, 23, 48, 0.04), 0 8px 24px -16px rgba(74
 // ── Operations routes ────────────────────────────────────────────
 // NOTE: verify these two against your router config (the sidebar's
 // "Task Assignment" and "Duty Assignment" links) and adjust if they differ.
-const TASK_ASSIGNMENT_PATH = '/admin/tasks';
-const DUTY_ASSIGNMENT_PATH = '/admin/duties';
+const TASK_ASSIGNMENT_PATH = '/admin/task-assignment';
+const DUTY_ASSIGNMENT_PATH = '/admin/duty-assignment';
 const API_BASE = (import.meta.env?.VITE_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
 const API = API_BASE.endsWith('/api') ? API_BASE : `${API_BASE}/api`;
 
@@ -121,6 +122,11 @@ const AdminDashboard = () => {
     const [stats, setStats] = useState({ activeAnnouncements: 0, activeTasks: 0, upcomingDuties: 0 });
     const [recentUsers, setRecentUsers] = useState([]);
     const [recentActivity, setRecentActivity] = useState([]);
+    const [notificationLogs, setNotificationLogs] = useState([]);
+    const [notificationError, setNotificationError] = useState(false);
+    const [notificationLoading, setNotificationLoading] = useState(true);
+    const [notificationSummary, setNotificationSummary] = useState(null);
+    const notificationRequestInFlight = useRef(false);
     const [loading, setLoading] = useState(true);
     const [dashboardError, setDashboardError] = useState('');
 
@@ -141,6 +147,7 @@ const AdminDashboard = () => {
                 ]);
                 const summary = summaryRes.data;
                 const complianceData = scholarComplianceRes.data;
+                setNotificationSummary(summary);
 
                 setStats({
                     activeAnnouncements: summary.announcements.active,
@@ -224,6 +231,38 @@ const AdminDashboard = () => {
         };
     }, []);
 
+    const fetchNotificationData = useCallback(async () => {
+        if (notificationRequestInFlight.current) return;
+        notificationRequestInFlight.current = true;
+        try {
+            const { data } = await axios.get(`${API}/admin/notifications/logs?limit=50`, authConfig());
+            if (!Array.isArray(data)) throw new Error('Notification logs response was not a list.');
+            const adminEmail = localStorage.getItem('email')?.toLowerCase();
+            setNotificationLogs(adminEmail
+                ? data.filter(item => item.status === 'sent' && item.recipient?.toLowerCase() === adminEmail)
+                : []);
+            setNotificationError(false);
+        } catch (error) {
+            console.error('Unable to load Administrator dashboard notifications:', error);
+            setNotificationError(true);
+        } finally {
+            notificationRequestInFlight.current = false;
+            setNotificationLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        const initialLoadTimer = window.setTimeout(fetchNotificationData, 0);
+        const refresh = () => fetchNotificationData();
+        const timer = window.setInterval(refresh, 60_000);
+        window.addEventListener('focus', refresh);
+        return () => {
+            window.clearTimeout(initialLoadTimer);
+            window.clearInterval(timer);
+            window.removeEventListener('focus', refresh);
+        };
+    }, [fetchNotificationData]);
+
     const quickLinks = [
         { label: 'User Registry', desc: 'Manage access roles', path: '/admin/users', icon: Users },
         { label: 'Flagged Focus', desc: 'Review critical risk', path: '/admin/flagged', icon: AlertTriangle },
@@ -259,8 +298,6 @@ const AdminDashboard = () => {
     const pct = (value, total) => (total ? Math.round((value / total) * 100) : 0);
 
     const todayLabel = formatAdminDate(new Date(), { weekday: 'long' });
-    const systemStatus = loading ? 'Checking' : dashboardError ? 'Unavailable' : 'Operational';
-    const systemStatusColor = dashboardError ? DANGER : SUCCESS;
 
     return (
         <div className="min-h-screen" style={{ background: BG, ...sans }}>
@@ -273,7 +310,7 @@ const AdminDashboard = () => {
             <div className="w-full px-5 sm:px-8 py-8" style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
 
                 {/* ── Page header ── */}
-                <header className="flex flex-col lg:flex-row lg:items-start justify-between gap-5">
+                <header className="flex flex-col lg:flex-row lg:items-start justify-between gap-5" style={{ position: 'relative', zIndex: 30 }}>
                     <div className="min-w-0">
                         <span style={{ ...sans, fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.24em', textTransform: 'uppercase', color: BRONZE }}>Admin Portal</span>
                         <h1 style={{ ...serif, fontSize: '2rem', fontWeight: 700, color: PRIMARY, marginTop: 4, letterSpacing: '-0.01em', lineHeight: 1.15 }}>Executive Intelligence Dashboard</h1>
@@ -282,21 +319,21 @@ const AdminDashboard = () => {
                         </p>
                         <p style={{ ...sans, fontSize: '0.8rem', color: MUTED, marginTop: 8 }}>Welcome back, {name || 'Admin'}.</p>
                     </div>
-                    <div className="flex flex-wrap gap-3 flex-shrink-0">
-                        <div className="flex items-center gap-2.5 px-4 py-3" style={{ ...cardStyle, borderRadius: 14 }}>
-                            <CalendarDays size={18} style={{ color: BRONZE }} />
-                            <div>
-                                <p style={{ ...sans, fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: MUTED }}>Today</p>
-                                <p style={{ ...sans, fontSize: '0.8rem', fontWeight: 600, color: INK }}>{todayLabel}</p>
-                            </div>
+                    <div className="flex items-center gap-4 px-4 py-3 flex-shrink-0" style={{ ...cardStyle, borderRadius: 14 }}>
+                        <CalendarDays size={18} style={{ color: BRONZE }} />
+                        <div>
+                            <p style={{ ...sans, fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: MUTED }}>Today</p>
+                            <p style={{ ...sans, fontSize: '0.8rem', fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>{todayLabel}</p>
                         </div>
-                        <div className="flex items-center gap-2.5 px-4 py-3" style={{ ...cardStyle, borderRadius: 14 }}>
-                            <span className="rounded-full flex-shrink-0" style={{ width: 8, height: 8, background: systemStatusColor }} />
-                            <div>
-                                <p style={{ ...sans, fontSize: '0.58rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: MUTED }}>System Status</p>
-                                <p style={{ ...sans, fontSize: '0.8rem', fontWeight: 600, color: systemStatusColor }}>{systemStatus}</p>
-                            </div>
-                        </div>
+                        <div aria-hidden="true" style={{ alignSelf: 'stretch', width: 1, background: BORDER, margin: '0 2px' }} />
+                        <AdminNotifications
+                            loading={notificationLoading}
+                            summary={notificationSummary}
+                            logs={notificationLogs}
+                            error={notificationError}
+                            onRetry={fetchNotificationData}
+                            onNavigate={navigate}
+                        />
                     </div>
                 </header>
                 {dashboardError && (
@@ -346,22 +383,23 @@ const AdminDashboard = () => {
 
                     {/* System Activity */}
                     <section className="min-w-0 overflow-hidden" style={{ ...cardStyle, padding: 22 }}>
-                        <PanelHeader icon={Clock} title="System Activity" subtitle="Core system events trail." />
+                        <PanelHeader icon={Clock} title="System Activity" subtitle="Latest system events."
+                            action={<OutlineButton onClick={() => navigate('/admin/security')}>View Audit Log</OutlineButton>} />
                         <div>
                             {recentActivity.length === 0 ? (
                                 <p style={{ ...sans, fontSize: '0.82rem', color: MUTED, textAlign: 'center', padding: '32px 0' }}>No recent activity.</p>
-                            ) : recentActivity.map((item, i) => (
-                                <div key={item.id} className="relative pl-6" style={{ paddingBottom: i < recentActivity.length - 1 ? 18 : 0 }}>
-                                    {i < recentActivity.length - 1 && (
+                            ) : recentActivity.slice(0, 5).map((item, i, visibleActivity) => (
+                                <div key={item.id} className="relative pl-6" style={{ paddingBottom: i < visibleActivity.length - 1 ? 12 : 0 }}>
+                                    {i < visibleActivity.length - 1 && (
                                         <span className="absolute" style={{ left: 4.5, top: 14, bottom: -2, width: 1, background: BORDER }} />
                                     )}
                                     <span className="absolute rounded-full" style={{ width: 10, height: 10, left: 0, top: 4, background: activityDotColor(item.status) }} />
-                                    <p style={{ ...sans, fontSize: '0.8rem', fontWeight: 600, color: INK }}>{item.message}</p>
+                                    <p title={item.message} style={{ ...sans, fontSize: '0.76rem', fontWeight: 600, color: INK, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden', overflowWrap: 'anywhere' }}>{item.message}</p>
                                     <div className="flex items-center gap-2 mt-1">
                                         <span style={{ ...sans, fontSize: '0.68rem', color: MUTED, display: 'flex', alignItems: 'center', gap: 3 }}>
                                             <Clock size={10} /> {item.time}
                                         </span>
-                                        <span className="px-1.5 py-0.5 rounded-full" style={{ ...sans, fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', background: `${BRONZE}14`, color: BRONZE }}>
+                                        <span className="max-w-[120px] truncate px-1.5 py-0.5 rounded-full" title={item.type} style={{ ...sans, fontSize: '0.58rem', fontWeight: 700, textTransform: 'uppercase', background: `${BRONZE}14`, color: BRONZE }}>
                                             {item.type}
                                         </span>
                                     </div>

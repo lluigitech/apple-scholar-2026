@@ -709,11 +709,10 @@ const ScholarProfileView = () => {
                                 <div className="w-full h-1.5 rounded-full overflow-hidden mb-5" style={{ background: `${SUCCESS}18` }}>
                                     <div className="h-full rounded-full" style={{ width: `${attRate}%`, backgroundColor: SUCCESS }} />
                                 </div>
-                                <div className="grid grid-cols-3 gap-3">
+                                <div className="grid grid-cols-2 gap-3">
                                     {[
                                         { label: 'Present', value: attSummary.present || 0, color: SUCCESS },
                                         { label: 'Absent',  value: attSummary.absent || 0,  color: DANGER },
-                                        { label: 'Excused', value: attSummary.excused || 0, color: WARNING },
                                     ].map(s => (
                                         <div key={s.label} className="text-center p-3 rounded-xl" style={{ background: `${s.color}0C` }}>
                                             <p style={{ ...serif, fontSize: '1.3rem', fontWeight: 600, color: s.color }}>{s.value}</p>
@@ -890,7 +889,8 @@ const ScholarProfileView = () => {
                                         ))}
                                     </div>
                                     {attendance.map((att, i) => {
-                                        const aColor = att.status === 'present' ? SUCCESS : att.status === 'excused' ? WARNING : DANGER;
+                                        const status = att.status === 'excused' ? 'absent' : att.status;
+                                        const aColor = status === 'present' ? SUCCESS : status === 'late' ? WARNING : DANGER;
                                         return (
                                             <div key={i} className="grid grid-cols-[minmax(0,1fr)_auto] sm:grid-cols-[130px_minmax(0,1fr)_110px_96px] gap-x-4 gap-y-1 items-center px-6 py-3.5"
                                                 style={{ borderBottom: i < attendance.length - 1 ? `1px solid ${BORDER}` : 'none' }}>
@@ -900,7 +900,7 @@ const ScholarProfileView = () => {
                                                 <span className="justify-self-end sm:justify-self-start inline-flex px-2.5 py-1 rounded-full" style={{
                                                     ...sans, fontSize: '0.62rem', fontWeight: 700, textTransform: 'uppercase',
                                                     background: `${aColor}14`, color: aColor, width: 'fit-content',
-                                                }}>{att.status}</span>
+                                                }}>{status}</span>
                                                 <span className="sm:hidden col-span-2" style={{ ...sans, fontSize: '0.7rem', color: MUTED }}>via {att.method}</span>
                                             </div>
                                         );

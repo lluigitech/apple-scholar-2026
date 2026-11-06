@@ -7,7 +7,23 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "bootstrap-db": "node ./scripts/bootstrap-db.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test"
+  },
+  "nodemonConfig": {
+    "watch": [
+      "server.js",
+      "config",
+      "controllers",
+      "middleware",
+      "routes",
+      "services",
+      "utils"
+    ],
+    "ignore": [
+      "backups/**",
+      "uploads/**",
+      "assets/images/**"
+    ]
   },
   "keywords": [],
   "author": "",

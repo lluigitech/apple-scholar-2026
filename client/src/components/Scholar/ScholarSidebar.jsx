@@ -6,7 +6,6 @@ import {
   CheckSquare,
   LogOut,
   X,
-  User,
   CalendarDays,
   Settings,
   ClipboardList,
@@ -43,7 +42,7 @@ const ScholarSidebar = ({ isOpen, onClose, collapsed = false }) => {
   const handleLogout = async () => {
     await axios.post('http://localhost:5000/api/logout', {}, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }).catch(() => {});
     localStorage.clear();
-    navigate('/');
+    navigate('/login');
   };
 
   const getInitials = (fullName) => {
@@ -75,7 +74,6 @@ const ScholarSidebar = ({ isOpen, onClose, collapsed = false }) => {
     {
       group: 'Account',
       items: [
-        { name: 'Profile', path: '/scholar/profile', icon: User },
         { name: 'Settings', path: '/scholar/settings', icon: Settings },
       ],
     },

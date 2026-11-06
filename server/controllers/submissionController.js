@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
-const archiver = require('archiver');
+const { ZipArchive } = require('archiver');
 const db = require('../config/db');
 const { getAssignedYearLevels, applyOfficerYearLevelFilter, normalizeYearLevel, yearLevelSqlExpression } = require('../utils/officerAssignments');
 const cloudinary = require('../config/cloudinary');
@@ -17,16 +17,17 @@ const { canAccessScholar, logPrivacyAccess } = require('../middleware/privacyAcc
 const { consumeCompleted, removeSession } = require('../services/resumableUploadService');
 const { predictSentimentForLetter, predictContentScoreForLetter, mapSentimentValueToLabel } = require('../services/sentimentService');
 const { predictLetterScore, mapQualityStatus, mapQualityLabel } = require('../services/letterScoreService');
+const { buildSubmissionReviewEmail } = require('../utils/emailTemplates');
 
 const normalizeManualWorkflowStatus = (value) => {
     const normalized = String(value || '').trim().toLowerCase();
-    if (['pending', 'under_review', 'approved', 'returned', 'rejected'].includes(normalized)) {
+    if (normalized === 'rejected') {
+        return 'returned';
+    }
+    if (['pending', 'under_review', 'approved', 'returned'].includes(normalized)) {
         return normalized;
     }
     if (['needs_revision', 'needs-revision', 'needs revision'].includes(normalized)) {
-        return 'returned';
-    }
-    if (normalized === 'rejected') {
         return 'returned';
     }
     return 'pending';
@@ -41,6 +42,7 @@ const taskTypeForSubmission = {
     letter: 'Monthly Report',
     report_card: 'Report Card',
     cor: 'COR Upload',
+    other: 'Other Documents',
 };
 
 const parseTaskYearLevels = (value) => {
@@ -57,7 +59,8 @@ const findLatestAssignedTask = async (scholarId, submissionType) => {
     const taskType = taskTypeForSubmission[submissionType];
     if (!taskType) return null;
     const [rows] = await db.promise().query(
-        `SELECT t.id, t.created_at, t.target_year_levels, u.year_level
+        `SELECT t.id, t.created_at, t.due_date, t.target_year_levels, u.year_level,
+                (t.due_date IS NOT NULL AND t.due_date < CURRENT_DATE()) AS deadline_passed
          FROM tasks t
          JOIN users u ON u.scholar_id = ? AND u.role = 'scholar'
          WHERE t.type = ? AND t.is_active = 1
@@ -68,6 +71,27 @@ const findLatestAssignedTask = async (scholarId, submissionType) => {
         const levels = parseTaskYearLevels(task.target_year_levels);
         return !levels.length || levels.some((level) => normalizeYearLevel(level) === normalizeYearLevel(task.year_level));
     }) || null;
+};
+
+exports.getScholarTaskDeadlines = async (req, res) => {
+    const scholarId = req.user.scholar_id;
+    if (!scholarId) return res.status(403).json({ error: 'Scholar account could not be identified.' });
+
+    try {
+        const taskTypes = ['letter', 'report_card', 'cor', 'other'];
+        const deadlines = await Promise.all(taskTypes.map(async (type) => {
+            const task = await findLatestAssignedTask(scholarId, type);
+            return [type, {
+                assigned: Boolean(task),
+                closed: Boolean(task && Number(task.deadline_passed) === 1),
+                due_date: task?.due_date || null,
+            }];
+        }));
+        return res.json(Object.fromEntries(deadlines));
+    } catch (error) {
+        console.error('Error fetching scholar task deadlines:', error);
+        return res.status(500).json({ error: 'Could not verify task deadlines.' });
+    }
 };
 
 const isManualValidationVisibleStatus = (status, finalizedAt) => {
@@ -230,18 +254,24 @@ exports.finalizeScholarDossier = async (req, res) => {
         await connection.beginTransaction();
         const [[submissionCounts]] = await connection.query(
                 `SELECT COUNT(*) AS total,
-                    SUM(CASE WHEN COALESCE(status, 'pending') NOT IN ('approved', 'archived') THEN 1 ELSE 0 END) AS pending
+                    SUM(CASE WHEN COALESCE(status, 'pending') NOT IN ('approved', 'archived') THEN 1 ELSE 0 END) AS pending,
+                    MAX(CASE WHEN status = 'approved' THEN COALESCE(approved_at, reviewed_at, submitted_at) END) AS latest_approved_at,
+                    SUM(CASE WHEN status = 'approved' AND COALESCE(approved_at, reviewed_at, submitted_at) IS NULL THEN 1 ELSE 0 END) AS approvals_without_timestamp
              FROM submissions WHERE scholar_id = ? AND finalized_at IS NULL`,
             [scholarId]
         );
         const [[gradeCounts]] = await connection.query(
                 `SELECT COUNT(*) AS total,
-                    SUM(CASE WHEN COALESCE(verification_status, 'pending') <> 'approved' THEN 1 ELSE 0 END) AS pending
-             FROM grades WHERE scholar_id = ? AND finalized_at IS NULL`,
-            [scholarId]
+                        SUM(CASE WHEN COALESCE(verification_status, 'pending') <> 'approved' THEN 1 ELSE 0 END) AS pending,
+                        MAX(CASE WHEN verification_status = 'approved' THEN COALESCE(approved_at, created_at) END) AS latest_approved_at,
+                        SUM(CASE WHEN verification_status = 'approved' AND COALESCE(approved_at, created_at) IS NULL THEN 1 ELSE 0 END) AS approvals_without_timestamp
+                 FROM grades WHERE scholar_id = ? AND finalized_at IS NULL`,
+                [scholarId]
         );
         const total = Number(submissionCounts.total || 0) + Number(gradeCounts.total || 0);
         const pending = Number(submissionCounts.pending || 0) + Number(gradeCounts.pending || 0);
+        const approvalsWithoutTimestamp = Number(submissionCounts.approvals_without_timestamp || 0)
+            + Number(gradeCounts.approvals_without_timestamp || 0);
         if (!total) {
             await connection.rollback();
             return res.status(409).json({ error: 'There are no unfinalized submissions in this dossier.' });
@@ -249,6 +279,21 @@ exports.finalizeScholarDossier = async (req, res) => {
         if (pending) {
             await connection.rollback();
             return res.status(409).json({ error: `${pending} submission item(s) still need approval or revision.` });
+        }
+        if (approvalsWithoutTimestamp) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'Approved submissions are missing an approval timestamp and cannot be moved to Reports yet.' });
+        }
+
+        const latestApprovalDates = [
+            submissionCounts.latest_approved_at,
+            gradeCounts.latest_approved_at,
+        ].filter(Boolean).map(value => new Date(value).getTime());
+        const latestApproval = latestApprovalDates.length ? Math.max(...latestApprovalDates) : null;
+        const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+        if (latestApproval !== null && Date.now() - latestApproval < threeDaysMs) {
+            await connection.rollback();
+            return res.status(409).json({ error: 'Approved submissions remain in Manual Validation for 3 days before moving to Reports.' });
         }
 
         const batchId = randomUUID();
@@ -443,17 +488,10 @@ exports.submitCompliance = async (req, res) => {
         }
         const stagedFiles = await Promise.all(resumableIds.map(id => consumeCompleted(id, scholar_id)));
         const uploadedFiles = [...Object.values(req.files || {}).flat(), ...stagedFiles];
-        await uploadPermanentFiles(uploadedFiles);
-        await registerFileAssets(scholar_id, uploadedFiles);
-        await Promise.all(resumableIds.map(removeSession));
-        const reportCardPath = uploadedFiles.find(file => file.fieldname === 'report_card')?.path || null;
-        const corPath = uploadedFiles.find(file => file.fieldname === 'cor')?.path || null;
-        const mediaFiles = uploadedFiles.filter(file => file.fieldname === 'media');
-
         const resolvedType = normalizeSubmissionType(submission_type, {
             hasLetter: !!(letter_content && letter_content.trim()),
-            hasReportCard: !!reportCardPath,
-            hasCor: !!corPath,
+            hasReportCard: uploadedFiles.some(file => file.fieldname === 'report_card'),
+            hasCor: uploadedFiles.some(file => file.fieldname === 'cor'),
         });
         const assignedTask = await findLatestAssignedTask(scholar_id, resolvedType);
         if (!assignedTask) {
@@ -463,6 +501,22 @@ exports.submitCompliance = async (req, res) => {
                 requirement_type: resolvedType,
             });
         }
+        if (Number(assignedTask.deadline_passed) === 1) {
+            await Promise.all(resumableIds.map(removeSession));
+            return res.status(409).json({
+                error: 'The deadline for this task has passed. Submissions are closed.',
+                requirement_type: resolvedType,
+                due_date: assignedTask.due_date,
+            });
+        }
+
+        let modelScorePrediction = null;
+        await uploadPermanentFiles(uploadedFiles);
+        await registerFileAssets(scholar_id, uploadedFiles);
+        await Promise.all(resumableIds.map(removeSession));
+        const reportCardPath = uploadedFiles.find(file => file.fieldname === 'report_card')?.path || null;
+        const corPath = uploadedFiles.find(file => file.fieldname === 'cor')?.path || null;
+        const mediaFiles = uploadedFiles.filter(file => file.fieldname === 'media');
 
         const normalizedPayload = {
             scholar_id,
@@ -490,18 +544,17 @@ exports.submitCompliance = async (req, res) => {
 
         let prediction = null;
         let contentPrediction = null;
-        let modelScorePrediction = null;
         if (resolvedType === 'letter' && normalizedPayload.letter_content) {
             prediction = await predictSentimentForLetter(normalizedPayload.letter_content);
             contentPrediction = await predictContentScoreForLetter(normalizedPayload.letter_content);
             try {
                 modelScorePrediction = await predictLetterScore(normalizedPayload.letter_content);
-                if (modelScorePrediction?.score != null) {
-                    normalizedPayload.quality_score = normalizeSubmissionValue(modelScorePrediction.score);
-                    normalizedPayload.quality_status = normalizeQualityStatus(normalizeSubmissionValue(modelScorePrediction.quality_status));
-                }
             } catch (scoreErr) {
-                console.warn('Warning: model score prediction unavailable; keeping existing rule-based letter quality fields.', scoreErr?.message || scoreErr);
+                console.warn('Warning: model score prediction unavailable; keeping submitted letter quality fields.', scoreErr?.message || scoreErr);
+            }
+            if (modelScorePrediction?.score != null) {
+                normalizedPayload.quality_score = normalizeSubmissionValue(modelScorePrediction.score);
+                normalizedPayload.quality_status = normalizeQualityStatus(normalizeSubmissionValue(modelScorePrediction.quality_status));
             }
         }
 
@@ -924,8 +977,7 @@ exports.previewCloudinaryFile = async (req, res) => {
             return res.status(404).json({ error: 'File is not registered in the system' });
         }
         const scholarId = fileRows[0].scholar_id;
-        const isOfficerLetter = req.user?.role !== 'officer' || fileRows[0].resource_type === 'letter';
-        const canView = isOfficerLetter && await canAccessScholar(req, scholarId, { document: true });
+        const canView = await canAccessScholar(req, scholarId, { document: true });
         await logPrivacyAccess(req, {
             action: canView ? 'VIEW_DOCUMENT' : 'DENIED_ACCESS',
             resourceType: 'scholar_document',
@@ -1158,8 +1210,8 @@ exports.getScholarSubmissions = (req, res) => {
                     level => normalizeYearLevel(level) === normalizeYearLevel(yearLevel)
                 );
                 return {
-                    submissions: submissions.filter(row => row.submission_type === 'letter' && isAssignedYearLevel(row.year_level)),
-                    gradeRows: [],
+                    submissions: submissions.filter(row => isAssignedYearLevel(row.year_level)),
+                    gradeRows: gradeRows.filter(row => isAssignedYearLevel(row.year_level)),
                     levels,
                 };
             };
@@ -1191,12 +1243,11 @@ exports.getScholarSubmissions = (req, res) => {
 
             // --- group submissions rows by scholar + type ---
             visibleSubmissions.forEach(row => {
-                const bucket = ensureScholar(row.scholar_id, row.full_name, row.year_level);
-
                 if (!isManualValidationVisibleStatus(row.status, row.finalized_at)) {
                     return;
                 }
 
+                const bucket = ensureScholar(row.scholar_id, row.full_name, row.year_level);
                 const media = (row.media_raw || '')
                     .split(';;')
                     .filter(Boolean)
@@ -1251,6 +1302,7 @@ exports.getScholarSubmissions = (req, res) => {
                     semMap[key] = {
                         scholar_id: row.scholar_id,
                         full_name: row.full_name,
+                        year_level: row.year_level,
                         semester: row.semester,
                         academic_year: row.academic_year,
                         proof_path: row.proof_path,
@@ -1299,12 +1351,15 @@ exports.getScholarSubmissions = (req, res) => {
                     res.json(Object.values(scholars));
                 }
             );
-            }).catch(() => res.status(500).json({ error: 'Failed to resolve officer assignments.' }));
+            }).catch((assignmentError) => {
+                console.error('Error resolving Officer assignments for submissions:', assignmentError);
+                return res.status(500).json({ error: 'Failed to resolve officer assignments.' });
+            });
         });
     });
 };
 
-// APPROVE / REJECT SUBMISSION (Staff/Admin/Officer)
+// APPROVE / RETURN SUBMISSION (Officer)
 // Works for ANY submission_type (letter, report_card, cor, other) since they're
 // all just rows in `submissions` with their own id.
 exports.reviewSubmission = (req, res) => {
@@ -1327,10 +1382,13 @@ exports.reviewSubmission = (req, res) => {
     }
 
     const resolvedStatus = normalizeManualWorkflowStatus(requestedStatus);
-    if (req.user.role === 'officer' && !['approved', 'returned'].includes(resolvedStatus)) {
-        return res.status(400).json({ error: "Officers may only 'approve' or 'return' a letter." });
-    }
     const comment = typeof staff_comment === 'string' ? staff_comment.trim() : '';
+    if (req.user.role !== 'officer') {
+        return res.status(403).json({ error: 'Only Officers may validate submissions.' });
+    }
+    if (!['approved', 'returned'].includes(resolvedStatus)) {
+        return res.status(400).json({ error: "Officers may only 'approve' or 'return' a submission." });
+    }
     if (staff_comment != null && typeof staff_comment !== 'string') {
         return res.status(400).json({ error: 'Review comments must be text.' });
     }
@@ -1347,30 +1405,28 @@ exports.reviewSubmission = (req, res) => {
             s.officer_comment = ?,
             s.reviewed_at = NOW(),
             s.approved_at = CASE WHEN ? = 'approved' THEN NOW() ELSE NULL END,
-            s.finalized_at = CASE WHEN ? = 'approved' THEN NOW() ELSE NULL END,
-            s.export_available_at = CASE WHEN ? = 'approved' THEN NOW() ELSE NULL END,
-            s.finalization_batch_id = CASE WHEN ? = 'approved' THEN ? ELSE NULL END,
+            s.finalized_at = NULL,
+            s.export_available_at = CASE WHEN ? = 'approved' THEN DATE_ADD(NOW(), INTERVAL 3 DAY) ELSE NULL END,
+            s.finalization_batch_id = NULL,
             s.archive_at = NULL,
             s.returned_at = CASE WHEN ? IN ('returned', 'rejected') THEN NOW() ELSE NULL END
         WHERE s.id = ?
-          AND (? <> 'officer' OR s.submission_type = 'letter')
           AND (? <> 'officer' OR (s.finalized_at IS NULL AND s.status IN ('pending', 'under_review')))
           AND (? <> 'officer' OR EXISTS (
               SELECT 1 FROM officer_year_level_assignments oya
                             WHERE oya.officer_id = ?
                                 AND ${yearLevelSqlExpression('oya.year_level')} = ${yearLevelSqlExpression('u.year_level')}
           ))`;
-    const exportBatchId = resolvedStatus === 'approved' ? randomUUID() : null;
-    db.query(sql, [resolvedStatus, comment || null, resolvedStatus, resolvedStatus, resolvedStatus, resolvedStatus, exportBatchId, resolvedStatus, id, req.user.role, req.user.role, req.user.role, req.user.id], (err, result) => {
+        db.query(sql, [resolvedStatus, comment || null, resolvedStatus, resolvedStatus, resolvedStatus, id, req.user.role, req.user.role, req.user.id], (err, result) => {
         if (err) return res.status(500).json({ error: 'Error updating submission' });
         logPrivacyAccess(req, {
             action: result.affectedRows
-                ? (req.user.role === 'officer' ? 'VALIDATE_LETTER' : 'UPDATE_SUBMISSION')
+                ? (req.user.role === 'officer' ? 'VALIDATE_SUBMISSION' : 'UPDATE_SUBMISSION')
                 : 'DENIED_ACCESS',
-            resourceType: req.user.role === 'officer' ? 'letter' : 'submission',
+            resourceType: 'submission',
             resourceId: id,
             status: result.affectedRows ? 'allowed' : 'denied',
-        }).catch((auditError) => console.error('Failed to log letter validation access:', auditError));
+        }).catch((auditError) => console.error('Failed to log submission validation access:', auditError));
         if (!result.affectedRows) {
             if (req.user.role !== 'officer') {
                 return res.status(404).json({ error: 'Submission not found.' });
@@ -1394,10 +1450,10 @@ exports.reviewSubmission = (req, res) => {
                         return res.status(500).json({ error: 'Unable to verify submission review access.' });
                     }
                     if (!rows.length) return res.status(404).json({ error: 'Submission not found.' });
-                    if (rows[0].submission_type !== 'letter' || !rows[0].assigned) {
+                    if (!rows[0].assigned) {
                         return res.status(403).json({ error: 'This submission is outside your assigned year levels.' });
                     }
-                    return res.status(409).json({ error: 'This letter has already been reviewed or is no longer reviewable.' });
+                    return res.status(409).json({ error: 'This submission has already been reviewed or is no longer reviewable.' });
                 }
             );
         }
@@ -1442,12 +1498,22 @@ exports.reviewSubmission = (req, res) => {
                         : resolvedStatus === 'returned'
                             ? `Hello ${user.full_name || ''},\n\nYour ${sub.submission_type || 'submission'} was returned for revision.\n\nComment from staff: ${staff_comment || 'No comment provided.'}`
                             : `Hello ${user.full_name || ''},\n\nThe status of your submission has been updated to: ${resolvedStatus}.\n\nComment: ${staff_comment || 'No comment provided.'}`;
+                    const clientUrl = (process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/+$/, '');
+                    const actionUrl = /^https?:\/\/[^/]+/i.test(clientUrl) ? `${clientUrl}/scholar/submission` : undefined;
 
                     transporter.sendMail({
                         from: process.env.SMTP_FROM || process.env.SMTP_USER,
                         to: user.email,
                         subject,
                         text,
+                        html: buildSubmissionReviewEmail({
+                            recipientName: user.full_name,
+                            submissionTitle: sub.submission_type || 'submission',
+                            submissionType: sub.submission_type,
+                            status: resolvedStatus,
+                            comment: staff_comment || 'No comment provided.',
+                            actionUrl,
+                        }),
                     }).then((info) => {
                         // Log success to notification_logs
                         const detail = typeof info === 'object' ? JSON.stringify(info) : String(info);
@@ -1681,6 +1747,9 @@ exports.submitGrades = (req, res) => {
             if (!assignedTask) {
                 throw Object.assign(new Error('You cannot submit grades because there is no active Report Card task assigned by the administrator yet.'), { statusCode: 409 });
             }
+            if (Number(assignedTask.deadline_passed) === 1) {
+                throw Object.assign(new Error('The deadline for this task has passed. Submissions are closed.'), { statusCode: 409 });
+            }
             return uploadBufferToCloudinary(req.file);
         })
         .then(async (asset) => {
@@ -1811,40 +1880,64 @@ const saveGradesWithProofPath = (req, res, scholar_id, semester, academic_year, 
     );
 };
 
-// APPROVE / REJECT AN ENTIRE SEMESTER'S GRADES SUBMISSION (Staff/Admin/Officer)
+// APPROVE / REJECT AN ENTIRE SEMESTER'S GRADES SUBMISSION (Officer)
 // Grades are stored ONE ROW PER SUBJECT (no single submission id), so a
 // review updates every row that belongs to this scholar+semester+academic_year
 // together, in one UPDATE.
 exports.reviewGrades = (req, res) => {
     const { scholar_id, semester, academic_year, status, staff_comment } = req.body;
 
+    if (req.user?.role !== 'officer') {
+        return res.status(403).json({ error: 'Only Officers may validate grades.' });
+    }
     if (!scholar_id || !semester || !academic_year || !status) {
         return res.status(400).json({ error: 'scholar_id, semester, academic_year, and status are required' });
     }
 
     const normalizedStatus = typeof status === 'string' ? status.trim().toLowerCase() : '';
-    const validStatuses = ['approved', 'rejected', 'pending'];
+    const validStatuses = ['approved', 'rejected'];
     if (!validStatuses.includes(normalizedStatus)) {
-        return res.status(400).json({ error: 'Invalid status. Must be approved, rejected, or pending' });
+        return res.status(400).json({ error: 'Invalid status. Officers may only approve or reject grades.' });
+    }
+    if (staff_comment != null && typeof staff_comment !== 'string') {
+        return res.status(400).json({ error: 'Review comments must be text.' });
+    }
+    const comment = typeof staff_comment === 'string' ? staff_comment.trim() : '';
+    if (comment.length > 4000) {
+        return res.status(400).json({ error: 'Review comments must not exceed 4000 characters.' });
+    }
+    if (normalizedStatus === 'rejected' && !comment) {
+        return res.status(400).json({ error: 'A reason is required when rejecting grades.' });
     }
 
     const sql = `
         UPDATE grades
         SET verification_status = ?,
             officer_comment = ?,
-            finalized_at = CASE WHEN ? = 'approved' THEN NOW() ELSE NULL END,
-            export_available_at = CASE WHEN ? = 'approved' THEN NOW() ELSE NULL END,
-            finalization_batch_id = CASE WHEN ? = 'approved' THEN ? ELSE NULL END
+            approved_at = CASE WHEN ? = 'approved' THEN NOW() ELSE NULL END,
+            finalized_at = NULL,
+            export_available_at = CASE WHEN ? = 'approved' THEN DATE_ADD(NOW(), INTERVAL 3 DAY) ELSE NULL END,
+            finalization_batch_id = NULL
         WHERE scholar_id = ? AND semester = ? AND academic_year = ?
+          AND verification_status = 'pending'
+          AND finalized_at IS NULL
+          AND EXISTS (
+              SELECT 1 FROM users u
+              WHERE u.scholar_id = grades.scholar_id
+                AND EXISTS (
+                    SELECT 1 FROM officer_year_level_assignments oya
+                    WHERE oya.officer_id = ?
+                      AND ${yearLevelSqlExpression('oya.year_level')} = ${yearLevelSqlExpression('u.year_level')}
+                )
+          )
     `;
-    const exportBatchId = normalizedStatus === 'approved' ? randomUUID() : null;
-    db.query(sql, [normalizedStatus, staff_comment || null, normalizedStatus, normalizedStatus, normalizedStatus, exportBatchId, scholar_id, semester, academic_year], (err, result) => {
+    db.query(sql, [normalizedStatus, comment || null, normalizedStatus, normalizedStatus, scholar_id, semester, academic_year, req.user.id], (err, result) => {
         if (err) {
             console.error('Error reviewing grades:', err);
             return res.status(500).json({ error: 'Error reviewing grades' });
         }
         if (result.affectedRows === 0) {
-            return res.status(404).json({ error: 'No matching grades submission found for that scholar/semester/year' });
+            return res.status(404).json({ error: 'No pending grades submission found within your assigned year levels.' });
         }
         res.json({ message: 'Grades reviewed successfully' });
     });
@@ -1855,6 +1948,9 @@ exports.reviewGrades = (req, res) => {
 exports.getAllGrades = (req, res) => {
     const conditions = [];
     const values = [];
+    if (req.user.role === 'admin') {
+        conditions.push('g.finalized_at IS NOT NULL');
+    }
     if (req.user.role === 'staff') {
         conditions.push(`EXISTS (
             SELECT 1 FROM scholar_group_members scoped_members
@@ -2160,41 +2256,70 @@ exports.getOrGenerateSubmissionPdf = async (req, res) => {
     }
 };
 
-exports.downloadMonthlyLetterPdfs = async (req, res) => {
-    const requestedIds = req.body?.submissionIds;
-    if (!Array.isArray(requestedIds) || requestedIds.length === 0) {
-        return res.status(400).json({ error: 'Select at least one monthly letter.' });
+const formatMonthlyLetterPeriod = (value) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return 'Unknown_Month';
+    return new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric' })
+        .format(date)
+        .replace(/\s+/g, '_');
+};
+
+const safeDownloadName = (value, fallback) =>
+    String(value || fallback).replace(/[^a-z0-9._-]+/gi, '_');
+
+const safeArchiveFolderPart = (value, fallback) =>
+    String(value || fallback).replace(/[<>:"/\\|?*\x00-\x1F]/g, '').trim();
+
+const readGeneratedPdf = async (filePath) => {
+    if (/^https:\/\//i.test(filePath)) {
+        const parsed = new URL(filePath);
+        if (parsed.hostname !== 'res.cloudinary.com') throw new Error('Unsupported PDF storage host.');
+        const response = await fetch(parsed);
+        if (!response.ok) throw new Error('Stored PDF could not be retrieved.');
+        return Buffer.from(await response.arrayBuffer());
     }
 
-    const ids = [...new Set(requestedIds.map(Number))];
-    if (ids.length > 500 || ids.some(id => !Number.isSafeInteger(id) || id <= 0)) {
-        return res.status(400).json({ error: 'The selected monthly letter list is invalid.' });
+    const uploadsRoot = path.resolve(__dirname, '..', 'uploads');
+    const relativePath = String(filePath).replace(/^\/?uploads[\\/]/i, '');
+    if (!relativePath.startsWith('generated-letters/')) throw new Error('Invalid generated PDF path.');
+    const localPath = path.resolve(uploadsRoot, relativePath);
+    if (!localPath.startsWith(`${uploadsRoot}${path.sep}`)) throw new Error('Invalid generated PDF path.');
+    return fs.promises.readFile(localPath);
+};
+
+const getMonthlyLetterRows = async (ids) => {
+    const [rows] = await db.promise().query(
+        `SELECT s.id, s.generated_pdf_path, s.status, s.submission_type,
+                s.submitted_at, u.full_name, u.year_level
+         FROM submissions s
+         INNER JOIN users u ON u.scholar_id = s.scholar_id
+         WHERE s.id IN (?) AND s.status = 'approved' AND s.submission_type = 'letter'`,
+        [ids]
+    );
+    return rows;
+};
+
+exports.downloadMonthlyLetterPdf = async (req, res) => {
+    const submissionId = Number(req.body?.submissionId);
+    if (!Number.isSafeInteger(submissionId) || submissionId <= 0) {
+        return res.status(400).json({ error: 'A valid monthly letter submission ID is required.' });
     }
 
     try {
         const [rows] = await db.promise().query(
-            `SELECT s.id, s.generated_pdf_path, s.letter_content, s.status, s.submission_type, u.full_name
+            `SELECT s.id, s.generated_pdf_path, s.status, s.submission_type,
+                    s.submitted_at, u.full_name
              FROM submissions s
              INNER JOIN users u ON u.scholar_id = s.scholar_id
-             WHERE s.id IN (?) AND s.status = 'approved' AND s.submission_type = 'letter'`,
-            [ids]
+             WHERE s.id = ? AND s.status = 'approved' AND s.submission_type = 'letter'`,
+            [submissionId]
         );
 
-        if (rows.length !== ids.length) {
-            return res.status(400).json({ error: 'Only approved monthly letter submissions can be exported.' });
+        if (!rows.length) {
+            return res.status(404).json({ error: 'Only approved monthly letter submissions can be exported.' });
         }
 
-        const archive = archiver('zip', { zlib: { level: 6 } });
-        const failures = [];
-        archive.on('warning', warning => console.warn('Monthly letter ZIP warning:', warning.message));
-        archive.on('error', archiveError => {
-            console.error('Monthly letter ZIP error:', archiveError);
-            if (!res.destroyed) res.destroy(archiveError);
-        });
-
-        res.setHeader('Content-Type', 'application/zip');
-        res.setHeader('Content-Disposition', `attachment; filename="monthly-letters-${new Date().toISOString().slice(0, 10)}.zip"`);
-        archive.pipe(res);
+        const row = rows[0];
 
         const uploadsRoot = path.resolve(__dirname, '..', 'uploads');
         const readPdfPath = async filePath => {
@@ -2213,40 +2338,137 @@ exports.downloadMonthlyLetterPdfs = async (req, res) => {
             return fs.promises.readFile(localPath);
         };
 
-        for (const row of rows) {
+        let pdfBuffer = null;
+        if (row.generated_pdf_path) {
             try {
-                let pdfBuffer = null;
-                if (row.generated_pdf_path) {
-                    try {
-                        pdfBuffer = await readPdfPath(row.generated_pdf_path);
-                    } catch {
-                        pdfBuffer = null;
+                pdfBuffer = await readPdfPath(row.generated_pdf_path);
+            } catch {
+                pdfBuffer = null;
+            }
+        }
+        if (!pdfBuffer) {
+            const generatedPath = await letterPdfGenerator.generateLetterPdf(row.id);
+            pdfBuffer = await readPdfPath(generatedPath);
+        }
+
+        const safeName = safeDownloadName(row.full_name, `Scholar-${row.id}`);
+        const period = formatMonthlyLetterPeriod(row.submitted_at);
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${safeName}_${period}_Monthly_Letter_${row.id}.pdf"`);
+        return res.send(pdfBuffer);
+    } catch (error) {
+        console.error('Monthly letter PDF export failed:', error);
+        return res.status(500).json({ error: 'Unable to generate the PDF document.' });
+    }
+};
+
+const downloadMonthlyLetterArchive = async (req, res, extension) => {
+    const requestedIds = req.body?.submissionIds;
+    if (!Array.isArray(requestedIds) || requestedIds.length === 0) {
+        return res.status(400).json({ error: 'Select at least one monthly letter.' });
+    }
+
+    const ids = [...new Set(requestedIds.map(Number))];
+    if (ids.length > 500 || ids.some(id => !Number.isSafeInteger(id) || id <= 0)) {
+        return res.status(400).json({ error: 'The selected monthly letter list is invalid.' });
+    }
+
+    try {
+        const rows = await getMonthlyLetterRows(ids);
+        if (rows.length !== ids.length) {
+            return res.status(400).json({ error: 'Only approved monthly letter submissions can be exported.' });
+        }
+
+        const archive = new ZipArchive({ zlib: { level: 6 } });
+        archive.on('warning', warning => console.warn('Monthly letter archive warning:', warning.message));
+        archive.on('error', archiveError => {
+            console.error('Monthly letter archive error:', archiveError);
+            if (!res.destroyed) res.destroy(archiveError);
+        });
+
+        const filename = `monthly-letters-${extension}-${new Date().toISOString().slice(0, 10)}.zip`;
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        archive.pipe(res);
+
+        for (const row of rows) {
+            const scholarName = safeDownloadName(row.full_name, `Scholar-${row.id}`);
+            const period = formatMonthlyLetterPeriod(row.submitted_at);
+            const yearLevel = letterPdfGenerator.formatYearLevelLabel(row.year_level) || 'Unknown Year Level';
+            const folderName = `${safeArchiveFolderPart(yearLevel, 'Unknown Year Level')} - ${period.replace(/_/g, ' ')}`;
+
+            try {
+                let documentBuffer;
+                if (extension === 'pdf') {
+                    if (row.generated_pdf_path) {
+                        try {
+                            documentBuffer = await readGeneratedPdf(row.generated_pdf_path);
+                        } catch {
+                            documentBuffer = null;
+                        }
                     }
-                }
-                if (!pdfBuffer) {
-                    const generatedPath = await letterPdfGenerator.generateLetterPdf(row.id);
-                    pdfBuffer = await readPdfPath(generatedPath);
+                    if (!documentBuffer) {
+                        const generatedPath = await letterPdfGenerator.generateLetterPdf(row.id);
+                        documentBuffer = await readGeneratedPdf(generatedPath);
+                    }
+                } else {
+                    documentBuffer = await letterPdfGenerator.generateLetterDocx(row.id);
                 }
 
-                const safeName = String(row.full_name || `Scholar-${row.id}`).replace(/[^a-z0-9._-]+/gi, '_');
-                archive.append(pdfBuffer, { name: `${safeName}_Monthly_Letter_${row.id}.pdf` });
-            } catch (pdfError) {
-                console.error(`Monthly letter PDF export failed for submission ${row.id}:`, pdfError);
-                failures.push(`Submission ${row.id} (${row.full_name || 'Scholar'}): ${pdfError.message}`);
+                archive.append(documentBuffer, {
+                    name: `${folderName}/${scholarName}_${period}_Monthly_Letter_${row.id}.${extension}`,
+                });
+            } catch (documentError) {
+                console.error(`Monthly letter ${extension.toUpperCase()} export failed for submission ${row.id}:`, documentError);
+                throw documentError;
             }
         }
 
-        if (failures.length) archive.append(Buffer.from(failures.join('\n')), { name: 'download-errors.txt' });
-        if (!rows.length || failures.length === rows.length) {
-            archive.append(Buffer.from('No monthly letter PDFs could be generated.'), { name: 'README.txt' });
-        }
         await archive.finalize();
     } catch (error) {
-        console.error('Bulk monthly letter PDF export failed:', error);
-        if (!res.headersSent) return res.status(500).json({ error: 'Unable to create the monthly letter archive.' });
+        console.error(`Bulk monthly letter ${extension.toUpperCase()} export failed:`, error);
+        if (!res.headersSent) {
+            return res.status(500).json({ error: `Unable to create the monthly letter ${extension.toUpperCase()} archive.` });
+        }
         if (!res.destroyed) res.destroy(error);
     }
 };
+
+exports.downloadMonthlyLetterPdfs = (req, res) => downloadMonthlyLetterArchive(req, res, 'pdf');
+
+exports.downloadMonthlyLetterDocx = async (req, res) => {
+    const submissionId = Number(req.body?.submissionId);
+    if (!Number.isSafeInteger(submissionId) || submissionId <= 0) {
+        return res.status(400).json({ error: 'A valid monthly letter submission ID is required.' });
+    }
+
+    try {
+        const [rows] = await db.promise().query(
+            `SELECT s.id, s.status, s.submission_type, s.submitted_at, u.full_name
+             FROM submissions s
+             INNER JOIN users u ON u.scholar_id = s.scholar_id
+             WHERE s.id = ? AND s.status = 'approved' AND s.submission_type = 'letter'`,
+            [submissionId]
+        );
+
+        if (!rows.length) {
+            return res.status(404).json({ error: 'Only approved monthly letter submissions can be exported.' });
+        }
+
+        const row = rows[0];
+        const docxBuffer = await letterPdfGenerator.generateLetterDocx(row.id);
+        const safeName = safeDownloadName(row.full_name, `Scholar-${row.id}`);
+        const period = formatMonthlyLetterPeriod(row.submitted_at);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        res.setHeader('Content-Disposition', `attachment; filename="${safeName}_${period}_Monthly_Letter_${row.id}.docx"`);
+        return res.send(docxBuffer);
+    } catch (error) {
+        console.error('Monthly letter DOCX export failed:', error);
+        return res.status(500).json({ error: 'Unable to generate the Word document.' });
+    }
+};
+
+exports.downloadMonthlyLetterDocxs = (req, res) => downloadMonthlyLetterArchive(req, res, 'docx');
 
 exports.submitGradesResumable = async (req, res) => {
     const uploadId = String(req.body.resumable_upload_id || '');

@@ -18,7 +18,7 @@ const LEVELS = [
 ];
 const GRADE_LEVELS = LEVELS.slice(0, 6);
 const COLLEGE_LEVELS = LEVELS.slice(6);
-const TYPES = ['Monthly Report', 'Report Card', 'COR Upload'];
+const TYPES = ['Monthly Report', 'Report Card', 'COR Upload', 'Other Documents'];
 const PAGE_SIZE = 10;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const UPCOMING_WINDOW_DAYS = 7;
@@ -63,8 +63,21 @@ const formatDueDate = (value) => {
 
 const isOverdue = (value) => {
   if (!value) return false;
-  const date = new Date(value);
-  return !Number.isNaN(date.getTime()) && date < new Date();
+  const dateValue = value instanceof Date
+    ? `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`
+    : String(value).slice(0, 10);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateValue);
+  if (!match) return false;
+  const [, year, month, day] = match;
+  const dueDay = new Date(Number(year), Number(month) - 1, Number(day));
+  const today = new Date();
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  return todayStart > dueDay;
+};
+
+const getTaskStatus = (task) => {
+  if (task.progress_total > 0 && task.progress_submitted >= task.progress_total) return 'completed';
+  return isOverdue(task.due_date) ? 'closed' : 'in_progress';
 };
 
 // Not overdue and due within the next UPCOMING_WINDOW_DAYS days.
@@ -109,6 +122,7 @@ const TYPE_STYLES = {
   'Monthly Report': { bg: '#F6E3E9', color: '#8E2E4E' },
   'Report Card':     { bg: '#F3E6D2', color: '#8A6327' },
   'COR Upload':      { bg: '#E3EFE2', color: '#3F7A45' },
+  'Other Documents': { bg: '#E8E9F5', color: '#565A8A' },
 };
 const TypeBadge = ({ type }) => {
   const cfg = TYPE_STYLES[type] || { bg: colors.bg, color: colors.muted };
@@ -119,23 +133,32 @@ const TypeBadge = ({ type }) => {
   );
 };
 
-const StatusBadge = ({ overdue }) => (
-  <span className="inline-flex items-center gap-1.5" style={{ ...body, fontSize: '0.72rem', fontWeight: 600, padding: '4px 9px', borderRadius: 7, background: overdue ? '#F7E6E4' : '#E4F1E6', color: overdue ? colors.danger : '#3F7A45' }}>
-    <span style={{ width: 6, height: 6, borderRadius: '50%', background: overdue ? colors.danger : colors.success, flexShrink: 0 }} />
-    {overdue ? 'Overdue' : 'Active'}
-  </span>
-);
+const TASK_STATUS_STYLES = {
+  in_progress: { label: 'In Progress', bg: '#F6EEDB', color: colors.warning },
+  closed: { label: 'Closed', bg: '#F7E6E4', color: colors.danger },
+  completed: { label: 'Completed', bg: '#E4F1E6', color: '#3F7A45' },
+};
 
-const DueDateCell = ({ value, overdue }) => {
+const StatusBadge = ({ status }) => {
+  const statusStyle = TASK_STATUS_STYLES[status] || TASK_STATUS_STYLES.in_progress;
+  return (
+    <span className="inline-flex items-center gap-1.5" style={{ ...body, fontSize: '0.72rem', fontWeight: 600, padding: '4px 9px', borderRadius: 7, background: statusStyle.bg, color: statusStyle.color }}>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: statusStyle.color, flexShrink: 0 }} />
+      {statusStyle.label}
+    </span>
+  );
+};
+
+const DueDateCell = ({ value, closed }) => {
   if (!value) {
     return <span style={{ ...body, fontSize: '0.78rem', color: colors.muted, fontStyle: 'italic' }}>No due date</span>;
   }
   return (
     <div>
-      <p style={{ ...body, fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: overdue ? colors.danger : colors.muted }}>
-        {overdue ? 'Overdue' : 'Due'}
+      <p style={{ ...body, fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: closed ? colors.danger : colors.muted }}>
+        {closed ? 'Past Due' : 'Due'}
       </p>
-      <p className="flex items-center gap-1.5" style={{ ...body, fontSize: '0.8rem', fontWeight: overdue ? 600 : 500, color: overdue ? colors.danger : colors.ink, marginTop: 2, whiteSpace: 'nowrap' }}>
+      <p className="flex items-center gap-1.5" style={{ ...body, fontSize: '0.8rem', fontWeight: closed ? 600 : 500, color: closed ? colors.danger : colors.ink, marginTop: 2, whiteSpace: 'nowrap' }}>
         <Calendar size={13} style={{ flexShrink: 0, opacity: 0.85 }} />
         {formatDueDate(value)}
       </p>
@@ -236,7 +259,7 @@ const SkeletonRows = () => (
   <>
     {Array.from({ length: 6 }).map((_, i) => (
       <tr key={i}>
-        {Array.from({ length: 8 }).map((__, c) => (
+        {Array.from({ length: 9 }).map((__, c) => (
           <td key={c} style={{ padding: '18px 16px', background: colors.surface }}>
             <div className="animate-pulse" style={{ height: 12, borderRadius: 6, background: `${colors.border}99`, width: c === 1 ? '80%' : '60%' }} />
           </td>
@@ -281,18 +304,30 @@ const AdminTaskAssignmentBoard = () => {
   const [levelFilter, setLevelFilter] = useState('all');
   const [page, setPage] = useState(1);
 
-  const pendingTasks = tasks.filter((task) => !isOverdue(task.due_date));
-  const overdueTasks = tasks.filter((task) => isOverdue(task.due_date));
+  const inProgressTasks = tasks.filter((task) => getTaskStatus(task) === 'in_progress');
+  const closedTasks = tasks.filter((task) => getTaskStatus(task) === 'closed');
+  const completedTasks = tasks.filter((task) => getTaskStatus(task) === 'completed');
   const upcomingTasks = tasks.filter((task) => isUpcoming(task.due_date));
-  const assignedLevels = [...new Set(tasks.flatMap((task) => Array.isArray(task.target_year_levels) ? task.target_year_levels : []))];
 
   const loadTasks = async () => {
     setLoading(true);
     setError('');
     try {
-      const response = await fetch(`${API_BASE}/tasks`, { headers: headers() });
+      const [response, progressResponse] = await Promise.all([
+        fetch(`${API_BASE}/tasks`, { headers: headers() }),
+        fetch(`${API_BASE}/tasks/progress`, { headers: headers() }),
+      ]);
       if (!response.ok) throw new Error('Unable to load tasks');
-      setTasks(await response.json());
+      if (!progressResponse.ok) throw new Error('Unable to load task completion progress');
+      const [taskRows, progressRows] = await Promise.all([response.json(), progressResponse.json()]);
+      const progressByTaskId = new Map(
+        progressRows.map((item) => [String(item.task_id), item])
+      );
+      setTasks(taskRows.map((task) => ({
+        ...task,
+        progress_total: progressByTaskId.get(String(task.id))?.total ?? 0,
+        progress_submitted: progressByTaskId.get(String(task.id))?.submitted ?? 0,
+      })));
       setLastUpdated(new Date());
       setNow(Date.now());
     } catch (loadError) {
@@ -387,8 +422,7 @@ const AdminTaskAssignmentBoard = () => {
         || (task.type || '').toLowerCase().includes(q)
         || officers.some((name) => (name || '').toLowerCase().includes(q));
       const matchesType = typeFilter === 'all' || task.type === typeFilter;
-      const overdue = isOverdue(task.due_date);
-      const matchesStatus = statusFilter === 'all' || (statusFilter === 'overdue' ? overdue : !overdue);
+      const matchesStatus = statusFilter === 'all' || getTaskStatus(task) === statusFilter;
       const levels = Array.isArray(task.target_year_levels) ? task.target_year_levels : [];
       const matchesLevel = levelFilter === 'all' || levels.includes(levelFilter);
       return matchesSearch && matchesType && matchesStatus && matchesLevel;
@@ -414,11 +448,7 @@ const AdminTaskAssignmentBoard = () => {
     return lastUpdated.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   })();
 
-  const overdueCaption = tasks.length === 0 || overdueTasks.length === 0
-    ? 'No tasks past due'
-    : overdueTasks.length === tasks.length ? 'All current tasks are past due' : 'Past the deadline';
-
-  const columns = ['#', 'Task', 'Requirement', 'Due Date', 'Assigned Year Levels', 'Assigned Officers', 'Status', 'Actions'];
+  const columns = ['#', 'Task', 'Requirement', 'Due Date', 'Assigned Year Levels', 'Assigned Officers', 'Progress', 'Status', 'Actions'];
 
   return (
     <div className="min-h-screen px-4 sm:px-6 lg:px-8" style={{ background: colors.bg, ...body }}>
@@ -461,19 +491,19 @@ const AdminTaskAssignmentBoard = () => {
             footer={pluralize(tasks.length, 'assignment')}
           />
           <KpiCard
-            icon={Clock3} label="Active Tasks" value={pendingTasks.length} accent={colors.success}
-            caption={pendingTasks.length > 0 ? 'Currently ongoing' : 'No ongoing tasks'}
+            icon={Clock3} label="In Progress" value={inProgressTasks.length} accent={colors.warning}
+            caption={inProgressTasks.length > 0 ? 'Waiting for all scholars to submit' : 'No tasks in progress'}
             footer={`${upcomingTasks.length} due within ${UPCOMING_WINDOW_DAYS} days`}
           />
           <KpiCard
-            icon={AlertTriangle} label="Overdue Tasks" value={overdueTasks.length} accent={colors.danger}
-            caption={overdueCaption}
-            footer={`${overdueTasks.length} of ${pluralize(tasks.length, 'task')}`}
+            icon={AlertTriangle} label="Closed" value={closedTasks.length} accent={colors.danger}
+            caption={closedTasks.length > 0 ? 'Deadline passed with submissions outstanding' : 'No closed tasks'}
+            footer={`${closedTasks.length} of ${pluralize(tasks.length, 'task')}`}
           />
           <KpiCard
-            icon={Users} label="Assigned Year Levels" value={assignedLevels.length} accent={colors.gold}
-            caption={assignedLevels.length > 0 ? 'Across all assignments' : 'No active year-level assignments'}
-            footer={`${assignedLevels.length} of ${LEVELS.length} year levels`}
+            icon={Users} label="Completed" value={completedTasks.length} accent={colors.success}
+            caption={completedTasks.length > 0 ? 'All assigned scholars submitted' : 'No completed tasks'}
+            footer={`${completedTasks.length} of ${pluralize(tasks.length, 'task')}`}
           />
         </div>
 
@@ -510,7 +540,12 @@ const AdminTaskAssignmentBoard = () => {
                 label="Status"
                 value={statusFilter}
                 onChange={setStatusFilter}
-                options={[{ value: 'all', label: 'All Statuses' }, { value: 'active', label: 'Active' }, { value: 'overdue', label: 'Overdue' }]}
+                options={[
+                  { value: 'all', label: 'All Statuses' },
+                  { value: 'in_progress', label: 'In Progress' },
+                  { value: 'closed', label: 'Closed' },
+                  { value: 'completed', label: 'Completed' },
+                ]}
               />
               <FilterGroup
                 label="Year Level"
@@ -527,7 +562,7 @@ const AdminTaskAssignmentBoard = () => {
                 Showing <strong style={{ color: colors.ink }}>{filteredTasks.length}</strong> of <strong style={{ color: colors.ink }}>{tasks.length}</strong> {tasks.length === 1 ? 'task' : 'tasks'}
               </p>
               {typeFilter !== 'all' && <FilterChip onRemove={() => setTypeFilter('all')}>{typeFilter}</FilterChip>}
-              {statusFilter !== 'all' && <FilterChip onRemove={() => setStatusFilter('all')}>{statusFilter === 'overdue' ? 'Overdue' : 'Active'}</FilterChip>}
+              {statusFilter !== 'all' && <FilterChip onRemove={() => setStatusFilter('all')}>{TASK_STATUS_STYLES[statusFilter]?.label}</FilterChip>}
               {levelFilter !== 'all' && <FilterChip onRemove={() => setLevelFilter('all')}>{levelFilter}</FilterChip>}
             </div>
             <div className="flex items-center gap-2">
@@ -583,7 +618,7 @@ const AdminTaskAssignmentBoard = () => {
                 </thead>
                 <tbody>
                   {loading ? <SkeletonRows /> : paginatedTasks.map((task, idx) => {
-                    const overdue = isOverdue(task.due_date);
+                    const status = getTaskStatus(task);
                     const rowNumber = (currentPage - 1) * PAGE_SIZE + idx + 1;
                     const officers = Array.isArray(task.assigned_officer_names) ? task.assigned_officer_names : [];
                     const levels = Array.isArray(task.target_year_levels) ? task.target_year_levels : [];
@@ -597,10 +632,16 @@ const AdminTaskAssignmentBoard = () => {
                           {createdBy && <p style={{ ...body, fontSize: '0.72rem', color: colors.muted, marginTop: 3 }}>Created by {createdBy}</p>}
                         </td>
                         <td style={cell}><TypeBadge type={task.type} /></td>
-                        <td style={cell}><DueDateCell value={task.due_date} overdue={overdue} /></td>
+                        <td style={cell}><DueDateCell value={task.due_date} closed={status === 'closed'} /></td>
                         <td style={{ ...cell, maxWidth: 230 }}><LevelChips items={levels} /></td>
                         <td style={{ ...cell, maxWidth: 220 }}><OfficerCell items={officers} /></td>
-                        <td style={cell}><StatusBadge overdue={overdue} /></td>
+                        <td style={{ ...cell, whiteSpace: 'nowrap' }}>
+                          <span style={{ ...body, fontSize: '0.78rem', fontWeight: 600, color: colors.ink }}>
+                            {task.progress_submitted}/{task.progress_total}
+                          </span>
+                          <span style={{ ...body, fontSize: '0.68rem', color: colors.muted, marginLeft: 5 }}>accepted</span>
+                        </td>
+                        <td style={cell}><StatusBadge status={status} /></td>
                         <td style={cell}>
                           <button
                             type="button"

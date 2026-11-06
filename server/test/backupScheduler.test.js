@@ -1,4 +1,5 @@
 const assert = require('assert');
+const { nodemonConfig } = require('../package.json');
 const Module = require('module');
 const originalLoad = Module._load;
 Module._load = function (request, parent, isMain) {
@@ -58,5 +59,16 @@ assert.strictEqual(
     true,
     'Run when the configured schedule time has passed.'
 );
+
+assert.deepStrictEqual(nodemonConfig.watch, [
+    'server.js',
+    'config',
+    'controllers',
+    'middleware',
+    'routes',
+    'services',
+    'utils',
+]);
+assert.ok(nodemonConfig.ignore.includes('backups/**'));
 
 console.log('backupScheduler test passed');

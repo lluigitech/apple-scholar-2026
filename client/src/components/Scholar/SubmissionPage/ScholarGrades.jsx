@@ -123,6 +123,9 @@ const ScholarGrades = () => {
     const [checkingLock, setCheckingLock]    = useState(false);
     const [isLocked, setIsLocked]            = useState(false);
     const [lockInfo, setLockInfo]            = useState({ status: null, staff_comment: null });
+    const [taskDeadline, setTaskDeadline]     = useState(null);
+    const [checkingDeadline, setCheckingDeadline] = useState(true);
+    const [deadlineCheckError, setDeadlineCheckError] = useState('');
     const [submitting, setSubmitting]        = useState(false);
     const [error, setError]                  = useState('');
     const [success, setSuccess]              = useState('');
@@ -145,6 +148,32 @@ const ScholarGrades = () => {
     };
 
     useEffect(() => { fetchGrades(); }, [scholarId]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const fetchDeadline = async () => {
+            if (!scholarId) {
+                setTaskDeadline({ assigned: false, closed: false });
+                setCheckingDeadline(false);
+                return;
+            }
+            setCheckingDeadline(true);
+            setDeadlineCheckError('');
+            try {
+                const { data } = await axios.get(`${API}/deadlines`, { headers: authHeader() });
+                if (!cancelled) setTaskDeadline(data.report_card || { assigned: false, closed: false });
+            } catch {
+                if (!cancelled) {
+                    setTaskDeadline(null);
+                    setDeadlineCheckError('Could not verify the task deadline. Please try again later.');
+                }
+            } finally {
+                if (!cancelled) setCheckingDeadline(false);
+            }
+        };
+        fetchDeadline();
+        return () => { cancelled = true; };
+    }, [scholarId]);
 
     useEffect(() => {
         if (!scholarId) return;
@@ -231,6 +260,27 @@ const ScholarGrades = () => {
         }
 
         try {
+            setCheckingDeadline(true);
+            setDeadlineCheckError('');
+            let latestDeadline;
+            try {
+                const { data } = await axios.get(`${API}/deadlines`, { headers: authHeader() });
+                latestDeadline = data.report_card;
+                setTaskDeadline(latestDeadline || { assigned: false, closed: false });
+            } catch {
+                setDeadlineCheckError('Could not verify the task deadline. Please try again later.');
+                setError('Could not verify the task deadline. Please try again later.');
+                return;
+            } finally {
+                setCheckingDeadline(false);
+            }
+            if (!latestDeadline?.assigned || latestDeadline.closed) {
+                setError(!latestDeadline?.assigned
+                    ? 'There is no active Report Card task assigned.'
+                    : 'This task is closed. Late submissions are not accepted.');
+                return;
+            }
+
             setSubmitting(true);
             const formData = new FormData();
             formData.append('semester', semester);
@@ -259,6 +309,7 @@ const ScholarGrades = () => {
             setError(err.response?.data?.error || 'Error submitting grades. Please try again.');
         } finally {
             setSubmitting(false);
+            setCheckingDeadline(false);
         }
     };
 
@@ -280,6 +331,13 @@ const ScholarGrades = () => {
         { done: Boolean(proofFile), label: 'Report Card / Grade Sheet uploaded' },
     ];
     const allChecked = checklist.every(c => c.done);
+    const deadlineMessage = deadlineCheckError || (checkingDeadline
+        ? 'Checking the task deadline…'
+        : !taskDeadline?.assigned
+            ? 'There is no active Report Card task assigned.'
+            : taskDeadline.closed
+                ? 'This task is closed. Late submissions are not accepted.'
+                : '');
 
     return (
         <div style={{ ...body, background: BG }}>
@@ -321,6 +379,18 @@ const ScholarGrades = () => {
                     </p>
                 </div>
             </div>
+
+            {deadlineMessage && (
+                <div style={{ marginBottom: 20 }}>
+                    <AlertStrip
+                        color={taskDeadline?.closed || (!checkingDeadline && !deadlineCheckError && !taskDeadline?.assigned) ? DANGER : WARNING}
+                        icon={AlertTriangle}
+                        title={taskDeadline?.closed ? 'Task closed' : undefined}
+                    >
+                        {deadlineMessage}
+                    </AlertStrip>
+                </div>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 sm:gap-6">
 
@@ -508,7 +578,7 @@ const ScholarGrades = () => {
                             </span>
                             <button
                                 onClick={handleSubmit}
-                                disabled={submitting}
+                                disabled={submitting || checkingDeadline || !taskDeadline?.assigned || taskDeadline.closed || Boolean(deadlineCheckError)}
                                 className="flex items-center justify-center gap-2 transition-opacity hover:opacity-90 disabled:opacity-60"
                                 style={{ padding: '11px 24px', borderRadius: 12, border: 'none', ...body, fontSize: '0.82rem', fontWeight: 700, color: '#fff', background: `linear-gradient(120deg, ${PRIMARY} 0%, ${PRIMARY_DEEP} 100%)`, cursor: submitting ? 'wait' : 'pointer' }}
                             >

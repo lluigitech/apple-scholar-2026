@@ -193,7 +193,7 @@ const HistoryCard = ({ item, onResubmit }) => {
                         </div>
                     )}
 
-                    {/* ── 5. Officer feedback — soft comment container ──── */}
+                    {/* ── Officer feedback — soft comment container ──── */}
                     {item.staff_comment && (
                         <div className="flex items-start gap-2.5" style={{ background: BG, borderRadius: 12, padding: '12px 14px' }}>
                             <MessageSquare size={14} style={{ color: cfg.color, marginTop: 2, flexShrink: 0 }} />
@@ -204,7 +204,7 @@ const HistoryCard = ({ item, onResubmit }) => {
                         </div>
                     )}
 
-                    {/* ── 6. Resubmission ─────────────────────────────── */}
+                    {/* ── Resubmission ─────────────────────────────── */}
                     {status === 'rejected' && onResubmit && (
                         <button onClick={() => onResubmit(item)}
                             className="mt-3 inline-flex items-center gap-2 transition-opacity hover:opacity-85"
@@ -228,28 +228,19 @@ const SubmissionHistory = ({ history = [], loading = false, error = '', onResubm
         return Array.from(set).sort((a, b) => (a < b ? 1 : -1));
     }, [history]);
 
-    const filteredHistory = selectedYear === 'all'
-        ? history
-        : history.filter(item => academicYearOf(item.submitted_at) === selectedYear);
-
     const counts = {
         total: history.length,
         approved: history.filter(i => i.status === 'approved').length,
         pending: history.filter(i => !i.status || i.status === 'pending').length,
     };
 
+    const filteredHistory = selectedYear === 'all'
+        ? history
+        : history.filter(item => academicYearOf(item.submitted_at) === selectedYear);
+
     return (
         <div style={{ ...body }}>
             <style>{`@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,600;0,700;1,600&family=Inter:wght@400;500;600;700&display=swap');`}</style>
-
-            {/* ── 1. Scholar header ─────────────────────────────────── */}
-            <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '18px 22px', marginBottom: 20 }}>
-                <p style={{ ...body, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.08em', color: BRONZE }}>SCHOLAR PORTAL</p>
-                <h1 style={{ ...display, fontSize: '1.5rem', fontWeight: 600, color: INK, marginTop: 4 }}>Submission History</h1>
-                <p style={{ ...body, fontSize: '0.83rem', color: MUTED, marginTop: 5 }}>
-                    Review your submitted reports, grades, and official documents.
-                </p>
-            </div>
 
             {loading && (
                 <div className="text-center" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '48px 20px' }}>
@@ -277,7 +268,6 @@ const SubmissionHistory = ({ history = [], loading = false, error = '', onResubm
 
             {!loading && !error && history.length > 0 && (
                 <>
-                    {/* ── 2. Academic overview — 3 stat cards ───────────── */}
                     <div className="grid grid-cols-3 gap-3 sm:gap-4 mb-5">
                         <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS - 4, padding: '14px 16px' }}>
                             <p style={{ ...body, fontSize: '0.68rem', fontWeight: 600, color: BRONZE }}>Total</p>
@@ -295,7 +285,7 @@ const SubmissionHistory = ({ history = [], loading = false, error = '', onResubm
 
                     <div className="grid grid-cols-1 lg:grid-cols-[160px_minmax(0,1fr)] gap-5">
 
-                        {/* ── 3. Semester timeline sidebar ────────────────── */}
+                        {/* ── Academic-year timeline sidebar ────────────── */}
                         <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '16px 14px', height: 'fit-content' }}>
                             <p style={{ ...body, fontSize: '0.66rem', fontWeight: 700, letterSpacing: '0.05em', color: BRONZE, marginBottom: 12, paddingLeft: 4 }}>ACADEMIC YEARS</p>
                             <div className="relative" style={{ paddingLeft: 18 }}>
@@ -326,7 +316,7 @@ const SubmissionHistory = ({ history = [], loading = false, error = '', onResubm
                             </div>
                         </div>
 
-                        {/* ── 4. Modern submission cards ──────────────────── */}
+                        {/* ── Submission cards ──────────────────────────── */}
                         <div className="space-y-3">
                             {filteredHistory.map(item => (
                                 <HistoryCard key={item.id} item={item} onResubmit={onResubmit} />

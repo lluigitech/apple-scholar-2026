@@ -26,6 +26,9 @@ const { cleanupExpired } = require('./services/resumableUploadService');
 const { loadModelAtStartup } = require('./services/letterScoreService');
 const { runScheduledBackups } = require('./services/backupRecoveryService');
 const { markEndedDutyAbsences } = require('./services/dutyAbsenceService');
+const { autoCheckOutDutyAttendances } = require('./services/dutyAttendanceService');
+const { sendComplianceThresholdNotifications } = require('./services/complianceThresholdNotificationService');
+const { finalizeApprovedSubmissions } = require('./services/approvedSubmissionFinalizationService');
 
 const app = express();
 
@@ -92,15 +95,56 @@ const runDutyAbsenceSweep = async () => {
     try {
         const result = await markEndedDutyAbsences();
         if (!result.skipped && result.markedCount > 0) {
-            console.log(`[duty-absence] marked ${result.markedCount} scholars absent after duty end.`);
+            console.log(`[duty-absence] marked ${result.markedCount} scholars absent after the check-in window closed.`);
+        }
+        const checkoutResult = await autoCheckOutDutyAttendances();
+        if (checkoutResult.checkedOutCount > 0) {
+            console.log(`[duty-checkout] automatically checked out ${checkoutResult.checkedOutCount} scholars.`);
         }
     } catch (error) {
-        console.error('[duty-absence] sweep failed:', error.message || error);
+        console.error('[duty-attendance] scheduled attendance sweep failed:', error.message || error);
     }
 };
 
 setTimeout(runDutyAbsenceSweep, 15 * 1000);
 setInterval(runDutyAbsenceSweep, 60 * 1000);
+
+const complianceThresholdIntervalMs = 24 * 60 * 60 * 1000;
+let complianceThresholdRunInProgress = false;
+const runComplianceThresholdNotifications = async () => {
+    if (complianceThresholdRunInProgress) return;
+    complianceThresholdRunInProgress = true;
+    try {
+        const result = await sendComplianceThresholdNotifications();
+        if (!result.skipped) console.log('[compliance-threshold] run complete:', result);
+    } catch (error) {
+        console.error('[compliance-threshold] run failed:', error.message || error);
+    } finally {
+        complianceThresholdRunInProgress = false;
+    }
+};
+
+setTimeout(runComplianceThresholdNotifications, 30 * 1000);
+setInterval(runComplianceThresholdNotifications, complianceThresholdIntervalMs);
+
+let approvedSubmissionFinalizationInProgress = false;
+const runApprovedSubmissionFinalization = async () => {
+    if (approvedSubmissionFinalizationInProgress) return;
+    approvedSubmissionFinalizationInProgress = true;
+    try {
+        const result = await finalizeApprovedSubmissions();
+        if (result.submissions_finalized || result.grades_finalized) {
+            console.log('[approved-submissions] moved to Reports:', result);
+        }
+    } catch (error) {
+        console.error('[approved-submissions] finalization failed:', error.message || error);
+    } finally {
+        approvedSubmissionFinalizationInProgress = false;
+    }
+};
+
+setTimeout(runApprovedSubmissionFinalization, 30 * 1000);
+setInterval(runApprovedSubmissionFinalization, 60 * 60 * 1000);
 
 // ─── Start Server ─────────────────────────────────────────────
 const PORT = process.env.PORT || 5000;
@@ -225,6 +269,22 @@ const initializeDatabase = () => {
     `, (notificationPreferencesError) => {
         if (notificationPreferencesError) {
             console.error('Failed to ensure officer notification preferences table:', notificationPreferencesError.message);
+        }
+    });
+    db.query(`
+        CREATE TABLE IF NOT EXISTS staff_notification_preferences_v2 (
+            staff_id INT PRIMARY KEY,
+            announcements BOOLEAN NOT NULL DEFAULT TRUE,
+            task_assignments BOOLEAN NOT NULL DEFAULT TRUE,
+            duty_attendance BOOLEAN NOT NULL DEFAULT TRUE,
+            submission_updates BOOLEAN NOT NULL DEFAULT TRUE,
+            makeup_requests BOOLEAN NOT NULL DEFAULT TRUE,
+            system_updates BOOLEAN NOT NULL DEFAULT TRUE,
+            updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `, (staffPreferencesError) => {
+        if (staffPreferencesError) {
+            console.error('Failed to ensure staff notification preferences table:', staffPreferencesError.message);
         }
     });
     db.query(`
@@ -401,6 +461,19 @@ const initializeDatabase = () => {
     });
 
     db.query(`
+        CREATE TABLE IF NOT EXISTS compliance_threshold_alert_events (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            scholar_id VARCHAR(64) NOT NULL,
+            stage VARCHAR(16) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_compliance_threshold_scholar_event (scholar_id, id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    `, (thresholdErr) => {
+        if (thresholdErr) console.error('Failed to create compliance threshold alert state table:', thresholdErr);
+        else console.log('✅ compliance threshold alert state table ensured');
+    });
+
+    db.query(`
         ALTER TABLE notification_logs
         ADD COLUMN IF NOT EXISTS is_read TINYINT(1) NOT NULL DEFAULT 0,
         ADD COLUMN IF NOT EXISTS read_at TIMESTAMP NULL DEFAULT NULL
@@ -546,9 +619,11 @@ const initializeDatabase = () => {
             db.query(`
                 UPDATE submissions
                 SET finalized_at = COALESCE(approved_at, reviewed_at, submitted_at, NOW()),
-                    export_available_at = DATE_ADD(COALESCE(approved_at, reviewed_at, submitted_at, NOW()), INTERVAL 7 DAY),
+                    export_available_at = COALESCE(approved_at, reviewed_at, submitted_at, NOW()),
                     finalization_batch_id = CONCAT('legacy-approved-', scholar_id, '-', id)
-                WHERE LOWER(status) = 'approved' AND finalized_at IS NULL
+                WHERE LOWER(status) = 'approved'
+                  AND finalized_at IS NULL
+                  AND COALESCE(approved_at, reviewed_at, submitted_at, NOW()) <= DATE_SUB(NOW(), INTERVAL 3 DAY)
             `, (approvedFinalizationErr) => {
                 if (approvedFinalizationErr) console.error('Failed to migrate approved submissions into Reports:', approvedFinalizationErr.message);
                 else console.log('✅ previously approved submissions moved into Reports');
@@ -591,10 +666,11 @@ const initializeDatabase = () => {
 
     db.query(`
         ALTER TABLE duty_attendance
+        ADD COLUMN IF NOT EXISTS check_out_at DATETIME DEFAULT NULL,
         ADD INDEX IF NOT EXISTS idx_duty_attendance_scholar_id (scholar_id);
     `, (idxErr) => {
-        if (idxErr) console.error('Failed to add duty_attendance scholar_id index:', idxErr.message);
-        else console.log('✅ duty_attendance.scholar_id index ensured');
+        if (idxErr) console.error('Failed to ensure duty_attendance check-out field and scholar_id index:', idxErr.message);
+        else console.log('✅ duty_attendance check-out field and scholar_id index ensured');
     });
 
     db.query(`
@@ -810,6 +886,7 @@ db.ready
 
     db.query(`
         ALTER TABLE grades
+        ADD COLUMN IF NOT EXISTS approved_at DATETIME NULL DEFAULT NULL,
         ADD COLUMN IF NOT EXISTS finalized_at DATETIME NULL DEFAULT NULL,
         ADD COLUMN IF NOT EXISTS export_available_at DATETIME NULL DEFAULT NULL,
         ADD COLUMN IF NOT EXISTS finalization_batch_id VARCHAR(64) DEFAULT NULL
@@ -819,10 +896,13 @@ db.ready
             console.log('✅ grades finalization fields ensured');
             db.query(`
                 UPDATE grades
-                SET finalized_at = created_at,
-                    export_available_at = DATE_ADD(created_at, INTERVAL 7 DAY),
+                SET approved_at = COALESCE(approved_at, created_at),
+                    finalized_at = NOW(),
+                    export_available_at = NOW(),
                     finalization_batch_id = CONCAT('legacy-grade-', scholar_id, '-', semester, '-', academic_year)
-                WHERE verification_status = 'approved' AND finalized_at IS NULL
+                WHERE verification_status = 'approved'
+                  AND finalized_at IS NULL
+                  AND COALESCE(approved_at, created_at) <= DATE_SUB(NOW(), INTERVAL 3 DAY)
             `, (approvedGradeErr) => {
                 if (approvedGradeErr) console.error('Failed to migrate approved grades into Reports:', approvedGradeErr.message);
                 else console.log('✅ previously approved grades moved into Reports');

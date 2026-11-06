@@ -298,6 +298,9 @@ function Submission() {
   const [historyError, setHistoryError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState('');
+  const [taskDeadlines, setTaskDeadlines] = useState(null);
+  const [taskDeadlinesLoading, setTaskDeadlinesLoading] = useState(Boolean(localStorage.getItem('scholar_id')));
+  const [taskDeadlinesError, setTaskDeadlinesError] = useState('');
 
   // UI-only: search/status filter over the already-fetched history list,
   // applied only to what's passed into <SubmissionHistory/> — no new
@@ -310,6 +313,18 @@ function Submission() {
   const wordCount = body_.trim().split(/\s+/).filter(Boolean).length;
   const hasContent = info.name.trim().length > 0 && body_.trim().length > 20;
   const datePresent = asText(info.date).length > 0;
+  const selectedDeadlineType = selectedType === 'monthly-report' ? 'letter'
+    : selectedType === 'cor' ? 'cor'
+      : selectedType === 'other' ? 'other' : null;
+  const selectedDeadline = selectedDeadlineType ? taskDeadlines?.[selectedDeadlineType] : null;
+  const deadlineBlocked = Boolean(selectedDeadlineType && (
+    taskDeadlinesLoading || taskDeadlinesError || !selectedDeadline?.assigned || selectedDeadline.closed
+  ));
+  const deadlineMessage = !selectedDeadlineType ? ''
+    : taskDeadlinesError ? 'Could not verify the task deadline. Please try again later.'
+      : taskDeadlinesLoading ? 'Checking the task deadline…'
+        : !selectedDeadline?.assigned ? 'There is no active task assigned for this requirement.'
+          : selectedDeadline.closed ? 'This task is closed. Late submissions are not accepted.' : '';
   const liveEval = evalResult || {
     overallScore: 0,
     reportScore: 0,
@@ -413,6 +428,32 @@ function Submission() {
   }, [scholarId]);
 
   useEffect(() => { if (tab === 'history') fetchHistory(); }, [tab, fetchHistory]);
+
+  const refreshTaskDeadlines = useCallback(async () => {
+    if (!scholarId) return null;
+    setTaskDeadlinesLoading(true);
+    setTaskDeadlinesError('');
+    setTaskDeadlines(null);
+    try {
+      const { data } = await axios.get(`${API_BASE}/deadlines`, { headers: authHeader() });
+      setTaskDeadlines(data);
+      return data;
+    } catch {
+      setTaskDeadlinesError('Could not verify the task deadline. Please try again later.');
+      return null;
+    } finally {
+      setTaskDeadlinesLoading(false);
+    }
+  }, [scholarId]);
+
+  useEffect(() => {
+    if (!scholarId) {
+      setTaskDeadlines({});
+      setTaskDeadlinesLoading(false);
+      return;
+    }
+    refreshTaskDeadlines();
+  }, [scholarId, refreshTaskDeadlines]);
 
   const handleEvaluate = async () => {
     setEvaluating(true);
@@ -536,6 +577,18 @@ function Submission() {
     if (!scholarId) { setSubmitError('No scholar account found. Please log in again.'); return; }
     setSubmitting(true); setSubmitError('');
     try {
+      const latestDeadlines = await refreshTaskDeadlines();
+      const letterDeadline = latestDeadlines?.letter;
+      if (!latestDeadlines) {
+        setSubmitError('Could not verify the task deadline. Please try again later.');
+        return;
+      }
+      if (!letterDeadline?.assigned || letterDeadline.closed) {
+        setSubmitError(!letterDeadline?.assigned
+          ? 'There is no active Monthly Report task assigned.'
+          : 'This task is closed. Late submissions are not accepted.');
+        return;
+      }
       const formData = new FormData();
       formData.append('letter_content', body_);
       formData.append('name', info.name || '');
@@ -564,6 +617,22 @@ function Submission() {
     if (!docFile || !scholarId) return;
     setDocUploading(true); setDocError(''); setDocSuccess('');
     try {
+      if (selectedType === 'cor' || selectedType === 'other') {
+        const latestDeadlines = await refreshTaskDeadlines();
+        const requirementType = selectedType === 'cor' ? 'cor' : 'other';
+        const requirementLabel = selectedType === 'cor' ? 'COR Upload' : 'Other Documents';
+        const requirementDeadline = latestDeadlines?.[requirementType];
+        if (!latestDeadlines) {
+          setDocError('Could not verify the task deadline. Please try again later.');
+          return;
+        }
+        if (!requirementDeadline?.assigned || requirementDeadline.closed) {
+          setDocError(!requirementDeadline?.assigned
+            ? `There is no active ${requirementLabel} task assigned.`
+            : 'This task is closed. Late submissions are not accepted.');
+          return;
+        }
+      }
       const formData = new FormData();
       formData.append('letter_content', ''); formData.append('quality_score', 0); formData.append('quality_status', 'pending');
       const fieldname = selectedType === 'report-card' ? 'report_card' : selectedType === 'cor' ? 'cor' : 'media';
@@ -717,6 +786,14 @@ function Submission() {
             </div>
           </div>
 
+          {deadlineMessage && selectedType !== 'grades' && (
+            <div className="mb-5">
+              <AlertStrip color={selectedDeadline?.closed || !selectedDeadline?.assigned ? DANGER : WARNING}>
+                {deadlineMessage}
+              </AlertStrip>
+            </div>
+          )}
+
           {selectedType === 'monthly-report' && view === 'editor' && <>
             {/* ── 3. Workflow navigation (Monthly Letter only) ── */}
             <div className="mb-5">
@@ -863,8 +940,8 @@ function Submission() {
                 </div>
 
                 <div className="flex flex-wrap items-center justify-end gap-2 px-4 sm:px-5 py-3" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderTop: `1px solid ${BG}` }}>
-                  <button onClick={() => setView('editor')} className="flex-1 sm:flex-initial" style={outlineBtn}><Bookmark size={13} /> Save Draft</button>
-                  <button onClick={() => { setSubmitError(''); setShowConfirm(true); }} className="flex-1 sm:flex-initial" style={filledBtn}><Send size={13} /> Submit Report</button>
+                  <button onClick={() => setView('editor')} className="flex-1 sm:flex-initial" style={outlineBtn}><Bookmark size={13} /> Edit </button>
+                  <button onClick={() => { setSubmitError(''); setShowConfirm(true); }} disabled={deadlineBlocked} className="flex-1 sm:flex-initial disabled:opacity-50" style={{ ...filledBtn, cursor: deadlineBlocked ? 'not-allowed' : 'pointer' }}><Send size={13} /> Submit Report</button>
                 </div>
 
                 {evalResult.flagged && (
@@ -1003,12 +1080,12 @@ function Submission() {
                     {!evalResult.accepted && (
                       <div className="rounded-xl p-3 mb-3" style={{ background: getRiskBg(evalResult.riskLevel), border: `1px solid ${getRiskBorder(evalResult.riskLevel)}` }}>
                         <p style={{ ...body, fontSize: '0.78rem', fontWeight: 600, color: evalResult.riskColor, marginBottom: 3 }}>
-                          {evalResult.riskLevel === 'medium' ? 'Needs Improvement' : 'Non-Compliant — Will Not Be Accepted'}
+                          {evalResult.riskLevel === 'medium' ? 'Needs Improvement' : 'Needs Improvement — Officer Review Recommended'}
                         </p>
                         <p style={{ ...body, fontSize: '0.73rem', color: MUTED, lineHeight: 1.5 }}>
-                          {evalResult.riskLevel === 'medium'
-                            ? 'Score must reach 75+ to be accepted. Improve your letter content and attach photos.'
-                            : 'Score is too low. Please improve your report before submitting.'}
+                          {evalResult.overallScore < 75
+                            ? 'You can still submit this letter. Your Officer will review it and may request corrections.'
+                            : 'Your letter meets the quality score threshold.'}
                         </p>
                       </div>
                     )}
@@ -1048,8 +1125,8 @@ function Submission() {
                       Browse Files
                     </button>
                     {docFile && (
-                      <button onClick={handleDocUpload} disabled={docUploading || !scholarId} className="block mx-auto mt-4 disabled:opacity-50"
-                        style={{ ...filledBtn, display: 'inline-flex', cursor: docUploading ? 'not-allowed' : 'pointer' }}>
+                      <button onClick={handleDocUpload} disabled={docUploading || !scholarId || deadlineBlocked} className="block mx-auto mt-4 disabled:opacity-50"
+                        style={{ ...filledBtn, display: 'inline-flex', cursor: docUploading || deadlineBlocked ? 'not-allowed' : 'pointer' }}>
                         {docUploading ? 'Uploading…' : `Submit ${docTypeLabel}`}
                       </button>
                     )}

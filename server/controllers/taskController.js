@@ -97,6 +97,72 @@ exports.getAllTasks = async (req, res) => {
   });
 };
 
+exports.getTaskProgressSummary = async (req, res) => {
+  try {
+    const [tasksResult, scholarsResult, submissionsResult] = await Promise.all([
+      db.promise().query(
+        `SELECT id, type, created_at, target_year_levels
+         FROM tasks
+         WHERE is_active = 1
+           AND type IN ('Monthly Report', 'Report Card', 'COR Upload', 'Other Documents')`
+      ),
+      db.promise().query(
+        `SELECT scholar_id, year_level
+         FROM users
+         WHERE role = 'scholar' AND status = 'active' AND scholar_id IS NOT NULL`
+      ),
+      db.promise().query(
+        `SELECT scholar_id, submission_type, status, submitted_at
+         FROM submissions
+         WHERE finalized_at IS NULL`
+      ),
+    ]);
+
+    const [tasks] = tasksResult;
+    const [scholars] = scholarsResult;
+    const [submissions] = submissionsResult;
+    const latestSubmissionByScholar = new Map();
+    submissions.forEach((submission) => {
+      const submittedAt = new Date(submission.submitted_at || 0).getTime();
+      const latestByType = latestSubmissionByScholar.get(submission.scholar_id) || new Map();
+      const currentLatest = latestByType.get(submission.submission_type);
+      if (!currentLatest || submittedAt >= new Date(currentLatest.submitted_at || 0).getTime()) {
+        latestByType.set(submission.submission_type, submission);
+      }
+      latestSubmissionByScholar.set(submission.scholar_id, latestByType);
+    });
+    const submissionTypeByTask = {
+      'Monthly Report': 'letter',
+      'Report Card': 'report_card',
+      'COR Upload': 'cor',
+      'Other Documents': 'other',
+    };
+    const progress = tasks.map((task) => {
+      const targetLevels = parseTargetLevels(task.target_year_levels) || [];
+      const eligibleScholars = scholars.filter((scholar) => (
+        targetLevels.length === 0
+        || targetLevels.some((level) => normalizeYearLevel(level) === normalizeYearLevel(scholar.year_level))
+      ));
+      const taskType = submissionTypeByTask[task.type];
+      const taskCreatedAt = new Date(task.created_at || 0).getTime();
+      const submitted = eligibleScholars.filter((scholar) => {
+        const latestSubmission = latestSubmissionByScholar.get(scholar.scholar_id)?.get(taskType);
+        const submittedAt = new Date(latestSubmission?.submitted_at || 0).getTime();
+        return latestSubmission
+          && (!task.created_at || Number.isNaN(taskCreatedAt) || submittedAt >= taskCreatedAt)
+          && latestSubmission.status === 'approved';
+      }).length;
+
+      return { task_id: task.id, total: eligibleScholars.length, submitted };
+    });
+
+    return res.json(progress);
+  } catch (error) {
+    console.error('Error fetching task progress summary:', error);
+    return res.status(500).json({ error: 'Failed to fetch task progress summary.' });
+  }
+};
+
 exports.getTask = async (req, res) => {
   const { id } = req.params;
   db.query('SELECT * FROM tasks WHERE id = ? AND is_active = 1', [id], (err, rows) => {

@@ -427,7 +427,7 @@ export default function AdminReports() {
 
       return [
         { key: 'total', icon: Icon.FileText, label: 'Total Submissions', value: total, helper: { text: 'Across all requirements' }, accent: PRIMARY },
-        { key: 'approved', icon: Icon.Check, label: 'Accepted', value: monthlyCounts.accepted, helper: { text: pct(monthlyCounts.accepted, total), dot: true }, accent: SUCCESS },
+        { key: 'approved', icon: Icon.Check, label: 'Accepted', value: monthlyCounts.accepted, helper: { text: 'Scholars with accepted submissions', dot: true }, accent: SUCCESS },
         {
           key: 'not-submitted', icon: Icon.Alert, label: 'Not Submitted',
           value: notSubmitted ?? '—',
@@ -459,16 +459,17 @@ export default function AdminReports() {
     }
 
     const attendanceCounts = attendanceData.reduce((counts, record) => {
-      const status = record.status || 'excused';
+      const rawStatus = record.status || 'absent';
+      const status = rawStatus === 'excused' ? 'absent' : rawStatus;
       counts[status] = (counts[status] || 0) + 1;
       return counts;
-    }, { present: 0, absent: 0, excused: 0 });
+    }, { present: 0, late: 0, absent: 0 });
     const total = attendanceData.length;
     return [
       { key: 'records', icon: Icon.Users, label: 'Attendance Records', value: total, helper: { text: 'For selected month' }, accent: PRIMARY },
       { key: 'present', icon: Icon.Check, label: 'Present', value: attendanceCounts.present, helper: { text: pct(attendanceCounts.present, total), dot: true }, accent: SUCCESS },
+      { key: 'late', icon: Icon.Clock, label: 'Late', value: attendanceCounts.late, helper: { text: pct(attendanceCounts.late, total), dot: true }, accent: WARNING },
       { key: 'absent', icon: Icon.Alert, label: 'Absent', value: attendanceCounts.absent, helper: { text: pct(attendanceCounts.absent, total), dot: true }, accent: DANGER },
-      { key: 'excused', icon: Icon.Clock, label: 'Excused', value: attendanceCounts.excused, helper: { text: pct(attendanceCounts.excused, total), dot: true }, accent: WARNING },
     ];
   }, [activeTab, reports, monthlyCounts, complianceRows, complianceFetched, monthlyFilterMonth, monthlyFilterYearLevel, attendanceData]);
 

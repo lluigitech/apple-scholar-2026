@@ -35,11 +35,14 @@ const labelStyle = { ...body, fontSize: '0.72rem', fontWeight: 700, color: PRIMA
 
 const STATUS_TONE = {
   present: { bg: '#EAF3EB', color: '#4F7656', label: 'Present' },
+  late: { bg: '#FBF1DF', color: '#9A6B1F', label: 'Late' },
   absent: { bg: '#FBEAE8', color: DANGER, label: 'Absent' },
-  excused: { bg: '#FBF1DF', color: '#9A6B1F', label: 'Excused' },
 };
 
-const statusKeyOf = (r) => (r.status === 'present' ? 'present' : r.status === 'absent' ? 'absent' : 'excused');
+const statusKeyOf = (r) => {
+  if (r.status === 'present' || r.status === 'late') return r.status;
+  return 'absent';
+};
 const dateValueOf = (r) => r.date || r.marked_at || r.duty_date || '';
 const monthKeyOf = (value) => {
   if (/^\d{4}-\d{2}/.test(String(value))) return String(value).slice(0, 7);
@@ -168,7 +171,7 @@ export default function AttendanceReportsTab({
   const hasActiveFilters = Boolean(search || groupFilter !== 'all' || yearFilter !== 'all' || statusFilter !== 'all');
   const resetFilters = () => { setSearch(''); setGroupFilter('all'); setYearFilter('all'); setStatusFilter('all'); };
 
-  // Calendar view data: per-day present / absent / excused counts.
+  // Calendar view data: per-day present / late / absent counts.
   const calendar = useMemo(() => {
     const monthKey = filters.month || monthKeyOf(dateValueOf(visibleRecords[0] || {}));
     if (!monthKey) return null;
@@ -180,8 +183,8 @@ export default function AttendanceReportsTab({
       if (monthKeyOf(dateValueOf(r)) !== monthKey) return;
       const d = dayOf(dateValueOf(r));
       if (!d) return;
-      counts[d] = counts[d] || { present: 0, absent: 0, excused: 0 };
-      counts[d][STATUS_TONE[r.status] ? r.status : 'excused'] += 1;
+      counts[d] = counts[d] || { present: 0, late: 0, absent: 0 };
+      counts[d][statusKeyOf(r)] += 1;
     });
     return { y, m, days, offset, counts, label: formatAdminMonth(new Date(y, m - 1, 1)) };
   }, [visibleRecords, filters.month]);
@@ -250,8 +253,8 @@ export default function AttendanceReportsTab({
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)} style={{ ...fieldStyle, cursor: 'pointer' }} onFocus={focus} onBlur={blur}>
             <option value="all">All Statuses</option>
             <option value="present">Present</option>
+            <option value="late">Late</option>
             <option value="absent">Absent</option>
-            <option value="excused">Excused</option>
           </select>
         </div>
         <div>
@@ -314,7 +317,7 @@ export default function AttendanceReportsTab({
                 <div className="flex items-center justify-between" style={{ marginBottom: 10 }}>
                   <span style={{ ...display, fontSize: '1.05rem', color: INK }}>{calendar.label}</span>
                   <div className="flex items-center gap-3" style={{ ...body, fontSize: '0.72rem', color: MUTED }}>
-                    {['present', 'absent', 'excused'].map(k => (
+                    {['present', 'late', 'absent'].map(k => (
                       <span key={k} className="flex items-center gap-1.5">
                         <span style={{ width: 8, height: 8, borderRadius: '50%', background: STATUS_TONE[k].color }} /> {STATUS_TONE[k].label}
                       </span>
@@ -338,7 +341,7 @@ export default function AttendanceReportsTab({
                             <div style={{ ...body, fontSize: '0.74rem', fontWeight: 700, color: c ? INK : MUTED }}>{day}</div>
                             {c && (
                               <div className="flex flex-col gap-0.5" style={{ marginTop: 4 }}>
-                                {['present', 'absent', 'excused'].filter(k => c[k]).map(k => (
+                                {['present', 'late', 'absent'].filter(k => c[k]).map(k => (
                                   <span key={k} style={{ ...body, fontSize: '0.68rem', fontWeight: 600, color: STATUS_TONE[k].color }}>
                                     {c[k]} {STATUS_TONE[k].label.toLowerCase()}
                                   </span>
@@ -366,7 +369,8 @@ export default function AttendanceReportsTab({
                   </thead>
                   <tbody>
                     {pageRows.map((rec, i) => {
-                      const tone = STATUS_TONE[rec.status] || { bg: BG, color: MUTED, label: rec.status || '—' };
+                      const status = statusKeyOf(rec);
+                      const tone = STATUS_TONE[status];
                       const yl = yearLevelOf(rec);
                       return (
                         <tr key={rec.id || `${rec.scholar_id}-${rec.date || rec.marked_at}-${start + i}`}>

@@ -1,7 +1,8 @@
 const db = require('../config/db');
 const ExcelJS = require('exceljs');
 const { logAuditEvent } = require('../utils/auditLogger');
-const { calculateComplianceScore, getAcademicTier, normalizeAcademicGrade } = require('../utils/complianceLogger');
+const { calculateComplianceScore, getOverdueComplianceTaskCounts, getAcademicTier, normalizeAcademicGrade } = require('../utils/complianceLogger');
+const { checkOutDutyAttendance } = require('../services/dutyAttendanceService');
 
 const calculateAge = (birthDate) => {
     if (!birthDate) return null;
@@ -173,22 +174,102 @@ const resolveNotificationSource = (type = '') => {
     if (t.includes('duty')) return 'duty';
     if (t.includes('submission') || t.includes('review') || t.includes('letter')) return 'submission';
     if (t.includes('task') || t.includes('deadline') || t.includes('reminder')) return 'task';
+    if (t.includes('compliance')) return 'checklist';
     return 'announcement';
 };
 
 const resolveNotificationType = (type = '', status = '') => {
     const t = String(type).toLowerCase();
-    const normalizedStatus = String(status || '').toLowerCase();
 
     if (t.includes('deadline') || t.includes('reminder')) return 'reminder';
-    if (t.includes('deadline')) return 'deadline';
-    if (normalizedStatus === 'sent') return 'info';
-    if (normalizedStatus === 'failed') return 'critical';
+    if (t.includes('absent') || t.includes('below_minimum') || t.includes('flag')) return 'critical';
     if (t.includes('approval') || t.includes('approved')) return 'approved';
     if (t.includes('rejected') || t.includes('returned')) return 'rejected';
     if (t.includes('duty')) return 'important';
     if (t.includes('submission')) return 'pending';
+    if (t.includes('compliance')) return 'important';
     return 'info';
+};
+
+const formatScholarNotification = (type = '', detail = '') => {
+    const normalizedType = String(type).toLowerCase();
+    const detailText = String(detail || '');
+    const dutyTitle = detailText.match(/duty\s+["“]([^"”]+)["”]/i)?.[1];
+    const dueDate = detailText.match(/due:(\d{4}-\d{2}-\d{2})/)?.[1];
+    const reminderStage = detailText.match(/stage:([a-z-]+)/i)?.[1];
+
+    if (normalizedType.includes('overdue')) {
+        return {
+            title: 'Overdue requirement',
+            message: 'A scholarship requirement is overdue. Please review your checklist and submit any outstanding work.',
+        };
+    }
+    if (normalizedType.includes('attendance_absent')) {
+        return {
+            title: 'Duty attendance update',
+            message: dutyTitle
+                ? `You were marked absent for ${dutyTitle}. Please contact your staff member if this is incorrect.`
+                : 'You were marked absent for a scheduled duty. Please contact your staff member if this is incorrect.',
+        };
+    }
+    if (normalizedType.includes('attendance_late')) {
+        return {
+            title: 'Late check-in recorded',
+            message: dutyTitle
+                ? `Your check-in for ${dutyTitle} was recorded as late.`
+                : 'Your duty check-in was recorded as late.',
+        };
+    }
+    if (normalizedType.includes('attendance_makeup')) {
+        return {
+            title: 'Makeup duty recorded',
+            message: dutyTitle
+                ? `Your attendance for ${dutyTitle} was recorded.`
+                : 'Your makeup duty attendance was recorded.',
+        };
+    }
+    if (normalizedType.includes('deadline') || normalizedType.includes('reminder')) {
+        const formattedDate = dueDate
+            ? new Date(`${dueDate}T00:00:00`).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })
+            : null;
+        const message = reminderStage === 'due-today'
+            ? 'A scholarship requirement is due today.'
+            : reminderStage === 'due-3-days'
+                ? 'A scholarship requirement is due in 3 days.'
+                : 'You have a scholarship requirement deadline to review.';
+        return {
+            title: 'Requirement deadline reminder',
+            message: formattedDate ? `${message} Due date: ${formattedDate}.` : message,
+        };
+    }
+    if (normalizedType.includes('compliance_below_minimum') || normalizedType.includes('compliance_near_minimum')) {
+        return {
+            title: normalizedType.includes('below_minimum') ? 'Compliance below minimum' : 'Compliance needs attention',
+            message: detailText || 'Please review your current compliance status.',
+        };
+    }
+    if (normalizedType.includes('compliance')) {
+        return {
+            title: 'Compliance update',
+            message: 'A compliance update was recorded. Please review your compliance status for details.',
+        };
+    }
+    if (normalizedType.includes('submission') || normalizedType.includes('review')) {
+        return {
+            title: 'Submission update',
+            message: 'There is an update about one of your submissions. Please review your submission history.',
+        };
+    }
+    if (normalizedType.includes('duty')) {
+        return {
+            title: 'Duty update',
+            message: 'There is a new update about your duty participation.',
+        };
+    }
+    return {
+        title: 'Scholarship update',
+        message: 'There is a new update in your Scholar Portal.',
+    };
 };
 
 exports.getScholarNotifications = (req, res) => {
@@ -198,7 +279,7 @@ exports.getScholarNotifications = (req, res) => {
     const sql = `
         SELECT id, scholar_id, recipient, channel, type, status, detail, is_read, read_at, created_at
         FROM notification_logs
-        WHERE scholar_id = ?
+        WHERE scholar_id = ? AND channel = 'system' AND status = 'generated'
         ORDER BY created_at DESC
     `;
 
@@ -208,19 +289,22 @@ exports.getScholarNotifications = (req, res) => {
             return res.status(500).json({ error: 'Error fetching notification feed.' });
         }
 
-        const results = rows.map(row => ({
-            id: row.id,
-            source: resolveNotificationSource(row.type),
-            type: resolveNotificationType(row.type, row.status),
-            title: String(row.type || 'Notification').replace(/[_-]+/g, ' '),
-            message: row.detail || 'You have a new notification.',
-            date: row.created_at,
-            read: Number(row.is_read) === 1,
-            channel: row.channel,
-            recipient: row.recipient,
-            status: row.status,
-            created_at: row.created_at,
-        }));
+        const seenEvents = new Set();
+        const results = rows.reduce((notifications, row) => {
+            const eventKey = `${row.type || ''}:${row.detail || ''}`;
+            if (seenEvents.has(eventKey)) return notifications;
+            seenEvents.add(eventKey);
+            notifications.push({
+                id: row.id,
+                source: resolveNotificationSource(row.type),
+                type: resolveNotificationType(row.type, row.status),
+                ...formatScholarNotification(row.type, row.detail),
+                date: row.created_at,
+                read: Number(row.is_read) === 1,
+                created_at: row.created_at,
+            });
+            return notifications;
+        }, []);
 
         return res.json(results);
     });
@@ -233,7 +317,7 @@ exports.markAllNotificationsRead = (req, res) => {
     const sql = `
         UPDATE notification_logs
         SET is_read = 1, read_at = CURRENT_TIMESTAMP
-        WHERE scholar_id = ? AND COALESCE(is_read, 0) = 0
+        WHERE scholar_id = ? AND channel = 'system' AND status = 'generated' AND COALESCE(is_read, 0) = 0
     `;
 
     db.query(sql, [scholar_id], (err, result) => {
@@ -256,7 +340,7 @@ exports.markNotificationRead = (req, res) => {
     const sql = `
         UPDATE notification_logs
         SET is_read = 1, read_at = CURRENT_TIMESTAMP
-        WHERE id = ? AND scholar_id = ?
+        WHERE id = ? AND scholar_id = ? AND channel = 'system' AND status = 'generated'
     `;
 
     db.query(sql, [notificationId, scholar_id], (err, result) => {
@@ -374,6 +458,7 @@ exports.getComplianceStatus = (req, res) => {
                             SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) AS absent
                         FROM duty_attendance
                         WHERE scholar_id = ?
+                          AND (COALESCE(is_makeup, 0) = 0 OR check_out_at IS NOT NULL)
                     `,
                     [scholar_id],
                     (attErr, attRows) => {
@@ -390,7 +475,22 @@ exports.getComplianceStatus = (req, res) => {
 
                             const sub = subRows && subRows[0] ? subRows[0] : null;
                             const att = attRows && attRows[0] ? attRows[0] : null;
-                            const score = calculateComplianceScore({ sub, att, settings, today: new Date() });
+                            const today = new Date();
+                            getOverdueComplianceTaskCounts(
+                                [{ scholar_id, year_level: gradeRows[0]?.year_level }],
+                                today,
+                                (taskErr, overdueTasksByScholar) => {
+                                    if (taskErr) {
+                                        console.error('getComplianceStatus task penalties error:', taskErr);
+                                        return res.status(500).json({ error: 'Error loading overdue compliance tasks.' });
+                                    }
+                                    const score = calculateComplianceScore({
+                                        sub,
+                                        att,
+                                        settings,
+                                        overdueTaskCount: overdueTasksByScholar[scholar_id] || 0,
+                                        today,
+                                    });
 
                             const academicGrades = Array.isArray(gradeRows) ? gradeRows : [];
                             let weightedSum = 0;
@@ -422,11 +522,9 @@ exports.getComplianceStatus = (req, res) => {
                             }
                             if (score.deductions.missedSubmission.points > 0) {
                                 scholarFlags.push({
-                                    type: 'Monthly Report',
-                                    description: score.deductions.missedSubmission.missingReports === 0
-                                        ? 'You are keeping up with your monthly reports.'
-                                        : `You are missing ${score.deductions.missedSubmission.missingReports} monthly report${score.deductions.missedSubmission.missingReports === 1 ? '' : 's'} for the current term progress.`,
-                                    severity: score.deductions.missedSubmission.missingReports >= 2 ? 'medium' : 'low',
+                                    type: 'Overdue Compliance Tasks',
+                                    description: `${score.deductions.missedSubmission.overdueTasks} overdue compliance task${score.deductions.missedSubmission.overdueTasks === 1 ? '' : 's'}; ${score.deductions.missedSubmission.penalizedTasks} exceeded the grace allowances.`,
+                                    severity: score.deductions.missedSubmission.penalizedTasks >= 2 ? 'medium' : 'low',
                                 });
                             }
                             if (score.deductions.absentDuty.points > 0) {
@@ -476,6 +574,7 @@ exports.getComplianceStatus = (req, res) => {
 
                             res.json({
                                 overall_compliance: score.overallCompliance,
+                                required_hours: score.requiredHours,
                                 risk_level: score.overallCompliance >= 70 ? 'low' : score.overallCompliance >= 50 ? 'medium' : 'high',
                                 recoverable_credits: Number(score.recoverableCredits || 0),
                                 total_bonus_points: Number(score.totalBonusPoints || 0),
@@ -484,6 +583,8 @@ exports.getComplianceStatus = (req, res) => {
                                 academic_status: academicStatus,
                                 normalized_academic_score: academicScore,
                             });
+                                }
+                            );
                         });
                     }
                 );
@@ -503,11 +604,13 @@ exports.getMyDuties = (req, res) => {
             d.duty_date, d.time_start, d.time_end, d.location, d.status,
             g.group_name,
             assigned_staff.full_name AS assigned_staff_name,
-            da.status AS attendance_status, da.method, da.marked_at, da.is_makeup,
+            da.status AS attendance_status, da.method, da.marked_at, da.check_out_at, da.is_makeup,
             CASE
-                WHEN da.status = 'present' THEN 'completed'
-                WHEN CURDATE() <= DATE_ADD(d.duty_date, INTERVAL 7 DAY) THEN 'pending'
-                ELSE 'missed'
+                WHEN da.status IN ('present', 'late') AND (COALESCE(da.is_makeup, 0) = 0 OR da.check_out_at IS NOT NULL) THEN 'completed'
+                WHEN LOWER(COALESCE(da.status, '')) = 'absent' THEN 'missed'
+                WHEN TIMESTAMP(d.duty_date, COALESCE(d.time_end, '23:59:59'))
+                    <= DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR) THEN 'missed'
+                ELSE 'pending'
             END AS computed_status
         FROM duties d
         JOIN duty_group_assignments dga ON dga.duty_id = d.id
@@ -546,10 +649,13 @@ exports.checkInToDuty = (req, res) => {
     // Step 1: Hanapin yung duty base sa QR token
     const dutySql = `
         SELECT id, title, duty_date, time_start, time_end,
-               TIMESTAMP(duty_date, COALESCE(time_end, '23:59:59')) <= NOW() AS duty_ended,
-               time_start IS NOT NULL AND NOW() > DATE_ADD(
+               TIMESTAMP(duty_date, COALESCE(time_end, '23:59:59'))
+                   <= DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR) AS duty_ended,
+               TIMESTAMP(duty_date, COALESCE(time_start, '00:00:00'))
+                   <= DATE_SUB(DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR), INTERVAL 1 HOUR) AS checkin_locked,
+               time_start IS NOT NULL AND DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR) > DATE_ADD(
                    TIMESTAMP(duty_date, time_start),
-                   INTERVAL 30 MINUTE
+                   INTERVAL 15 MINUTE
                ) AS is_late
         FROM duties
         WHERE qr_token = ?
@@ -577,39 +683,67 @@ exports.checkInToDuty = (req, res) => {
         const logMakeupAttendance = () => {
             logAttendanceNotification('attendance_makeup', `Makeup attendance recorded for duty "${duty.title || 'Duty'}" (duty_id=${duty.id}).`);
         };
-        if (Boolean(duty.duty_ended)) {
-            return res.status(410).json({ error: 'Duty has ended. Contact staff to arrange a makeup duty.' });
-        }
-
         // Step 2: Verify normal group membership or an approved one-duty makeup permission.
         const verifySql = `
-            SELECT MAX(is_group_member) AS is_group_member, MAX(has_makeup_permission) AS has_makeup_permission
+            SELECT MAX(is_group_member) AS is_group_member,
+                MAX(has_makeup_permission) AS has_makeup_permission,
+                MAX(has_active_attendance) AS has_active_attendance
             FROM (
-                SELECT 1 AS is_group_member, 0 AS has_makeup_permission
+                SELECT 1 AS is_group_member, 0 AS has_makeup_permission, 0 AS has_active_attendance
                 FROM duty_group_assignments dga
                 JOIN scholar_group_members m ON m.group_id = dga.group_id
                 WHERE dga.duty_id = ? AND m.scholar_id = ?
                 UNION ALL
-                SELECT 0 AS is_group_member, 1 AS has_makeup_permission
+                SELECT 0 AS is_group_member, 1 AS has_makeup_permission, 0 AS has_active_attendance
                 FROM duty_makeup_permissions p
                 WHERE p.makeup_duty_id = ? AND p.scholar_id = ?
                   AND p.status = 'approved' AND p.used_at IS NULL
+                UNION ALL
+                SELECT 0 AS is_group_member, 0 AS has_makeup_permission, 1 AS has_active_attendance
+                FROM duty_attendance da
+                WHERE da.duty_id = ? AND da.scholar_id = ?
             ) access_check
         `;
-        db.query(verifySql, [duty.id, scholar_id, duty.id, scholar_id], (err, check) => {
+        db.query(verifySql, [duty.id, scholar_id, duty.id, scholar_id, duty.id, scholar_id], (err, check) => {
             if (err) return res.status(500).json({ error: 'Database error' });
 
-            if (!check.length || (!check[0].is_group_member && !check[0].has_makeup_permission)) {
+            if (!check.length || (
+                !check[0].is_group_member
+                && !check[0].has_makeup_permission
+                && !check[0].has_active_attendance
+            )) {
                 return res.status(403).json({ error: 'This duty is not assigned to your group.' });
             }
             const permissionUsed = Boolean(check[0].has_makeup_permission && !check[0].is_group_member);
 
-            // Step 3: Prevent duplicate check-in
-            const dupSql = `SELECT id FROM duty_attendance WHERE duty_id = ? AND scholar_id = ?`;
+            // A repeat scan checks out an existing attendance instead of creating a duplicate.
+            const dupSql = `SELECT id, status, check_out_at FROM duty_attendance WHERE duty_id = ? AND scholar_id = ?`;
             db.query(dupSql, [duty.id, scholar_id], (err, existing) => {
                 if (err) return res.status(500).json({ error: 'Database error' });
-                if (existing.length > 0)
-                    return res.status(409).json({ error: 'Already checked in for this duty.' });
+                if (existing.length > 0) {
+                    if (!['present', 'late'].includes(String(existing[0].status || '').toLowerCase())) {
+                        return res.status(409).json({
+                            error: String(existing[0].status || '').toLowerCase() === 'absent'
+                                ? 'Check-in is closed and this duty is marked absent. Contact the admin about a make-up duty.'
+                                : 'This attendance is not eligible for check-out.',
+                        });
+                    }
+                    return checkOutDutyAttendance(duty.id, scholar_id, (checkoutError, checkout) => {
+                        if (checkoutError) return res.status(checkoutError.status).json({ error: checkoutError.error });
+                        return res.json({
+                            message: 'Checked out successfully.',
+                            action: 'checked_out',
+                            id: checkout.id,
+                        });
+                    });
+                }
+
+                if (Boolean(duty.duty_ended)) {
+                    return res.status(410).json({ error: 'Duty has ended. Contact staff to arrange a makeup duty.' });
+                }
+                if (Number(duty.checkin_locked) === 1) {
+                    return res.status(410).json({ error: 'The check-in window is closed one hour after the scheduled start. Contact the admin about a make-up duty.' });
+                }
 
                 // Step 4: Check kung nasa loob pa ng 7-day makeup window
                 const today = new Date().toISOString().split('T')[0];
@@ -727,7 +861,7 @@ exports.exportMyData = async (req, res) => {
             queryRows(`SELECT id, scholar_id, full_name, email, role, year_level, age, phone, address, course, school, status, created_at FROM users WHERE id = ? AND role = 'scholar'`, [userId]),
             queryRows(`SELECT id, submission_type, letter_content, sentiment_score, sentiment_label, report_card_path, cor_path, service_activity, service_hours, service_date, quality_score, quality_status, status, officer_comment, submitted_at, reviewed_at FROM submissions WHERE scholar_id = ? ORDER BY submitted_at DESC`, [scholarId]),
             queryRows(`SELECT semester, academic_year, subject_name, units, grade, grade_scale, proof_path, verification_status, officer_comment, created_at FROM grades WHERE scholar_id = ? ORDER BY created_at DESC`, [scholarId]),
-            queryRows(`SELECT da.duty_id, d.title AS duty, d.location, d.duty_date, da.status, da.method, da.marked_at, da.is_makeup FROM duty_attendance da LEFT JOIN duties d ON d.id = da.duty_id WHERE da.scholar_id = ? ORDER BY da.marked_at DESC`, [scholarId]),
+            queryRows(`SELECT da.duty_id, d.title AS duty, d.location, d.duty_date, da.status, da.method, da.marked_at, da.check_out_at, da.is_makeup FROM duty_attendance da LEFT JOIN duties d ON d.id = da.duty_id WHERE da.scholar_id = ? ORDER BY da.marked_at DESC`, [scholarId]),
             queryRows(`SELECT purpose, consented, consented_at, revoked_at FROM data_consents WHERE user_id = ? ORDER BY purpose`, [userId]),
             queryRows(`SELECT id, request_type, status, requested_at, processed_at, notes FROM privacy_requests WHERE user_id = ? ORDER BY requested_at DESC`, [userId]),
         ]);
@@ -773,14 +907,15 @@ exports.getMakeupOptions = (req, res) => {
     const scholarId = req.user.scholar_id;
     const sourceDutyId = req.params.source_duty_id;
     db.query(`
-        SELECT COALESCE(da.status, 'absent') AS source_status, d.duty_date AS source_duty_date
+        SELECT CASE WHEN da.status = 'excused' THEN 'absent' ELSE COALESCE(da.status, 'absent') END AS source_status,
+               d.duty_date AS source_duty_date
         FROM duties d
         LEFT JOIN duty_attendance da ON da.duty_id = d.id AND da.scholar_id = ?
         WHERE d.id = ? AND da.status IN ('absent', 'excused')
         LIMIT 1
     `, [scholarId, sourceDutyId], (sourceErr, sourceRows) => {
         if (sourceErr) return res.status(500).json({ error: 'Error checking duty attendance' });
-        if (!sourceRows.length) return res.status(400).json({ error: 'Only absent or excused duties can request makeup' });
+        if (!sourceRows.length) return res.status(400).json({ error: 'Only missed duties can request makeup' });
 
         db.query(`
             SELECT id, title, duty_date, time_start, time_end, location
@@ -827,7 +962,7 @@ exports.requestMakeup = (req, res) => {
         LIMIT 1
     `, [scholarId, source_duty_id], (sourceErr, sourceRows) => {
         if (sourceErr) return res.status(500).json({ error: 'Error checking source duty' });
-        if (!sourceRows.length) return res.status(400).json({ error: 'Only absent or excused duties can request makeup' });
+        if (!sourceRows.length) return res.status(400).json({ error: 'Only missed duties can request makeup' });
 
         db.query(`
             SELECT id FROM duties

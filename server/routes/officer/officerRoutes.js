@@ -20,8 +20,10 @@ router.post('/announcements/:id/notify', officerController.notifyAnnouncement);
 router.get('/profile', officerSettingsController.getProfile);
 router.put('/profile', officerSettingsController.updateProfile);
 router.post('/change-password', authController.changePassword);
+router.post('/settings/verify-password', officerSettingsController.verifyPassword);
 router.get('/settings/notifications', officerSettingsController.getNotificationPreferences);
 router.put('/settings/notifications', officerSettingsController.updateNotificationPreferences);
+router.get('/notifications/compliance-due', officerController.getComplianceDueReminders);
 
 // ── Duties (for attendance dropdown) ──────────────────────
 router.get('/duties', officerController.getDuties);
@@ -37,6 +39,7 @@ router.get('/reports/task-completion', verifyToken, requireRole(['officer'], { a
 router.get('/reports/scholar-submissions', verifyToken, requireRole(['officer'], { action: 'VIEW_SCHOLAR', resourceType: 'submission_report', logAllowed: false }), officerController.getScholarSubmissionSummary);
 router.post('/reports/compliance-summary/pdf', verifyToken, requireRole(['officer']), officerController.generateComplianceSummaryPdf);
 router.get('/reports/monthly-submissions', verifyToken, requireRole(['officer'], { action: 'VIEW_LETTER', resourceType: 'letter' }), officerController.getMonthlySubmissions);
+router.get('/reports/submission-records', verifyToken, requireRole(['officer'], { action: 'VIEW_SCHOLAR', resourceType: 'submission_report' }), officerController.getSubmissionRecords);
 router.post('/reports/monthly-submissions/:id/action', verifyToken, requireRole(['officer']), officerController.reviewMonthlySubmission);
 
 module.exports = router;

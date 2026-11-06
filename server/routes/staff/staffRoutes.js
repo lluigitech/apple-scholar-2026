@@ -2,10 +2,22 @@ const express = require('express');
 const router  = express.Router();
 const staff   = require('../../controllers/staffController');
 const duty    = require('../../controllers/dutyController');
+const staffSettings = require('../../controllers/staffSettingsController');
+const authController = require('../../controllers/authController');
 const { verifyToken, requireRole } = require('../../middleware/authMiddleware');
 
 router.use(verifyToken);
 router.use(requireRole(['staff', 'admin', 'officer']));
+
+// Staff account settings are restricted to the signed-in staff account.
+router.get('/profile', requireRole(['staff']), staffSettings.getProfile);
+router.put('/profile', requireRole(['staff']), staffSettings.updateProfile);
+router.post('/settings/verify-password', requireRole(['staff']), staffSettings.verifyPassword);
+router.post('/change-password', requireRole(['staff']), (req, res) => (
+    authController.changePassword(req, res, { successMessage: 'Password updated' })
+));
+router.get('/settings/notifications', requireRole(['staff']), staffSettings.getNotificationPreferences);
+router.put('/settings/notifications', requireRole(['staff']), staffSettings.updateNotificationPreferences);
 
 // Scholars
 router.get('/pending', requireRole(['staff', 'admin', 'officer']), staff.getPendingScholars);
@@ -56,6 +68,7 @@ router.get   ('/duties/:duty_id/qr',              verifyToken, requireRole(['adm
 router.get   ('/duties/:duty_id/scholars',        verifyToken, requireRole(['admin', 'staff', 'Staff']), duty.getDutyScholars);
 router.post  ('/duties/:duty_id/notify',          verifyToken, requireRole(['admin']), duty.notifyDutyScholars);
 router.post  ('/duties/:duty_id/attendance/bulk', verifyToken, requireRole(['admin', 'staff'], { action: 'UPDATE_ATTENDANCE', resourceType: 'attendance' }), duty.bulkMarkAttendance);
+router.post('/duties/:duty_id/attendance/:scholar_id/checkout', verifyToken, requireRole(['admin', 'staff'], { action: 'UPDATE_ATTENDANCE', resourceType: 'attendance' }), duty.checkOutScholarAttendance);
 router.post  ('/duties/:duty_id/complete', verifyToken, requireRole(['staff', 'admin']), duty.completeDuty);
 
 module.exports = router;

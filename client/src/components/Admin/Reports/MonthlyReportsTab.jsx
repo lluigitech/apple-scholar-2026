@@ -9,6 +9,26 @@ import { fileKind } from '../../../utils/submissionHelpers';
 
 const API_BASE = (import.meta.env?.VITE_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
 const API = API_BASE.endsWith('/api') ? API_BASE : `${API_BASE}/api`;
+const getAuthHeaders = () => {
+  const token = localStorage.getItem('token');
+  if (!token) throw new Error('Your sign-in session has expired. Please sign in again.');
+  return { Authorization: `Bearer ${token}` };
+};
+const postWithCurrentAuth = (url, data, config = {}) => axios.post(url, data, {
+  ...config,
+  headers: getAuthHeaders(),
+});
+const saveDownload = (blob, filename) => {
+  const objectUrl = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+};
+const safeFilenamePart = (value) => String(value || '').replace(/[^a-z0-9._-]+/gi, '_');
 
 const ARCHIVE_BULK_PATH = '/submission/archive/bulk';
 
@@ -84,6 +104,27 @@ const monthLabel = (value) => {
 };
 const periodOf = (r) => r.period || r.periodLabel || monthLabel(r.submittedAt);
 const rowKey = (r, i) => r.id || r._id || `${r.scholarName}-${r.submittedAt}-${i}`;
+
+const getDownloadErrorMessage = async (error, fallback) => {
+  if (error.response?.status === 401) {
+    return 'Your sign-in session has expired. Please sign in again to download these documents.';
+  }
+  if (error.response?.status === 403) {
+    return 'You are not authorized to download these documents.';
+  }
+
+  const responseData = error.response?.data;
+  if (responseData instanceof Blob) {
+    try {
+      const body = JSON.parse(await responseData.text());
+      return body.error || body.message || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  return responseData?.error || responseData?.message || fallback;
+};
 
 const pageList = (current, total) => {
   if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
@@ -281,6 +322,7 @@ export default function MonthlyReportsTab({
   const [exportOpen, setExportOpen] = useState(false);
   const [generatingPdfId, setGeneratingPdfId] = useState(null);
   const [bulkPdfLoading, setBulkPdfLoading] = useState(false);
+  const [bulkDocxLoading, setBulkDocxLoading] = useState(false);
   const [pdfError, setPdfError] = useState('');
   const [pdfPreview, setPdfPreview] = useState(null);
   const [documentPreview, setDocumentPreview] = useState(null);
@@ -486,31 +528,80 @@ export default function MonthlyReportsTab({
     });
   };
   const handleDownloadAllLetterPdfs = async () => {
-    const submissionIds = letterTargets
-      .map(report => report.id || report._id)
-      .filter(Boolean);
-    if (!submissionIds.length) return;
+    const targets = letterTargets
+      .map(report => ({ report, id: report.id || report._id }))
+      .filter(item => item.id);
+    if (!targets.length) return;
 
     setBulkPdfLoading(true);
     setPdfError('');
     try {
-      const response = await axios.post(`${API}/submission/letters/bulk-pdf`, { submissionIds }, {
+      if (targets.length > 1) {
+        const response = await postWithCurrentAuth(`${API}/submission/letters/bulk-pdf`, {
+          submissionIds: targets.map(({ id }) => id),
+        }, { responseType: 'blob' });
+        saveDownload(new Blob([response.data], { type: 'application/zip' }), `monthly-letters-pdf-${new Date().toISOString().slice(0, 10)}.zip`);
+      } else {
+      for (const { report, id } of targets) {
+      const response = await postWithCurrentAuth(`${API}/submission/letters/pdf`, { submissionId: id }, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
         responseType: 'blob',
       });
-      const objectUrl = URL.createObjectURL(new Blob([response.data], { type: 'application/zip' }));
+      const objectUrl = URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
       const link = document.createElement('a');
+      const safeName = String(report.scholarName || `Scholar-${id}`).replace(/[^a-z0-9._-]+/gi, '_');
       link.href = objectUrl;
-      link.download = `monthly-letters-${new Date().toISOString().slice(0, 10)}.zip`;
+      link.download = `${safeName}_${safeFilenamePart(periodOf(report))}_Monthly_Letter_${id}.pdf`;
       document.body.appendChild(link);
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+      }
+      }
     } catch (downloadError) {
-      console.error('Could not download monthly letter archive:', downloadError);
-      setPdfError('Unable to download all PDF letters. Please try again.');
+      console.error('Could not download monthly letter PDF documents:', downloadError);
+      setPdfError(await getDownloadErrorMessage(downloadError, 'Unable to download the PDF letters. Please try again.'));
     } finally {
       setBulkPdfLoading(false);
+    }
+  };
+
+  const handleDownloadAllLetterDocxs = async () => {
+    const targets = letterTargets
+      .map(report => ({ report, id: report.id || report._id }))
+      .filter(item => item.id);
+    if (!targets.length) return;
+
+    setBulkDocxLoading(true);
+    setPdfError('');
+    try {
+      if (targets.length > 1) {
+        const response = await postWithCurrentAuth(`${API}/submission/letters/bulk-docx`, {
+          submissionIds: targets.map(({ id }) => id),
+        }, { responseType: 'blob' });
+        saveDownload(
+          new Blob([response.data], { type: 'application/zip' }),
+          `monthly-letters-docx-${new Date().toISOString().slice(0, 10)}.zip`
+        );
+      } else {
+        const [{ report, id }] = targets;
+        const response = await postWithCurrentAuth(`${API}/submission/letters/docx`, { submissionId: id }, {
+          responseType: 'blob',
+        });
+        const safeName = safeFilenamePart(report.scholarName || `Scholar-${id}`);
+        const period = safeFilenamePart(periodOf(report));
+        saveDownload(
+          new Blob([response.data], {
+            type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          }),
+          `${safeName}_${period}_Monthly_Letter_${id}.docx`
+        );
+      }
+    } catch (downloadError) {
+      console.error('Could not download monthly letter DOCX documents:', downloadError);
+      setPdfError(await getDownloadErrorMessage(downloadError, 'Unable to download the Word letters. Please try again.'));
+    } finally {
+      setBulkDocxLoading(false);
     }
   };
 
@@ -719,8 +810,27 @@ export default function MonthlyReportsTab({
                 {bulkPdfLoading
                   ? 'Preparing PDF letters…'
                   : selected.size > 0
-                    ? `Download selected PDF letters (${letterTargets.length})`
-                    : `Download PDF letters (${letterTargets.length})`}
+                    ? `PDF letters (${letterTargets.length})`
+                    : `PDF letters (${letterTargets.length})`}
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadAllLetterDocxs}
+                disabled={bulkDocxLoading || letterTargets.length === 0}
+                className="flex items-center gap-2"
+                style={{
+                  height: 38, padding: '0 16px', borderRadius: 10, border: `1px solid ${PRIMARY}`,
+                  background: '#fff', color: PRIMARY, ...body, fontSize: '0.8rem', fontWeight: 700, whiteSpace: 'nowrap',
+                  cursor: bulkDocxLoading || letterTargets.length === 0 ? 'not-allowed' : 'pointer',
+                  opacity: letterTargets.length === 0 ? 0.5 : 1,
+                }}
+              >
+                <Download size={14} />
+                {bulkDocxLoading
+                  ? 'Preparing DOCX letters…'
+                  : selected.size > 0
+                    ? `DOCS letters (${letterTargets.length})`
+                    : `DOCS letters (${letterTargets.length})`}
               </button>
             </div>
           </div>
@@ -735,6 +845,7 @@ export default function MonthlyReportsTab({
             </div>
           )}
           {bulkPdfLoading && <p style={{ ...body, color: MUTED, fontSize: '0.8rem', marginBottom: 12 }}>Preparing PDF letters. This may take a moment…</p>}
+          {bulkDocxLoading && <p style={{ ...body, color: MUTED, fontSize: '0.8rem', marginBottom: 12 }}>Preparing editable DOCX letters. This may take a moment…</p>}
           {pdfError && <p role="alert" style={{ ...body, color: DANGER, fontSize: '0.8rem', marginBottom: 12 }}>{pdfError}</p>}
 
           {searchedReports.length === 0 ? (

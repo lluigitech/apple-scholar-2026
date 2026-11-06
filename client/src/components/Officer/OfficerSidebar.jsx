@@ -44,7 +44,7 @@ const OfficerSidebar = ({ isOpen, onClose, collapsed = false }) => {
     const handleLogout = async () => {
         await axios.post('http://localhost:5000/api/logout', {}, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }).catch(() => {});
         localStorage.clear();
-        navigate('/');
+        navigate('/login');
     };
 
     const getInitials = (fullName) => {

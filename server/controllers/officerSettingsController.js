@@ -1,22 +1,57 @@
 const db = require('../config/db');
+const bcrypt = require('bcryptjs');
 const { getAssignedYearLevels } = require('../utils/officerAssignments');
 
 const notificationKeys = [
     'new_submissions',
     'pending_reviews',
     'deadlines',
-    'returned_submissions',
     'announcements',
 ];
 
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const query = (sql, values) => db.promise().query(sql, values);
 
+const verifyOfficerPassword = async (officerId, password) => {
+    if (typeof password !== 'string' || !password) {
+        return { valid: false, status: 401, error: 'Enter your current password to save Officer settings.' };
+    }
+    const [rows] = await query(
+        'SELECT password FROM users WHERE id = ? AND role = ? LIMIT 1',
+        [officerId, 'officer']
+    );
+    if (!rows.length) return { valid: false, status: 404, error: 'Officer account not found.' };
+    const storedPassword = String(rows[0].password || '');
+    const valid = storedPassword.startsWith('$2')
+        ? await bcrypt.compare(password, storedPassword)
+        : password === storedPassword;
+    return valid
+        ? { valid: true }
+        : { valid: false, status: 401, error: 'The current password is incorrect.' };
+};
+
+exports.verifyPassword = async (req, res) => {
+    const body = req.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)
+        || Object.keys(body).length !== 1
+        || typeof body.currentPassword !== 'string' || !body.currentPassword) {
+        return res.status(400).json({ error: 'Enter your current password.' });
+    }
+    try {
+        const result = await verifyOfficerPassword(req.user.id, body.currentPassword);
+        if (!result.valid) return res.status(result.status).json({ error: result.error });
+        return res.json({ verified: true });
+    } catch (error) {
+        console.error('Failed to verify Officer settings password:', error);
+        return res.status(500).json({ error: 'Failed to verify current password.' });
+    }
+};
+
 exports.getProfile = async (req, res) => {
     try {
         const [[users], assignedYearLevels] = await Promise.all([
             query(
-                `SELECT id AS officer_id, full_name, email, phone AS contact_number, role, created_at
+                `SELECT scholar_id AS officer_id, full_name, email, role, created_at
                  FROM users
                  WHERE id = ? AND role = 'officer'
                  LIMIT 1`,
@@ -34,7 +69,7 @@ exports.getProfile = async (req, res) => {
 
 exports.updateProfile = async (req, res) => {
     const body = req.body;
-    const allowedFields = new Set(['full_name', 'email', 'contact_number']);
+    const allowedFields = new Set(['full_name', 'email', 'currentPassword']);
     if (
         !body ||
         typeof body !== 'object' ||
@@ -42,30 +77,27 @@ exports.updateProfile = async (req, res) => {
         Object.keys(body).some(key => !allowedFields.has(key)) ||
         typeof body.full_name !== 'string' ||
         typeof body.email !== 'string' ||
-        typeof body.contact_number !== 'string'
+        typeof body.currentPassword !== 'string'
     ) {
-        return res.status(400).json({ error: 'Only full_name, email, and contact_number are accepted.' });
+        return res.status(400).json({ error: 'Provide profile fields and your current password.' });
     }
 
     const fullName = body.full_name.trim();
     const email = body.email.trim().toLowerCase();
-    const contactNumber = body.contact_number.trim();
     if (!fullName || fullName.length > 255) {
         return res.status(400).json({ error: 'Full name is required and must not exceed 255 characters.' });
     }
     if (!emailPattern.test(email) || email.length > 254) {
         return res.status(400).json({ error: 'Enter a valid email address.' });
     }
-    if (contactNumber.length > 64) {
-        return res.status(400).json({ error: 'Contact number must not exceed 64 characters.' });
-    }
-
     try {
+        const passwordCheck = await verifyOfficerPassword(req.user.id, body.currentPassword);
+        if (!passwordCheck.valid) return res.status(passwordCheck.status).json({ error: passwordCheck.error });
         const [result] = await query(
             `UPDATE users
-             SET full_name = ?, email = ?, phone = ?
+             SET full_name = ?, email = ?
              WHERE id = ? AND role = 'officer'`,
-            [fullName, email, contactNumber || null, req.user.id]
+            [fullName, email, req.user.id]
         );
         if (!result.affectedRows) {
             const [users] = await query(
@@ -74,14 +106,13 @@ exports.updateProfile = async (req, res) => {
             );
             if (!users.length) return res.status(404).json({ error: 'Officer profile not found.' });
             const [[current]] = await query(
-                `SELECT full_name, email, phone AS contact_number
+                `SELECT full_name, email
                  FROM users WHERE id = ? AND role = 'officer' LIMIT 1`,
                 [req.user.id]
             );
             if (
                 current.full_name !== fullName ||
-                current.email !== email ||
-                (current.contact_number || '') !== contactNumber
+                current.email !== email
             ) {
                 return res.status(500).json({ error: 'Failed to update officer profile.' });
             }
@@ -89,7 +120,6 @@ exports.updateProfile = async (req, res) => {
         return res.json({
             full_name: fullName,
             email,
-            contact_number: contactNumber,
         });
     } catch (error) {
         if (error.code === 'ER_DUP_ENTRY') {
@@ -108,7 +138,7 @@ exports.getNotificationPreferences = async (req, res) => {
             [req.user.id]
         );
         const [rows] = await query(
-            `SELECT new_submissions, pending_reviews, deadlines, returned_submissions, announcements
+            `SELECT new_submissions, pending_reviews, deadlines, announcements
              FROM officer_notification_preferences
              WHERE officer_id = ?
              LIMIT 1`,
@@ -124,38 +154,42 @@ exports.getNotificationPreferences = async (req, res) => {
 
 exports.updateNotificationPreferences = async (req, res) => {
     const body = req.body;
+    const settings = body && typeof body === 'object' && !Array.isArray(body)
+        ? Object.fromEntries(notificationKeys.filter(key => Object.prototype.hasOwnProperty.call(body, key)).map(key => [key, body[key]]))
+        : null;
+    const allowedFields = new Set([...notificationKeys, 'currentPassword']);
     if (
-        !body ||
-        typeof body !== 'object' ||
-        Array.isArray(body) ||
-        Object.keys(body).length !== notificationKeys.length ||
-        notificationKeys.some(key => typeof body[key] !== 'boolean') ||
-        Object.keys(body).some(key => !notificationKeys.includes(key))
+        !settings ||
+        Object.keys(settings).length !== notificationKeys.length ||
+        notificationKeys.some(key => typeof settings[key] !== 'boolean') ||
+        typeof body.currentPassword !== 'string' ||
+        Object.keys(body).some(key => !allowedFields.has(key))
     ) {
-        return res.status(400).json({ error: 'Provide boolean values for all notification preferences.' });
+        return res.status(400).json({ error: 'Provide boolean values for all notification preferences and your current password.' });
     }
 
     try {
+        const passwordCheck = await verifyOfficerPassword(req.user.id, body.currentPassword);
+        if (!passwordCheck.valid) return res.status(passwordCheck.status).json({ error: passwordCheck.error });
         await query(
             `INSERT INTO officer_notification_preferences
-                (officer_id, new_submissions, pending_reviews, deadlines, returned_submissions, announcements)
-             SELECT id, ?, ?, ?, ?, ?
+                (officer_id, new_submissions, pending_reviews, deadlines, announcements)
+             SELECT id, ?, ?, ?, ?
              FROM users
              WHERE id = ? AND role = 'officer'
              ON DUPLICATE KEY UPDATE
                 new_submissions = VALUES(new_submissions),
                 pending_reviews = VALUES(pending_reviews),
                 deadlines = VALUES(deadlines),
-                returned_submissions = VALUES(returned_submissions),
                 announcements = VALUES(announcements)`,
-            [...notificationKeys.map(key => body[key]), req.user.id]
+            [...notificationKeys.map(key => settings[key]), req.user.id]
         );
         const [users] = await query(
             'SELECT id FROM users WHERE id = ? AND role = ? LIMIT 1',
             [req.user.id, 'officer']
         );
         if (!users.length) return res.status(404).json({ error: 'Officer account not found.' });
-        return res.json(Object.fromEntries(notificationKeys.map(key => [key, body[key]])));
+        return res.json(settings);
     } catch (error) {
         console.error('Failed to save officer notification preferences:', error);
         return res.status(500).json({ error: 'Failed to save notification preferences.' });

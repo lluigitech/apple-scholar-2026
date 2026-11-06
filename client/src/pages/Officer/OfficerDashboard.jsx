@@ -1,12 +1,13 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import OfficerNotifications from '../../components/Officer/OfficerNotifications';
+import { API_BASE } from '../../components/Officer/Reports/ReportsHelpers';
 import {
   Users, Clock, CheckCircle, XCircle, TrendingUp,
-  Calendar, Activity, Zap,
+  Calendar, Zap,
   FileCheck, AlertTriangle, FileText, CalendarDays,
-  ArrowUpRight, BarChart3
+  ArrowUpRight, BarChart3, Megaphone, ChevronRight
 } from 'lucide-react';
 
 // ── Token system — shared across the whole portal ──
@@ -23,6 +24,9 @@ const PAPER = '#F6EFE4';
 const RULE = '#e8dccb';
 const ROSE = '#F5E8EA';
 
+// Existing Officer Announcements route — must match the path registered in your router.
+const OFFICER_ANNOUNCEMENTS_PATH = '/officer/announcements';
+
 const serif = { fontFamily: "'Playfair Display', serif" };
 const sans = { fontFamily: "'DM Sans', sans-serif" };
 const mono = { fontFamily: "ui-monospace, 'SFMono-Regular', Menlo, monospace" };
@@ -38,8 +42,92 @@ function SkeletonBox({ h = 16, w = '100%', radius = 6 }) {
   return <div className="animate-pulse" style={{ height: h, width: w, borderRadius: radius, background: PAPER }} />;
 }
 
+const normalizeLevel = value => String(value || '')
+  .trim()
+  .toLowerCase()
+  .replace(/[_-]/g, ' ')
+  .replace(/\s+/g, ' ')
+  .replace(/^grade\s*(\d+)$/, 'grade $1')
+  .replace(/^(1st|2nd|3rd|4th|5th)\s+year(?:\s+college)?$/, (_, year) => `college ${{ '1st': 1, '2nd': 2, '3rd': 3, '4th': 4, '5th': 5 }[year]}`);
+
+const dateKey = value => {
+  if (!value) return '';
+  if (value instanceof Date) {
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+  }
+  return String(value).slice(0, 10);
+};
+
+const parseTargetLevels = value => {
+  if (Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+};
+
+const getMonthlyCompliance = (scholars, tasks, submissions, today = new Date()) => {
+  const monthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
+  const todayKey = dateKey(today);
+  const metrics = { submitted: 0, missing: 0, late: 0, total: 0 };
+  const taskDeadlinesByScholar = new Map();
+  const monthlyTasks = tasks.filter(task => (
+    String(task.type || '').trim().toLowerCase() === 'monthly report'
+    && dateKey(task.due_date).startsWith(monthKey)
+    && dateKey(task.due_date) <= todayKey
+  ));
+
+  scholars.forEach(scholar => {
+    const assignedTaskDeadlines = monthlyTasks
+      .filter(task => {
+        const levels = parseTargetLevels(task.target_year_levels).map(normalizeLevel);
+        return !levels.length || levels.includes(normalizeLevel(scholar.year_level));
+      })
+      .map(task => dateKey(task.due_date))
+      .sort();
+    if (assignedTaskDeadlines.length) {
+      taskDeadlinesByScholar.set(scholar.scholar_id, assignedTaskDeadlines[assignedTaskDeadlines.length - 1]);
+    }
+  });
+
+  const monthlySubmissionsByScholar = new Map();
+  submissions.forEach(submission => {
+    const submissionDate = dateKey(submission.submitted_at);
+    const scholarId = submission.scholar_id || submission.sid;
+    if (
+      String(submission.submission_type || '').toLowerCase() !== 'letter'
+      || !submissionDate.startsWith(monthKey)
+      || submissionDate > todayKey
+      || !scholarId
+    ) return;
+    if (!monthlySubmissionsByScholar.has(scholarId)) monthlySubmissionsByScholar.set(scholarId, []);
+    monthlySubmissionsByScholar.get(scholarId).push(submissionDate);
+  });
+
+  scholars.forEach(scholar => {
+    metrics.total += 1;
+    const submittedDates = monthlySubmissionsByScholar.get(scholar.scholar_id) || [];
+    if (!submittedDates.length) {
+      metrics.missing += 1;
+      return;
+    }
+
+    const deadline = taskDeadlinesByScholar.get(scholar.scholar_id);
+    if (!deadline || submittedDates.some(submittedDate => submittedDate <= deadline)) metrics.submitted += 1;
+    else metrics.late += 1;
+  });
+
+  return {
+    ...metrics,
+    rate: metrics.total ? Math.min(100, Math.round((metrics.submitted / metrics.total) * 100)) : null,
+    monthLabel: today.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }),
+  };
+};
+
 // Shared panel shell: icon chip + serif title + optional description.
-function Panel({ icon: Icon, title, description, children, className = '', style = {} }) {
+function Panel({ icon: Icon, title, description, children, className = '', style = {}, action = null }) {
   return (
     <section className={`min-w-0 ${className}`} style={{ ...tile, padding: '18px 20px', ...style }}>
       <div className="flex items-start gap-3" style={{ marginBottom: 14 }}>
@@ -50,22 +138,23 @@ function Panel({ icon: Icon, title, description, children, className = '', style
           <h2 style={{ ...serif, fontSize: '1.02rem', fontWeight: 700, color: MAROON, lineHeight: 1.25 }}>{title}</h2>
           {description && <p style={{ ...sans, fontSize: '0.76rem', color: '#a89890', marginTop: 2 }}>{description}</p>}
         </div>
+        {action && <div className="ml-auto flex-shrink-0">{action}</div>}
       </div>
       {children}
     </section>
   );
 }
 
-// ── Overall Scholar Compliance (ring + Submitted / Missing / Late + breakdown bar) ──
-function ComplianceSeal({ loading, rate, submitted, missing, late }) {
-  const color = rate >= 80 ? SAGE : rate >= 50 ? AMBER : CLAY;
+// ── Monthly Scholar Compliance (ring + monthly report status breakdown) ──
+function ComplianceSeal({ loading, rate, submitted, missing, late, monthLabel }) {
+  const color = rate === null || rate >= 80 ? SAGE : rate >= 50 ? AMBER : CLAY;
   const radius = 58, stroke = 12, size = 140;
   const c = 2 * Math.PI * radius;
-  const pct = Math.min(100, Math.max(0, rate));
+  const pct = Math.min(100, Math.max(0, rate || 0));
   const offset = c - (pct / 100) * c;
 
   const stats = [
-    { label: 'Submitted', value: submitted, color: SAGE, icon: CheckCircle },
+    { label: 'On time', value: submitted, color: SAGE, icon: CheckCircle },
     { label: 'Missing', value: missing, color: CLAY, icon: AlertTriangle },
     { label: 'Late', value: late, color: AMBER, icon: Clock },
   ];
@@ -73,7 +162,7 @@ function ComplianceSeal({ loading, rate, submitted, missing, late }) {
   const barTotal = submitted + missing + late;
 
   return (
-    <Panel icon={TrendingUp} title="Overall Scholar Compliance" description="Today's docket for all assigned scholars.">
+    <Panel icon={TrendingUp} title="Overall Scholar Compliance" description={`Monthly Report compliance for ${monthLabel}.`} className="h-full">
       <div className="flex flex-col items-center gap-6 md:flex-row md:items-center">
         <div className="relative flex-shrink-0" style={{ width: size, height: size }}>
           <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={`Compliance rate ${rate}%`}>
@@ -87,8 +176,10 @@ function ComplianceSeal({ loading, rate, submitted, missing, late }) {
           <div className="absolute inset-0 flex flex-col items-center justify-center">
             {loading ? <SkeletonBox h={26} w={52} /> : (
               <>
-                <span style={{ ...serif, fontSize: '2rem', fontWeight: 800, color: INK, lineHeight: 1 }}>{rate}%</span>
-                <span style={{ ...sans, fontSize: '0.6rem', fontWeight: 700, color: '#a89890', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 4 }}>Compliant</span>
+                <span style={{ ...serif, fontSize: '2rem', fontWeight: 800, color: INK, lineHeight: 1 }}>{rate === null ? '—' : `${rate}%`}</span>
+                <span style={{ ...sans, fontSize: '0.6rem', fontWeight: 700, color: '#a89890', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: 4 }}>
+                  {rate === null ? 'No tasks due' : 'On time'}
+                </span>
               </>
             )}
           </div>
@@ -111,7 +202,7 @@ function ComplianceSeal({ loading, rate, submitted, missing, late }) {
 
           <div style={{ marginTop: 16 }}>
             {loading ? <SkeletonBox h={10} radius={999} /> : (
-              <div className="flex h-2.5 w-full overflow-hidden rounded-full" style={{ background: RULE }} role="img" aria-label="Submitted, missing, and late breakdown">
+              <div className="flex h-2.5 w-full overflow-hidden rounded-full" style={{ background: RULE }} role="img" aria-label="Monthly Report on-time, missing, and late breakdown">
                 {barTotal > 0 && stats.map(s => s.value > 0 && (
                   <div key={s.label} style={{ width: `${(s.value / barTotal) * 100}%`, background: s.color }} />
                 ))}
@@ -134,17 +225,16 @@ function ComplianceSeal({ loading, rate, submitted, missing, late }) {
 
 // ─── StatisticsCards ───────────────────────────────────────────────────────
 
-function StatisticsCards({ loading, totalScholars, pending, approved, rejected, active }) {
+function StatisticsCards({ loading, totalScholars, pending, approved, rejected }) {
   const cards = [
     { label: 'Total Scholars', value: totalScholars, icon: Users, color: MAROON },
     { label: 'Pending Review', value: pending, icon: Clock, color: AMBER },
     { label: 'Approved', value: approved, icon: CheckCircle, color: SAGE },
     { label: 'Rejected', value: rejected, icon: XCircle, color: CLAY },
-    { label: 'Active Scholars', value: active, icon: Users, color: GOLD },
   ];
 
   return (
-    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
       {cards.map((card) => (
         <div key={card.label} className="flex h-full items-center gap-3.5" style={{ ...tile, padding: '16px 18px', minWidth: 0 }}>
           <span className="inline-flex flex-shrink-0 items-center justify-center rounded-full" style={{ width: 46, height: 46, background: `${card.color}1a` }}>
@@ -170,8 +260,8 @@ function NeedsAttention({ loading, pending, deadlines, onNavigate }) {
   ];
 
   return (
-    <Panel icon={Zap} title="Needs Attention" description="Items waiting in your officer queue.">
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+    <Panel icon={Zap} title="Needs Attention" description="Items waiting in your officer queue." className="h-full">
+      <div className="grid grid-cols-1 gap-3">
         {items.map(item => (
           <button key={item.path} type="button" onClick={() => onNavigate(item.path)}
             className="od-card flex items-center gap-3 rounded-xl p-3.5 text-left transition-colors"
@@ -188,46 +278,6 @@ function NeedsAttention({ loading, pending, deadlines, onNavigate }) {
           </button>
         ))}
       </div>
-    </Panel>
-  );
-}
-
-// ─── ComplianceOverview (Compliance Breakdown) ─────────────────────────────
-
-function ComplianceOverview({ loading, submitted, missing, late, total }) {
-  const rate = total > 0 ? Math.round((submitted / total) * 100) : 0;
-
-  return (
-    <Panel icon={TrendingUp} title="Compliance Breakdown" description="Submitted, missing, and late counts." className="h-full">
-      {loading ? (
-        <div className="space-y-3">
-          <SkeletonBox h={14} /><SkeletonBox h={14} /><SkeletonBox h={14} />
-        </div>
-      ) : (
-        <>
-          <div style={{ marginBottom: 16 }}>
-            <div className="mb-1.5 flex items-center justify-between">
-              <span style={{ ...sans, fontSize: '0.78rem', fontWeight: 600, color: '#6b6058' }}>Overall Compliance</span>
-              <span style={{ ...mono, fontSize: '0.8rem', fontWeight: 800, color: MAROON }}>{rate}%</span>
-            </div>
-            <div className="h-2 overflow-hidden rounded-full" style={{ background: RULE }}>
-              <div className="h-full rounded-full transition-all duration-700" style={{ width: `${rate}%`, background: MAROON }} />
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-3">
-            {[
-              { label: 'Submitted', value: submitted, color: SAGE },
-              { label: 'Missing', value: missing, color: CLAY },
-              { label: 'Late', value: late, color: AMBER },
-            ].map(s => (
-              <div key={s.label} className="rounded-xl p-3 text-center" style={{ background: `${s.color}12`, border: `1px solid ${s.color}30` }}>
-                <p style={{ ...serif, fontSize: '1.2rem', fontWeight: 700, color: s.color }}>{s.value}</p>
-                <p style={{ ...sans, fontSize: '0.68rem', fontWeight: 700, color: s.color, marginTop: 2 }}>{s.label}</p>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
     </Panel>
   );
 }
@@ -265,40 +315,6 @@ function UpcomingDeadlines({ loading, deadlines }) {
   );
 }
 
-// ─── RecentActivities ─────────────────────────────────────────────────────
-
-function RecentActivities({ loading, activities }) {
-  return (
-    <Panel icon={Activity} title="Recent Activities" description="Latest updates and actions.">
-      {loading ? (
-        <div className="space-y-2.5">
-          {[1, 2, 3, 4].map(i => <SkeletonBox key={i} h={36} radius={10} />)}
-        </div>
-      ) : activities.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-8 text-center">
-          <Activity size={26} style={{ color: '#e9d9dc' }} className="mb-2" />
-          <p style={{ ...sans, fontSize: '0.78rem', color: '#a89890' }}>No recent activities</p>
-        </div>
-      ) : (
-        <ol>
-          {activities.slice(0, 6).map((a, i, arr) => (
-            <li key={i} className="od-row relative flex items-start gap-3 rounded-lg px-2.5 py-2.5 transition-colors">
-              <div className="relative flex flex-shrink-0 flex-col items-center self-stretch" style={{ width: 10 }}>
-                <span className="rounded-full" style={{ width: 9, height: 9, background: GOLD, marginTop: 5 }} />
-                {i < arr.length - 1 && <span className="flex-1" style={{ width: 1, background: RULE, marginTop: 4 }} />}
-              </div>
-              <div className="min-w-0 flex-1" style={{ borderBottom: i < arr.length - 1 ? 'none' : 'none' }}>
-                <p style={{ ...sans, fontSize: '0.8rem', fontWeight: 600, color: '#4b3f38', lineHeight: 1.45 }}>{a.description || a.action}</p>
-                <p style={{ ...mono, fontSize: '0.68rem', color: '#a89890', marginTop: 2 }}>{a.created_at || a.date}</p>
-              </div>
-            </li>
-          ))}
-        </ol>
-      )}
-    </Panel>
-  );
-}
-
 // ─── QuickActions ──────────────────────────────────────────────────────────
 
 function QuickActions() {
@@ -311,11 +327,11 @@ function QuickActions() {
   ];
 
   return (
-    <Panel icon={Zap} title="Quick Actions" description="Common tasks and navigation.">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <Panel icon={Zap} title="Quick Actions" description="Common tasks and navigation." className="h-full">
+      <div className="flex flex-col gap-2.5">
         {actions.map((a) => (
           <button key={a.path} type="button" onClick={() => navigate(a.path)}
-            className="od-card group flex items-center gap-3 rounded-xl p-4 text-left transition-colors"
+            className="od-card group flex items-center gap-3 rounded-xl p-3.5 text-left transition-colors"
             style={{ border: `1px solid ${RULE}`, background: '#fff', cursor: 'pointer' }}>
             <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg transition-transform group-hover:scale-105" style={{ background: `${a.color}14`, color: a.color }}>
               <a.icon size={18} />
@@ -325,6 +341,111 @@ function QuickActions() {
           </button>
         ))}
       </div>
+    </Panel>
+  );
+}
+
+// ─── RecentAnnouncements ───────────────────────────────────────────────────
+
+const PRIORITY_STYLES = {
+  critical: { label: 'Critical', color: CLAY },
+  important: { label: 'Important', color: AMBER },
+  info: { label: 'Info', color: GOLD },
+};
+
+const getRecentAnnouncements = (list, limit = 3) => {
+  const time = item => {
+    const t = new Date(item?.created_at).getTime();
+    return Number.isNaN(t) ? -Infinity : t;
+  };
+  return [...list].sort((a, b) => time(b) - time(a)).slice(0, limit);
+};
+
+const formatAnnouncementDate = value => {
+  if (!value) return '';
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-PH', { year: 'numeric', month: 'short', day: 'numeric' });
+};
+
+const roleLabel = role => {
+  const text = String(role || '').trim();
+  return text ? text.charAt(0).toUpperCase() + text.slice(1) : '';
+};
+
+function RecentAnnouncements({ loading, error, announcements, onNavigate, onRetry }) {
+  const recent = getRecentAnnouncements(announcements);
+  const goToAnnouncements = () => onNavigate(OFFICER_ANNOUNCEMENTS_PATH);
+
+  return (
+    <Panel
+      icon={Megaphone}
+      title="Recent Announcements"
+      description="Latest updates from the administration and staff."
+      action={(
+        <button type="button" onClick={goToAnnouncements} className="od-card inline-flex items-center gap-1 rounded-lg"
+          style={{ ...sans, fontSize: '0.74rem', fontWeight: 700, color: MAROON, padding: '6px 10px', border: `1px solid ${RULE}`, background: '#fff', cursor: 'pointer' }}>
+          View All <ChevronRight size={14} />
+        </button>
+      )}
+    >
+      {loading ? (
+        <div className="space-y-2.5">
+          {[1, 2, 3].map(i => <SkeletonBox key={i} h={64} radius={10} />)}
+        </div>
+      ) : error && recent.length === 0 ? (
+        <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg p-3"
+          style={{ borderLeft: `3px solid ${CLAY}`, background: `${CLAY}0d`, ...sans, fontSize: '0.78rem', fontWeight: 600, color: CLAY }}>
+          <span className="flex items-center gap-2"><AlertTriangle size={14} className="flex-shrink-0" />Announcements could not be loaded.</span>
+          <button type="button" onClick={onRetry} style={{ ...sans, fontSize: '0.74rem', fontWeight: 700, color: CLAY, background: 'none', border: 'none', textDecoration: 'underline', cursor: 'pointer' }}>Retry</button>
+        </div>
+      ) : recent.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-8 text-center">
+          <Megaphone size={26} style={{ color: '#e9d9dc' }} className="mb-2" />
+          <p style={{ ...sans, fontSize: '0.82rem', fontWeight: 700, color: INK }}>No announcements yet.</p>
+          <p style={{ ...sans, fontSize: '0.74rem', color: '#a89890', marginTop: 2 }}>New announcements will appear here when they are published.</p>
+        </div>
+      ) : (
+        <>
+          <div className="space-y-2.5">
+            {recent.map((a, i) => {
+              const priority = PRIORITY_STYLES[String(a.priority || '').toLowerCase()];
+              const accent = priority ? priority.color : GOLD;
+              const source = [a.created_by_name, roleLabel(a.created_by_role)].filter(Boolean).join(' · ');
+              const date = formatAnnouncementDate(a.created_at);
+              return (
+                <button key={a.id ?? i} type="button" onClick={goToAnnouncements}
+                  className="od-card flex w-full items-center gap-3 rounded-xl p-3.5 text-left transition-colors"
+                  style={{ border: `1px solid ${RULE}`, borderLeft: `3px solid ${accent}`, background: '#fff', cursor: 'pointer', minWidth: 0 }}>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p style={{ ...sans, fontSize: '0.84rem', fontWeight: 700, color: INK, overflowWrap: 'anywhere' }}>{a.title || 'Untitled announcement'}</p>
+                      {priority && (
+                        <span style={{ ...sans, fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: priority.color, background: `${priority.color}1a`, border: `1px solid ${priority.color}40`, borderRadius: 999, padding: '2px 8px' }}>
+                          {priority.label}
+                        </span>
+                      )}
+                    </div>
+                    {a.content && (
+                      <p style={{ ...sans, fontSize: '0.76rem', color: '#6b6058', marginTop: 3, lineHeight: 1.5, overflowWrap: 'anywhere', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+                        {a.content}
+                      </p>
+                    )}
+                    {(source || date) && (
+                      <p style={{ ...sans, fontSize: '0.7rem', color: '#a89890', marginTop: 5 }}>
+                        {source}{source && date ? ' · ' : ''}{date && <span style={mono}>{date}</span>}
+                      </p>
+                    )}
+                  </div>
+                  <ChevronRight size={15} style={{ color: '#c9b9b0', flexShrink: 0 }} />
+                </button>
+              );
+            })}
+          </div>
+          {error && (
+            <p style={{ ...sans, fontSize: '0.7rem', color: '#a89890', marginTop: 8 }}>Couldn&apos;t refresh announcements. Showing the last loaded ones.</p>
+          )}
+        </>
+      )}
     </Panel>
   );
 }
@@ -339,65 +460,120 @@ const authHeader = () => {
 const OfficerDashboard = () => {
   const name = localStorage.getItem('name');
   const navigate = useNavigate();
+  const fetchInProgress = useRef(false);
 
   const [submissions, setSubmissions] = useState([]);
+  const [validationCounts, setValidationCounts] = useState({ newSubmissions: 0, pendingReviews: 0 });
   const [scholars, setScholars] = useState([]);
+  const [tasks, setTasks] = useState([]);
   const [deadlines, setDeadlines] = useState([]);
-  const [activities, setActivities] = useState([]);
+  const [complianceReminders, setComplianceReminders] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
+  const [announcementsError, setAnnouncementsError] = useState(false);
+  const [notificationDataError, setNotificationDataError] = useState(false);
   const [notificationPreferences, setNotificationPreferences] = useState({
     new_submissions: true,
     pending_reviews: true,
     deadlines: true,
-    returned_submissions: true,
     announcements: true,
   });
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
 
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const [subRes, scholarsRes, deadlinesRes, activitiesRes, announcementsRes, preferencesRes] =
-          await Promise.allSettled([
-            axios.get('http://localhost:5000/api/submission/all', { headers: authHeader() }),
-            axios.get('http://localhost:5000/api/staff/pending', { headers: authHeader() }),
-            axios.get('http://localhost:5000/api/staff/deadlines', { headers: authHeader() }),
-            axios.get('http://localhost:5000/api/staff/reports/activities', { headers: authHeader() }),
-            axios.get('http://localhost:5000/api/officer/announcements', { headers: authHeader() }),
-            axios.get('http://localhost:5000/api/officer/settings/notifications', { headers: authHeader() }),
-          ]);
+  const fetchData = useCallback(async (showLoading = false) => {
+    if (fetchInProgress.current) return;
+    fetchInProgress.current = true;
+    if (showLoading) setLoading(true);
 
-        if (subRes.status === 'fulfilled') setSubmissions(subRes.value.data);
-        if (scholarsRes.status === 'fulfilled') setScholars(scholarsRes.value.data);
-        if (deadlinesRes.status === 'fulfilled') setDeadlines(deadlinesRes.value.data);
-        if (activitiesRes.status === 'fulfilled') setActivities(activitiesRes.value.data);
-        if (announcementsRes.status === 'fulfilled') setAnnouncements(announcementsRes.value.data || []);
-        if (preferencesRes.status === 'fulfilled') {
-          setNotificationPreferences(preferencesRes.value.data);
+    try {
+      const endpoints = [
+        ['submissions', `${API_BASE}/submission/all`],
+        ['validationQueue', `${API_BASE}/submission/scholar-view`],
+        ['scholars', `${API_BASE}/staff/pending`],
+        ['tasks', `${API_BASE}/tasks`],
+        ['complianceReminders', `${API_BASE}/officer/notifications/compliance-due`],
+        ['announcements', `${API_BASE}/officer/announcements`],
+        ['preferences', `${API_BASE}/officer/settings/notifications`],
+      ];
+      const results = await Promise.allSettled(
+        endpoints.map(([, url]) => axios.get(url, { headers: authHeader() }))
+      );
+      const data = {};
+      results.forEach((result, index) => {
+        const [key] = endpoints[index];
+        if (result.status === 'fulfilled') {
+          data[key] = result.value.data;
         } else {
-          console.error('Error fetching officer notification preferences:', preferencesRes.reason);
+          console.error(`Failed to refresh Officer dashboard ${key}:`, result.reason);
         }
-      } catch (err) {
-        console.error('Error fetching officer dashboard data:', err);
-      } finally {
-        setLoading(false);
-        setLastUpdated(new Date());
+      });
+
+      const announcementsIndex = endpoints.findIndex(([key]) => key === 'announcements');
+      setAnnouncementsError(results[announcementsIndex]?.status === 'rejected');
+      setNotificationDataError(
+        ['validationQueue', 'complianceReminders', 'announcements', 'preferences']
+          .some(key => results[endpoints.findIndex(([endpointKey]) => endpointKey === key)]?.status === 'rejected')
+      );
+
+      if (Array.isArray(data.submissions)) setSubmissions(data.submissions);
+      if (Array.isArray(data.scholars)) setScholars(data.scholars);
+      if (Array.isArray(data.announcements)) setAnnouncements(data.announcements);
+      if (data.preferences && typeof data.preferences === 'object') setNotificationPreferences(data.preferences);
+
+      if (Array.isArray(data.validationQueue)) {
+        const items = data.validationQueue.flatMap(scholar =>
+          ['monthly_letters', 'report_cards', 'cors', 'other_documents', 'grades']
+            .flatMap(category => Array.isArray(scholar[category]) ? scholar[category] : [])
+        );
+        setValidationCounts({
+          newSubmissions: items.filter(item => String(item.status || '').toLowerCase() === 'pending').length,
+          pendingReviews: items.filter(item => String(item.status || '').toLowerCase() === 'under_review').length,
+        });
       }
-    };
-    fetchData();
+
+      if (Array.isArray(data.complianceReminders)) setComplianceReminders(data.complianceReminders);
+      if (Array.isArray(data.tasks)) {
+        setTasks(data.tasks);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        setDeadlines(data.tasks.filter(task => {
+          if (!task.due_date) return false;
+          const dueDate = task.due_date instanceof Date
+            ? new Date(task.due_date.getFullYear(), task.due_date.getMonth(), task.due_date.getDate())
+            : new Date(`${String(task.due_date).slice(0, 10)}T00:00:00`);
+          return !Number.isNaN(dueDate.getTime()) && dueDate >= today;
+        }));
+      }
+    } catch (error) {
+      console.error('Failed to process Officer dashboard refresh:', error);
+    } finally {
+      fetchInProgress.current = false;
+      setLoading(false);
+      setLastUpdated(new Date());
+    }
   }, []);
 
+  useEffect(() => {
+    const initialRefresh = window.setTimeout(() => fetchData(true), 0);
+    const refreshInterval = window.setInterval(() => fetchData(), 60_000);
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') fetchData();
+    };
+    window.addEventListener('focus', refreshWhenVisible);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.clearTimeout(initialRefresh);
+      window.clearInterval(refreshInterval);
+      window.removeEventListener('focus', refreshWhenVisible);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [fetchData]);
+
   const pending = submissions.filter(s => s.status === 'pending').length;
-  const pendingReviews = submissions.filter(s => s.status === 'under_review').length;
-  const returnedSubmissions = submissions.filter(s => s.status === 'returned' || s.status === 'rejected').length;
   const approved = submissions.filter(s => s.status === 'approved').length;
   const rejected = submissions.filter(s => s.status === 'rejected').length;
-  const active = scholars.filter(s => s.status === 'active').length;
-  const submitted = approved;
-  const missing = Math.max(0, scholars.length - submitted);
-  const late = submissions.filter(s => s.is_late).length;
-  const complianceRate = scholars.length > 0 ? Math.round((submitted / scholars.length) * 100) : 0;
+  const monthlyCompliance = getMonthlyCompliance(scholars, tasks, submissions);
+  const { submitted, missing, late, rate: complianceRate, monthLabel } = monthlyCompliance;
 
   const todayLabel = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 
@@ -428,7 +604,7 @@ const OfficerDashboard = () => {
           </div>
 
           <div className="flex items-stretch gap-3">
-            <div className="flex items-center gap-3" style={{ ...tile, padding: '16px 24px' }}>
+            <div className="flex items-center gap-4" style={{ ...tile, padding: '16px 18px', position: 'relative' }}>
               <span className="inline-flex flex-shrink-0 items-center justify-center" style={{ width: 42, height: 42, borderRadius: 12, background: `${MAROON}10` }}>
                 <CalendarDays size={19} style={{ color: MAROON }} />
               </span>
@@ -436,16 +612,16 @@ const OfficerDashboard = () => {
                 <p style={{ ...sans, fontSize: '0.68rem', color: '#a89890' }}>Today</p>
                 <p style={{ ...sans, fontSize: '0.92rem', fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>{todayLabel}</p>
               </div>
-            </div>
-            <div className="flex items-center" style={{ ...tile, padding: '0 14px', position: 'relative' }}>
+              <div aria-hidden="true" style={{ alignSelf: 'stretch', width: 1, background: RULE, margin: '0 2px' }} />
               <OfficerNotifications
                 loading={loading}
-                pending={pending}
-                pendingReviews={pendingReviews}
-                returnedSubmissions={returnedSubmissions}
-                deadlines={deadlines}
+                pending={validationCounts.newSubmissions}
+                pendingReviews={validationCounts.pendingReviews}
+                deadlines={complianceReminders}
                 announcements={announcements}
                 preferences={notificationPreferences}
+                error={notificationDataError}
+                onRetry={() => fetchData(true)}
                 onNavigate={navigate}
               />
             </div>
@@ -459,31 +635,33 @@ const OfficerDashboard = () => {
           pending={pending}
           approved={approved}
           rejected={rejected}
-          active={active}
         />
 
-        {/* ── Overall Scholar Compliance ── */}
-        <ComplianceSeal loading={loading} rate={complianceRate} submitted={submitted} missing={missing} late={late} />
+        {/* ── Overall Scholar Compliance (left) + Quick Actions (right) ── */}
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+          <ComplianceSeal loading={loading} rate={complianceRate} submitted={submitted} missing={missing} late={late} monthLabel={monthLabel} />
+          <QuickActions />
+        </div>
 
-        {/* ── Needs Attention ── */}
-        <NeedsAttention
-          loading={loading}
-          pending={pending}
-          deadlines={deadlines}
-          onNavigate={path => navigate(path)}
-        />
-
-        {/* ── Compliance Breakdown + Upcoming Deadlines ── */}
+        {/* ── Needs Attention + Upcoming Deadlines ── */}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <ComplianceOverview loading={loading} submitted={submitted} missing={missing} late={late} total={scholars.length} />
+          <NeedsAttention
+            loading={loading}
+            pending={pending}
+            deadlines={deadlines}
+            onNavigate={path => navigate(path)}
+          />
           <UpcomingDeadlines loading={loading} deadlines={deadlines} />
         </div>
 
-        {/* ── Recent Activities ── */}
-        <RecentActivities loading={loading} activities={activities} />
-
-        {/* ── Quick Actions ── */}
-        <QuickActions />
+        {/* ── Recent Announcements (full width) ── */}
+        <RecentAnnouncements
+          loading={loading}
+          error={announcementsError}
+          announcements={announcements}
+          onNavigate={path => navigate(path)}
+          onRetry={() => fetchData(true)}
+        />
       </div>
     </div>
   );

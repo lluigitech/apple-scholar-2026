@@ -2,7 +2,7 @@ const bcrypt = require('bcryptjs');
 const db = require('../config/db');
 const { logAuditEvent } = require('../utils/auditLogger');
 
-exports.changePassword = async (req, res) => {
+exports.changePassword = async (req, res, { successMessage } = {}) => {
     const { current_password, new_password } = req.body || {};
     if (
         typeof current_password !== 'string' ||
@@ -47,7 +47,7 @@ exports.changePassword = async (req, res) => {
             details: 'Password changed successfully',
             result: 'success',
         });
-        return res.json({ message: 'Password changed successfully.' });
+        return res.json({ message: successMessage || 'Password changed successfully.' });
     } catch (error) {
         console.error('Failed to change account password:', error);
         return res.status(500).json({ error: 'Failed to change password.' });

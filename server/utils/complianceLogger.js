@@ -38,6 +38,114 @@ const buildMonthSet = (monthsString) => {
     );
 };
 
+const normalizeYearLevel = (value) => String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/^grade\s*(\d+)$/, 'grade $1')
+    .replace(/^(1st|2nd|3rd|4th|5th)\s+year(?:\s+college)?$/, (_, year) => `college ${({ '1st': 1, '2nd': 2, '3rd': 3, '4th': 4, '5th': 5 })[year]}`);
+
+const parseTaskYearLevels = (value) => {
+    if (Array.isArray(value)) return value;
+    try {
+        const parsed = JSON.parse(value || '[]');
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+};
+
+const getTaskSubmissionTypes = (type) => ({
+    'monthly report': ['letter'],
+    'report card': ['report_card', 'grades'],
+    'cor upload': ['cor'],
+    'other documents': ['other'],
+})[String(type || '').trim().toLowerCase()] || [];
+
+const toDateKey = (value) => {
+    if (!value) return '';
+    if (value instanceof Date) {
+        return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+    }
+    return String(value).slice(0, 10);
+};
+
+const calculateOverdueTasksByScholar = (scholars, tasks, records, today = new Date()) => {
+    const todayKey = toDateKey(today);
+    const taskCounts = {};
+
+    for (const scholar of scholars) {
+        const scholarId = scholar.scholar_id;
+        const yearLevel = normalizeYearLevel(scholar.year_level);
+        const assignedOverdueTasks = tasks
+            .filter((task) => {
+                const dueDate = toDateKey(task.due_date);
+                const taskLevels = parseTaskYearLevels(task.target_year_levels).map(normalizeYearLevel);
+                return dueDate && dueDate < todayKey
+                    && getTaskSubmissionTypes(task.type).length > 0
+                    && (!taskLevels.length || taskLevels.includes(yearLevel));
+            })
+            .sort((a, b) => toDateKey(a.due_date).localeCompare(toDateKey(b.due_date)));
+
+        const scholarRecords = records
+            .filter((record) => record.scholar_id === scholarId)
+            .sort((a, b) => new Date(a.submitted_at).getTime() - new Date(b.submitted_at).getTime());
+        const usedRecordIds = new Set();
+        let overdueCount = 0;
+
+        for (const task of assignedOverdueTasks) {
+            const acceptedTypes = getTaskSubmissionTypes(task.type);
+            const createdAt = new Date(task.created_at || 0).getTime();
+            const dueAt = new Date(`${toDateKey(task.due_date)}T23:59:59.999`).getTime();
+            const matchingRecord = scholarRecords.find((record) => {
+                const submittedAt = new Date(record.submitted_at || 0).getTime();
+                return !usedRecordIds.has(record.record_key)
+                    && acceptedTypes.includes(String(record.submission_type || '').toLowerCase())
+                    && submittedAt >= createdAt
+                    && submittedAt <= dueAt;
+            });
+
+            if (matchingRecord) {
+                usedRecordIds.add(matchingRecord.record_key);
+            } else {
+                overdueCount += 1;
+            }
+        }
+
+        taskCounts[scholarId] = overdueCount;
+    }
+
+    return taskCounts;
+};
+
+const getOverdueComplianceTaskCounts = (scholars, today, callback) => {
+    if (!scholars.length) return callback(null, {});
+    const scholarIds = scholars.map((scholar) => scholar.scholar_id);
+    const placeholders = scholarIds.map(() => '?').join(', ');
+
+    db.query(
+        `SELECT id, type, due_date, created_at, target_year_levels
+         FROM tasks
+         WHERE is_active = 1 AND due_date IS NOT NULL AND due_date < CURRENT_DATE()`,
+        (taskErr, tasks) => {
+            if (taskErr) return callback(taskErr);
+            db.query(
+                `SELECT CONCAT('submission:', id) AS record_key, scholar_id, submission_type, submitted_at
+                 FROM submissions WHERE scholar_id IN (${placeholders})
+                 UNION ALL
+                 SELECT CONCAT('grade:', id) AS record_key, scholar_id, 'grades' AS submission_type, created_at AS submitted_at
+                 FROM grades WHERE scholar_id IN (${placeholders})`,
+                [...scholarIds, ...scholarIds],
+                (recordErr, records) => {
+                    if (recordErr) return callback(recordErr);
+                    callback(null, calculateOverdueTasksByScholar(scholars, tasks, records, today));
+                }
+            );
+        }
+    );
+};
+
 const calculateConsecutiveEarlyMonths = (earlyMonthSet, todayDate) => {
     if (!earlyMonthSet || earlyMonthSet.size === 0) return 0;
 
@@ -151,6 +259,7 @@ const calculateComplianceScore = ({
     sub = null,
     att = null,
     settings = null,
+    overdueTaskCount = 0,
     today = new Date(),
 }) => {
     settings = settings || defaults;
@@ -183,7 +292,6 @@ const calculateComplianceScore = ({
     const termDays = Math.max(1, Math.ceil((termEnd - termStart + 1) / (1000 * 60 * 60 * 24)));
     const elapsedTermDays = Math.max(1, Math.min(termDays, Math.ceil((todayDate - termStart + 1) / (1000 * 60 * 60 * 24))));
     const termProgress = Math.min(1, Math.max(0, elapsedTermDays / termDays));
-    const expectedReports = Math.max(1, Math.round(6 * termProgress));
     const requiredHoursTarget = Math.max(0, Math.round(requiredHoursNum * termProgress));
 
     const totalSubs = Number(sub?.total_submissions || 0);
@@ -204,17 +312,19 @@ const calculateComplianceScore = ({
     let totalDeduction = 0;
     const deductions = {};
 
-    const rawMissingReports = Math.max(0, expectedReports - totalSubs);
-    const penaltyMissedReports = Math.max(0, rawMissingReports - allowedMissedNum - missedGraceCount);
-    const missedSubmissionPoints = penaltyMissedReports * penalties.missedSubmission;
+    const rawMissingTasks = Math.max(0, Number(overdueTaskCount) || 0);
+    const penalizedMissingTasks = Math.max(0, rawMissingTasks - allowedMissedNum - missedGraceCount);
+    const missedSubmissionPoints = penalizedMissingTasks * penalties.missedSubmission;
     totalDeduction += missedSubmissionPoints;
     deductions.missedSubmission = {
         points: missedSubmissionPoints,
-        missingReports: rawMissingReports,
-        reportsTarget: Math.max(0, expectedReports - allowedMissedNum),
+        missingReports: rawMissingTasks,
+        reportsTarget: rawMissingTasks,
+        overdueTasks: rawMissingTasks,
         allowedMissed: allowedMissedNum,
         graceCount: missedGraceCount,
-        penalizedReports: penaltyMissedReports,
+        penalizedTasks: penalizedMissingTasks,
+        penalizedReports: penalizedMissingTasks,
     };
 
     const missingHours = Math.max(0, requiredHoursTarget - totalServiceHours);
@@ -274,7 +384,12 @@ const calculateComplianceScore = ({
     const averageQualityAndAttendance = (avgQuality !== null && attendanceRate !== null)
         ? Math.round((avgQuality + attendanceRate) / 2)
         : null;
-    const hasNoComplianceHistory = totalSubs === 0 && totalDuties === 0 && totalServiceHours === 0 && negativeLetters === 0 && avgQuality === null;
+    const hasNoComplianceHistory = totalSubs === 0
+        && totalDuties === 0
+        && totalServiceHours === 0
+        && negativeLetters === 0
+        && avgQuality === null
+        && rawMissingTasks === 0;
     const goodMaintenanceBonusPoints = averageQualityAndAttendance !== null
         && averageQualityAndAttendance >= 85
         && totalSubs >= allowedMissedNum + 1
@@ -331,6 +446,7 @@ const calculateComplianceScore = ({
     if (hasNoComplianceHistory) {
         return {
             overallCompliance: 100,
+            requiredHours: requiredHoursNum,
             riskScore: 0,
             totalDeduction: 0,
             totalBonusPoints: 0,
@@ -345,7 +461,7 @@ const calculateComplianceScore = ({
             },
             minComplianceNum: parseFloat(settings.min_compliance || defaults.min_compliance),
             deductions: {
-                missedSubmission: { points: 0, missingReports: 0, reportsTarget: 0, allowedMissed: allowedMissedNum, graceCount: missedGraceCount, penalizedReports: 0 },
+                missedSubmission: { points: 0, missingReports: 0, reportsTarget: 0, overdueTasks: 0, allowedMissed: allowedMissedNum, graceCount: missedGraceCount, penalizedTasks: 0, penalizedReports: 0 },
                 serviceHourShortfall: { points: 0, missingHours: 0, requiredHoursTarget: 0 },
                 absentDuty: { points: 0, absentCount: 0, attendanceRate: 0 },
                 lateSubmission: { points: 0, daysSinceSubmission: null, latePeriods: 0, graceCount: lateGraceCount, penalizedPeriods: 0 },
@@ -378,6 +494,7 @@ const calculateComplianceScore = ({
 
     return {
         overallCompliance,
+        requiredHours: requiredHoursNum,
         riskScore,
         totalDeduction,
         totalBonusPoints: bonuses.totalBonusPoints,
@@ -406,8 +523,6 @@ const calculateComplianceScore = ({
 const calculateCurrentCompliance = (scholarId, callback) => {
     getComplianceSettings((settingsErr, settings) => {
         if (settingsErr) return callback(settingsErr, null);
-
-        const today = new Date();
 
         db.query(
             `
@@ -438,14 +553,36 @@ const calculateCurrentCompliance = (scholarId, callback) => {
                             SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) AS absent
                         FROM duty_attendance
                         WHERE scholar_id = ?
+                          AND (COALESCE(is_makeup, 0) = 0 OR check_out_at IS NOT NULL)
                     `,
                     [scholarId],
                     (attErr, attRows) => {
                         if (attErr) return callback(attErr, null);
                         const att = attRows && attRows[0] ? attRows[0] : null;
 
-                        const score = calculateComplianceScore({ sub, att, settings, today });
-                        callback(null, score.overallCompliance, score.minComplianceNum, score);
+                        db.query(
+                            `SELECT year_level FROM users WHERE scholar_id = ? AND role = 'scholar' LIMIT 1`,
+                            [scholarId],
+                            (userErr, userRows) => {
+                                if (userErr) return callback(userErr, null);
+                                const today = new Date();
+                                getOverdueComplianceTaskCounts(
+                                    [{ scholar_id: scholarId, year_level: userRows[0]?.year_level }],
+                                    today,
+                                    (taskErr, overdueTasksByScholar) => {
+                                        if (taskErr) return callback(taskErr, null);
+                                        const score = calculateComplianceScore({
+                                            sub,
+                                            att,
+                                            settings,
+                                            overdueTaskCount: overdueTasksByScholar[scholarId] || 0,
+                                            today,
+                                        });
+                                        callback(null, score.overallCompliance, score.minComplianceNum, score);
+                                    }
+                                );
+                            }
+                        );
                     }
                 );
             }
@@ -503,6 +640,8 @@ module.exports = {
     normalizeAcademicGrade,
     getAcademicTier,
     calculateComplianceScore,
+    calculateOverdueTasksByScholar,
+    getOverdueComplianceTaskCounts,
     calculateCurrentCompliance,
     logComplianceIncident,
     logComplianceBonus,

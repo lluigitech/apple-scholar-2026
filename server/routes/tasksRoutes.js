@@ -4,6 +4,7 @@ const taskCtrl = require('../controllers/taskController');
 const { verifyToken, requireRole } = require('../middleware/authMiddleware');
 
 // Read is authenticated so task visibility can follow scholar/officer assignments.
+router.get('/progress', verifyToken, requireRole(['admin']), taskCtrl.getTaskProgressSummary);
 router.get('/', verifyToken, taskCtrl.getAllTasks);
 router.post('/:id/export-pdf', verifyToken, taskCtrl.exportTaskPdf);
 router.get('/:id', verifyToken, taskCtrl.getTask);

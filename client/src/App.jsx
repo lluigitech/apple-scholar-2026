@@ -44,13 +44,13 @@ import AdminSettings from './pages/Admin/AdminSettings';
 import StaffDutyAttendance from './pages/Staff/StaffDutyAttendance';
 import StaffAnnouncement from './pages/staff/StaffAnnouncement'; 
 import StaffAttendanceReports from './pages/Staff/StaffAttendanceReports';
+import StaffSettings from './pages/Staff/StaffSettings';
 
 // 📂 Scholar Pages
 import ScholarLayout from './components/Scholar/ScholarLayout';
 import ScholarDashboard from './pages/Scholar/ScholarDashboard';
 import Submission from './pages/Scholar/Submission';
 import ScholarAnnouncements from './pages/Scholar/ScholarAnnouncements';
-import ScholarProfile from './pages/Scholar/Profile';
 import DutyParticipation from './pages/Scholar/DutyParticipation';
 import ScholarSettings from './pages/Scholar/ScholarSettings';
 import RequirementsChecklist from './pages/Scholar/RequirementsChecklist';
@@ -60,7 +60,8 @@ import OfflineIndicator from './components/shared/OfflineIndicator';
 // 🔒 Route Guard
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const role = localStorage.getItem('role');
-  if (!role) return <Navigate to="/login" replace />;
+  const token = localStorage.getItem('token');
+  if (!token || !role) return <Navigate to="/login" replace />;
   if (role.toLowerCase() === 'scholar' && localStorage.getItem('must_change_password') === 'true') {
     return <Navigate to="/account/setup" replace />;
   }
@@ -221,6 +222,7 @@ function App() {
             <Route path="announcements" element={<StaffAnnouncement />} />
             <Route path="duty-attendance" element={<StaffDutyAttendance />} />
             <Route path="attendance-reports" element={<StaffAttendanceReports />} />
+            <Route path="settings" element={<StaffSettings />} />
           </Route>
 
           {/* 🛡️ SCHOLAR ROUTES */}
@@ -233,7 +235,7 @@ function App() {
             <Route path="submission" element={<Submission />} />
             <Route path="checklist" element={<RequirementsChecklist />} />
             <Route path="announcements" element={<ScholarAnnouncements />} />
-            <Route path="profile" element={<ScholarProfile />} />
+            <Route path="profile" element={<Navigate to="/scholar" replace />} />
             <Route path="duties" element={<DutyParticipation />} />
             <Route path="settings" element={<ScholarSettings />} />
             <Route path="grades" element={<ScholarGrades />} />

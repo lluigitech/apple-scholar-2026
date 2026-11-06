@@ -73,17 +73,9 @@ const fetchImageBuffer = async (filePath) => {
   }
 };
 
-/**
- * Generate a PDF for a given submission ID by filling the docx template,
- * inserting up to two photos, converting to PDF via LibreOffice, and
- * saving the generated PDF under `server/uploads/generated-letters`.
- * Returns the public path (relative to `/uploads`) to the generated PDF.
- */
-async function generateLetterPdf(submissionId) {
+async function generateLetterDocx(submissionId) {
   if (!submissionId) throw new Error('submissionId required');
 
-  // Load submission + user
-  // Validate submissionId is an integer-like value to avoid accidental path injections
   if (!Number.isInteger(Number(submissionId))) {
     throw new Error('Invalid submissionId');
   }
@@ -98,27 +90,23 @@ async function generateLetterPdf(submissionId) {
   if (!rows || rows.length === 0) throw new Error('Submission not found');
   const sub = rows[0];
 
-  // Try to fetch user profile fields, but log the exact result and any failures.
   let userProfile = { full_name: '', age: '', year_level: '', course: '', school: '' };
   const [uRows] = await promiseDb.query('SELECT full_name, age, year_level, course, school FROM users WHERE scholar_id = ? LIMIT 1', [sub.scholar_id]);
   if (uRows && uRows.length > 0) {
     userProfile = { ...userProfile, ...uRows[0] };
   }
 
-  // merge user profile into sub-like object used below
   sub.full_name = userProfile.full_name || '';
   sub.age = userProfile.age ?? '';
   sub.year_level = formatYearLevelLabel(userProfile.year_level || '');
   sub.course = userProfile.course || '';
   sub.school = userProfile.school || '';
 
-  // Load up to two photos so the letter can render a balanced two-photo-per-page layout when available.
   const [mediaRows] = await promiseDb.query(
     `SELECT file_path, description FROM submission_media WHERE submission_id = ? ORDER BY id ASC LIMIT 2`,
     [submissionId]
   );
 
-  // Prepare data for docxtemplater
   const data = {
     name: sub.full_name || '',
     age: sub.age ?? '',
@@ -133,7 +121,6 @@ async function generateLetterPdf(submissionId) {
     additional_attachments_caption: (sub.report_card_path || sub.cor_path) ? 'Report Card/COR attached' : '',
   };
 
-  // Fetch up to two photo buffers for the final print layout.
   const imageBuffers = {
     photo1: null,
     photo2: null,
@@ -146,7 +133,6 @@ async function generateLetterPdf(submissionId) {
     }
   }
 
-  // Transparent PNG fallback when an image is missing
   const TRANSPARENT_PNG = Buffer.from(
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=',
     'base64'
@@ -155,16 +141,13 @@ async function generateLetterPdf(submissionId) {
   data.photo1 = 'photo1';
   data.photo2 = 'photo2';
 
-  // Verify template exists
   if (!fs.existsSync(TEMPLATE_PATH)) {
     throw new Error(`Template not found at ${TEMPLATE_PATH}`);
   }
 
-  // Read template
   const content = fs.readFileSync(TEMPLATE_PATH, 'binary');
   const zip = new PizZip(content);
 
-  // Image module expects getImage to return a Buffer synchronously.
   const imageModule = new ImageModule({
     getImage: function(tagValue, tagName) {
       if (!tagValue) return TRANSPARENT_PNG;
@@ -177,7 +160,6 @@ async function generateLetterPdf(submissionId) {
     }
   });
 
-  // Use v3 docxtemplater API: render with data directly.
   const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true, modules: [imageModule] });
 
   try {
@@ -191,7 +173,17 @@ async function generateLetterPdf(submissionId) {
     throw renderErr;
   }
 
-  const buf = doc.getZip().generate({ type: 'nodebuffer' });
+  return doc.getZip().generate({ type: 'nodebuffer' });
+}
+
+/**
+ * Generate a PDF for a given submission ID by filling the docx template,
+ * inserting up to two photos, converting to PDF via LibreOffice, and
+ * saving the generated PDF under `server/uploads/generated-letters`.
+ * Returns the public path (relative to `/uploads`) to the generated PDF.
+ */
+async function generateLetterPdf(submissionId) {
+  const buf = await generateLetterDocx(submissionId);
 
   ensureOutputDir();
 
@@ -243,5 +235,7 @@ async function generateLetterPdf(submissionId) {
 }
 
 module.exports = {
+  formatYearLevelLabel,
+  generateLetterDocx,
   generateLetterPdf,
 };

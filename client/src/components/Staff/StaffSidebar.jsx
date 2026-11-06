@@ -6,6 +6,7 @@ import {
     CalendarCheck,
     FileBarChart2,
     Megaphone,
+    Settings,
     LogOut,
     X
 } from 'lucide-react';
@@ -41,7 +42,7 @@ const StaffSidebar = ({ isOpen, onClose, collapsed = false }) => {
     const handleLogout = async () => {
         await axios.post('http://localhost:5000/api/logout', {}, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }).catch(() => {});
         localStorage.clear();
-        navigate('/');
+        navigate('/login');
     };
 
     const getInitials = (fullName) => {
@@ -78,6 +79,12 @@ const StaffSidebar = ({ isOpen, onClose, collapsed = false }) => {
             group: 'Reports',
             items: [
                 { name: 'Attendance Reports', path: '/staff/attendance-reports', icon: FileBarChart2 },
+            ]
+        },
+        {
+            group: 'Account',
+            items: [
+                { name: 'Settings', path: '/staff/settings', icon: Settings },
             ]
         }
     ];

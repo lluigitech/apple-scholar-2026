@@ -46,6 +46,7 @@ test('monthly letter list returns review and AI data within the officer assignme
       id: 27,
       scholar_id: 'S-27',
       submission_type: 'letter',
+      generated_pdf_path: 'https://example.test/monthly-letter.pdf',
       letter_content: 'Monthly letter text',
       quality_score: '82.5',
       quality_status: 'accepted',
@@ -77,16 +78,18 @@ test('monthly letter list returns review and AI data within the officer assignme
   assert.equal(response.body.length, 1);
   assert.equal(response.body[0].review_status, 'pending');
   assert.equal(response.body[0].quality_status, 'accepted');
+  assert.equal(response.body[0].generated_pdf_path, 'https://example.test/monthly-letter.pdf');
   assert.equal(response.body[0].content_breakdown, '{"paragraph":6}');
   assert.equal(response.body[0].staffAction, null);
   assert.equal(response.body[0].photos[0].description, 'Activity');
 
   const listQuery = queries.find(({ sql }) => sql.includes('FROM submissions s'));
+  assert.match(listQuery.sql, /s\.generated_pdf_path/);
   assert.match(listQuery.sql, /DATE_FORMAT\(s\.submitted_at, '%Y-%m'\) = \?/);
   assert.match(listQuery.sql, /COALESCE\(s\.archived_at, s\.archive_at\) IS NULL/);
   assert.match(listQuery.sql, /u\.year_level[\s\S]* IN \(\?\)/);
   assert.ok(queries.some(({ sql }) => sql.includes('officer_year_level_assignments')));
-  assert.doesNotMatch(listQuery.sql, /s\.finalized_at IS NOT NULL|s\.status = 'approved'/);
+  assert.match(listQuery.sql, /LOWER\(COALESCE\(s\.status, ''\)\) <> 'approved' OR s\.finalized_at IS NOT NULL/);
   assert.deepEqual(listQuery.values, ['grade_12', '2026-04']);
 });
 

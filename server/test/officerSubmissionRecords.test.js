@@ -177,7 +177,7 @@ test('shows submitted records and creates a typed missing row after the requirem
 
   const response = await invoke(officerController.getSubmissionRecords, {
     user: { id: 4, role: 'admin' },
-    query: { document_type: 'letter', month: '2026-10' },
+    query: { document_type: 'letter', month: currentMonth },
   });
 
   assert.equal(response.statusCode, 200);
@@ -251,7 +251,7 @@ test('all types use due task requirements rather than a generic Any Submission r
 
   const response = await invoke(officerController.getSubmissionRecords, {
     user: { id: 4, role: 'admin' },
-    query: { document_type: 'all', month: '2026-10' },
+    query: { document_type: 'all', month: currentMonth },
   });
 
   assert.equal(response.statusCode, 200);

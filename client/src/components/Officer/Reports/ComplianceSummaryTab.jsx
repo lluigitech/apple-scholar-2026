@@ -94,7 +94,7 @@ export default function ComplianceSummaryTab({
               className="w-full outline-none transition-colors"
               style={{ ...boxField, cursor: 'pointer' }}
             >
-              {["Monthly Letter", "Report Cards", "Grades", "Report Cards & Grades", "COR", "Other Documents", "Task Completion"].map(type => (
+              {["Monthly Letter", "Grades", "COR", "Other Documents"].map(type => (
                 <option key={type} value={type}>{type}</option>
               ))}
             </select>
@@ -190,8 +190,8 @@ export default function ComplianceSummaryTab({
                 {(isTaskCompletion
                   ? ["Name", "Student ID", "Assigned", "Completed", "Missing", "Pending", "Completion Rate"]
                   : isMonthlyReports
-                    ? ["Name", "Student ID", "Submission Status", "Officer Review", "Pending", "Approval Rate"]
-                    : ["Name", "Student ID", "Submission Status", "Submitted Count", "Pending", "Submission Details"]
+                    ? ["Name", "Student ID", "Submission Type", "Submission Status", "Officer Review", "Pending", "Approval Rate"]
+                    : ["Name", "Student ID", "Submission Type", "Submission Status", "Submitted Count", "Pending", "Submission Details"]
                 ).map(h => (
                   <th key={h} className="px-5 py-3 text-left" style={{ ...body, color: '#6b5a52', fontSize: "0.74rem", fontWeight: 600 }}>
                     {h}
@@ -222,6 +222,11 @@ export default function ComplianceSummaryTab({
                   <tr key={idx} className="transition-colors hover:bg-[#F6EFE4]" style={{ borderTop: `1px solid ${RULE}` }}>
                     <td className="px-5 py-3.5" style={{ ...body, fontWeight: 600, color: INK }}>{row.name}</td>
                     <td className="px-5 py-3.5" style={{ ...mono, fontSize: '0.74rem', color: MUTED }}>{row.studentId}</td>
+                    {!isTaskCompletion && (
+                      <td className="px-5 py-3.5" style={{ ...body, fontSize: '0.78rem', color: row.submissionTypes?.length ? INK : MUTED }}>
+                        {row.submissionTypes?.length ? row.submissionTypes.join(", ") : "—"}
+                      </td>
+                    )}
                     <td className="px-5 py-3.5" style={{ ...mono, fontSize: '0.7rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', color: isTaskCompletion ? INK : (row.submitted > 0 ? SAGE : AMBER) }}>
                       {isTaskCompletion ? row.assignedTasks : (row.submitted > 0 ? `Submitted (${row.submitted})` : 'Not Submitted')}
                     </td>

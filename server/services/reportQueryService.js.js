@@ -118,7 +118,10 @@ const getComplianceReport = async (filters) => {
 // Summary per scholar — for donor transparency / progress report
 const getDonorReport = async (filters) => {
   const gpaConditions = ["verification_status = 'approved'", 'finalized_at IS NOT NULL'];
-  const reportConditions = ["submission_type IN ('letter', 'monthly letter', 'monthly_letter')"];
+  const reportConditions = [
+    "submission_type IN ('letter', 'monthly letter', 'monthly_letter')",
+    'finalized_at IS NOT NULL',
+  ];
   const dutyConditions = [];
   const values = [];
 
@@ -178,8 +181,12 @@ const getDonorReport = async (filters) => {
      ) submission_summary ON submission_summary.scholar_id = u.scholar_id
      LEFT JOIN (
        SELECT da.scholar_id,
-              ROUND(SUM(CASE WHEN da.status = 'present' THEN COALESCE(TIMESTAMPDIFF(MINUTE, d.time_start, d.time_end), 0) / 60 ELSE 0 END), 2) AS total_duty_hours,
-              SUM(CASE WHEN da.status = 'present' THEN 1 ELSE 0 END) AS activities_attended
+              ROUND(SUM(CASE WHEN da.status = 'present'
+                AND (COALESCE(da.is_makeup, 0) = 0 OR da.check_out_at IS NOT NULL)
+                THEN COALESCE(TIMESTAMPDIFF(MINUTE, d.time_start, d.time_end), 0) / 60 ELSE 0 END), 2) AS total_duty_hours,
+              SUM(CASE WHEN da.status = 'present'
+                AND (COALESCE(da.is_makeup, 0) = 0 OR da.check_out_at IS NOT NULL)
+                THEN 1 ELSE 0 END) AS activities_attended
        FROM duty_attendance da
        JOIN duties d ON d.id = da.duty_id
        WHERE ${dutyConditions.length ? dutyConditions.join(' AND ') : '1 = 1'}
@@ -255,8 +262,12 @@ const getDonorScholarReport = async ({ scholar_id, month }) => {
   const gpa = gpaRows[0]?.gpa != null ? Number(gpaRows[0].gpa) : null;
   const reportsSubmitted = reportRows.length;
   const dutyHours = await promiseDb.query(
-    `SELECT ROUND(SUM(CASE WHEN da.status = 'present' THEN COALESCE(TIMESTAMPDIFF(MINUTE, d.time_start, d.time_end), 0) / 60 ELSE 0 END), 2) AS total_duty_hours,
-            SUM(CASE WHEN da.status = 'present' THEN 1 ELSE 0 END) AS activities_attended
+    `SELECT ROUND(SUM(CASE WHEN da.status = 'present'
+              AND (COALESCE(da.is_makeup, 0) = 0 OR da.check_out_at IS NOT NULL)
+              THEN COALESCE(TIMESTAMPDIFF(MINUTE, d.time_start, d.time_end), 0) / 60 ELSE 0 END), 2) AS total_duty_hours,
+            SUM(CASE WHEN da.status = 'present'
+              AND (COALESCE(da.is_makeup, 0) = 0 OR da.check_out_at IS NOT NULL)
+              THEN 1 ELSE 0 END) AS activities_attended
      FROM duty_attendance da
      JOIN duties d ON d.id = da.duty_id
      WHERE da.scholar_id = ?
@@ -357,6 +368,7 @@ const getDonorDutyReport = async (filters) => {
             CONCAT(COALESCE(DATE_FORMAT(d.time_start, '%h:%i %p'), 'time TBD'), ' - ',
                    COALESCE(DATE_FORMAT(d.time_end, '%h:%i %p'), 'time TBD')) AS schedule,
             da.status, ROUND(CASE WHEN da.status = 'present'
+              AND (COALESCE(da.is_makeup, 0) = 0 OR da.check_out_at IS NOT NULL)
               THEN COALESCE(TIMESTAMPDIFF(MINUTE, d.time_start, d.time_end), 0) / 60
               ELSE 0 END, 2) AS hours,
             COALESCE(staff_names.assigned_staff, 'Unassigned') AS assigned_staff

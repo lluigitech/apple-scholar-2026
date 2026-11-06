@@ -1,8 +1,9 @@
 const db = require('../config/db');
 const crypto = require('crypto');
-const { sendDutyNotifyEmails } = require('../utils/notifyHelpers');
+const { sendDutyNotifyEmails, sendMakeupDutyAssignmentEmails } = require('../utils/notifyHelpers');
 const { logComplianceIncident, clampCompliance, getComplianceSettings, calculateCurrentCompliance } = require('../utils/complianceLogger');
 const { markEndedDutyAbsences } = require('../services/dutyAbsenceService');
+const { checkOutDutyAttendance } = require('../services/dutyAttendanceService');
 
 const logAttendanceNotification = (scholar_id, type, detail, cb = () => {}) => {
     if (!scholar_id) return cb();
@@ -128,15 +129,17 @@ exports.getDutyScholars = (req, res) => {
     const { duty_id } = req.params;
     const sql = `
         SELECT DISTINCT u.id, u.scholar_id, u.full_name, u.year_level,
-            da.status AS attendance_status, da.method, da.marked_at, da.is_makeup
-        FROM duty_group_assignments dga
-        JOIN scholar_group_members m ON m.group_id = dga.group_id
-        JOIN users u ON u.scholar_id = m.scholar_id
-        LEFT JOIN duty_attendance da ON da.duty_id = dga.duty_id AND da.scholar_id = m.scholar_id
-        WHERE dga.duty_id = ?
+            da.status AS attendance_status, da.method, da.marked_at, da.check_out_at, da.is_makeup
+        FROM users u
+        LEFT JOIN scholar_group_members m ON m.scholar_id = u.scholar_id
+        LEFT JOIN duty_group_assignments dga ON dga.group_id = m.group_id AND dga.duty_id = ?
+        LEFT JOIN duty_makeup_permissions p ON p.scholar_id = u.scholar_id
+            AND p.makeup_duty_id = ? AND p.status = 'approved' AND p.used_at IS NULL
+        LEFT JOIN duty_attendance da ON da.duty_id = ? AND da.scholar_id = u.scholar_id
+        WHERE dga.duty_id IS NOT NULL OR p.id IS NOT NULL OR da.id IS NOT NULL
         ORDER BY u.full_name
     `;
-    db.query(sql, [duty_id], (err, data) => {
+    db.query(sql, [duty_id, duty_id, duty_id], (err, data) => {
         if (err) {
             console.error('Error fetching duty scholars:', err);
             return res.status(500).json({ error: 'Error fetching scholars for this duty' });
@@ -156,37 +159,128 @@ exports.bulkMarkAttendance = (req, res) => {
     if (!Array.isArray(records) || records.length === 0)
         return res.status(400).json({ error: 'records array is required' });
 
+    const allowedStatuses = new Set(['present', 'late', 'absent']);
+    const seenScholarIds = new Set();
+    for (const record of records) {
+        const scholarId = String(record?.scholar_id || '').trim();
+        const status = String(record?.status || '').toLowerCase();
+        if (!scholarId || !allowedStatuses.has(status) || seenScholarIds.has(scholarId)) {
+            return res.status(400).json({ error: 'Each attendance record must have a unique scholar_id and a valid status.' });
+        }
+        record.scholar_id = scholarId;
+        record.status = status;
+        seenScholarIds.add(scholarId);
+    }
+
     const scholarIds = records.map(r => r.scholar_id);
-    db.query("SELECT status FROM duties WHERE id = ? LIMIT 1", [duty_id], (dutyErr, dutyRows) => {
+    db.query(
+        `SELECT d.status,
+            TIMESTAMP(d.duty_date, COALESCE(d.time_start, '00:00:00'))
+                <= DATE_SUB(DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR), INTERVAL 1 HOUR) AS checkin_locked,
+            d.time_start IS NOT NULL AND DATE_ADD(UTC_TIMESTAMP(), INTERVAL 8 HOUR) > DATE_ADD(
+                TIMESTAMP(d.duty_date, d.time_start),
+                INTERVAL 15 MINUTE
+            ) AS is_late
+         FROM duties d
+         WHERE d.id = ?
+         LIMIT 1`,
+        [duty_id],
+        (dutyErr, dutyRows) => {
         if (dutyErr) return res.status(500).json({ error: 'Error checking duty status' });
         if (!dutyRows.length) return res.status(404).json({ error: 'Duty not found' });
         if (!['upcoming', 'ongoing'].includes(dutyRows[0].status)) {
-            return res.status(409).json({ error: 'Attendance is closed because this duty is completed or cancelled.' });
+            return res.status(409).json({ error: 'Attendance is closed because the duty is completed or cancelled.' });
         }
 
-        const deleteSql = `DELETE FROM duty_attendance WHERE duty_id = ? AND scholar_id IN (?)`;
+        db.query(
+            `SELECT scholar_id, status
+             FROM duty_attendance WHERE duty_id = ? AND scholar_id IN (?)`,
+            [duty_id, scholarIds],
+            (existingErr, existingRows) => {
+                if (existingErr) return res.status(500).json({ error: 'Error loading existing attendance' });
 
-        db.query(deleteSql, [duty_id, scholarIds], (err) => {
-        if (err) {
-            console.error('Error clearing old attendance:', err);
-            return res.status(500).json({ error: 'Error saving attendance' });
-        }
+                const existingByScholar = new Map(existingRows.map(row => [row.scholar_id, row]));
+                const changedSavedRecord = records.find(record => {
+                    const existing = existingByScholar.get(record.scholar_id);
+                    return existing && String(existing.status || '').toLowerCase() !== record.status;
+                });
+                if (changedSavedRecord) {
+                    return res.status(409).json({ error: 'Saved attendance is locked and cannot be changed.' });
+                }
 
-        const placeholders = records.map(() => '(?, ?, ?, ?, NOW())').join(', ');
-        const flatValues = [];
-        records.forEach(r => {
-            flatValues.push(duty_id, r.scholar_id, r.status, r.method || 'manual');
-        });
-        const insertSql = `INSERT INTO duty_attendance (duty_id, scholar_id, status, method, marked_at) VALUES ${placeholders}`;
+                const newRecords = records.filter(record => !existingByScholar.has(record.scholar_id));
+                if (!newRecords.length) {
+                    return res.status(200).json({ message: 'Attendance was already saved and remains locked.', count: 0 });
+                }
+                if (Number(dutyRows[0].checkin_locked) === 1) {
+                    return res.status(409).json({ error: 'Manual check-in is locked one hour after the scheduled duty start.' });
+                }
+                if (Number(dutyRows[0].is_late) === 1) {
+                    newRecords.forEach(record => {
+                        if (record.status === 'present') record.status = 'late';
+                    });
+                }
 
-        db.query(insertSql, flatValues, (err2, result) => {
-            if (err2) {
-                console.error('Error inserting attendance:', err2);
-                return res.status(500).json({ error: 'Error saving attendance' });
+                const newScholarIds = newRecords.map(record => record.scholar_id);
+                db.query(
+                    `SELECT scholar_id FROM duty_makeup_permissions
+                     WHERE makeup_duty_id = ? AND scholar_id IN (?)
+                       AND status = 'approved' AND used_at IS NULL`,
+                    [duty_id, newScholarIds],
+                    (permissionErr, permissionRows) => {
+                        if (permissionErr) return res.status(500).json({ error: 'Error checking make-up permissions' });
+
+                        const makeupScholarIds = new Set(permissionRows.map(row => row.scholar_id));
+                        const placeholders = newRecords.map(() => '(?, ?, ?, ?, NOW(), NULL, ?)').join(', ');
+                        const flatValues = [];
+                        newRecords.forEach(record => {
+                            const isMakeup = makeupScholarIds.has(record.scholar_id);
+                            flatValues.push(
+                                duty_id,
+                                record.scholar_id,
+                                record.status,
+                                record.method || 'manual',
+                                isMakeup ? 1 : 0
+                            );
+                        });
+                        const insertSql = `
+                            INSERT INTO duty_attendance
+                                (duty_id, scholar_id, status, method, marked_at, check_out_at, is_makeup)
+                            VALUES ${placeholders}
+                        `;
+                        db.query(insertSql, flatValues, (insertErr) => {
+                            if (insertErr) {
+                                console.error('Error inserting attendance:', insertErr);
+                                return res.status(500).json({ error: 'Error saving attendance' });
+                            }
+
+                            const usedMakeupIds = newRecords
+                                .filter(record => makeupScholarIds.has(record.scholar_id) && ['present', 'late'].includes(record.status))
+                                .map(record => record.scholar_id);
+                            const completeSave = () => res.status(201).json({
+                                message: 'Attendance saved and locked',
+                                count: newRecords.length,
+                                records: newRecords.map(({ scholar_id, status }) => ({ scholar_id, status })),
+                            });
+                            if (!usedMakeupIds.length) return completeSave();
+
+                            db.query(
+                                `UPDATE duty_makeup_permissions SET status = 'used', used_at = NOW()
+                                 WHERE makeup_duty_id = ? AND scholar_id IN (?) AND status = 'approved' AND used_at IS NULL`,
+                                [duty_id, usedMakeupIds],
+                                permissionUpdateErr => {
+                                    if (permissionUpdateErr) {
+                                        console.error('Attendance saved, but make-up permissions could not be marked used:', permissionUpdateErr);
+                                        return res.status(500).json({ error: 'Attendance saved but make-up permission status could not be updated.' });
+                                    }
+                                    completeSave();
+                                }
+                            );
+                        });
+                    }
+                );
             }
-            res.status(201).json({ message: 'Attendance saved', count: records.length });
-        });
-        });
+        );
     });
 };
 
@@ -218,7 +312,7 @@ exports.getDutyDetails = (req, res) => {
             if (err2) return res.status(500).json({ error: 'Error fetching duty groups' });
 
             const attSql = `
-                SELECT da.status, da.method, da.marked_at, da.is_makeup,
+                SELECT da.status, da.method, da.marked_at, da.check_out_at, da.is_makeup,
                     u.full_name, u.year_level, u.scholar_id
                 FROM duty_attendance da
                 JOIN users u ON u.scholar_id = da.scholar_id
@@ -440,6 +534,14 @@ exports.markAttendance = (req, res) => {
     });
 };
 
+exports.checkOutScholarAttendance = (req, res) => {
+    const { duty_id, scholar_id } = req.params;
+    checkOutDutyAttendance(duty_id, scholar_id, (error, result) => {
+        if (error) return res.status(error.status).json({ error: error.error });
+        return res.json({ message: 'Scholar checked out successfully.', ...result });
+    });
+};
+
 // ─── BULK SAVE ATTENDANCE (Manual Entry) ─────────────────────
 // NOTE: superseded ng POST /api/staff/duties/:duty_id/attendance/bulk (staffController.js).
 exports.bulkSaveAttendance = (req, res) => {
@@ -521,15 +623,18 @@ exports.getAttendanceSummary = (req, res) => {
     `;
     db.query(sql, [id], (err, data) => {
         if (err) return res.status(500).json({ error: 'Error fetching summary' });
-        const summary = { present: 0, absent: 0, excused: 0 };
-        data.forEach(row => { summary[row.status] = row.count; });
+        const summary = { present: 0, absent: 0 };
+        data.forEach(row => {
+            const status = row.status === 'excused' ? 'absent' : row.status;
+            summary[status] = (summary[status] || 0) + row.count;
+        });
         res.json(summary);
     });
 };
 
 // ─── NOTIFY SCHOLARS ASSIGNED TO A DUTY ────────────────────────
 exports.notifyDutyScholars = (req, res) => {
-    const { id } = req.params;
+    const id = req.params.duty_id || req.params.id;
     sendDutyNotifyEmails(id, (err, result) => {
         if (err) {
             const status = err.message === 'Duty not found' ? 404 : 500;
@@ -582,7 +687,7 @@ exports.createMakeupPermission = (req, res) => {
     db.query(sourceSql, [source_duty_id, scholar_id], (sourceErr, sourceRows) => {
         if (sourceErr) return res.status(500).json({ error: 'Error checking source duty attendance' });
         if (!sourceRows.length || !['absent', 'excused'].includes(String(sourceRows[0].status).toLowerCase())) {
-            return res.status(400).json({ error: 'Scholar must have an absent or excused record on the source duty' });
+            return res.status(400).json({ error: 'Scholar must have missed the source duty' });
         }
 
         const sourceDate = sourceRows[0].duty_date;
@@ -604,6 +709,31 @@ exports.createMakeupPermission = (req, res) => {
                         if (userErr) return res.status(500).json({ error: 'Error checking scholar' });
                         if (!userRows.length) return res.status(404).json({ error: 'Active scholar not found' });
 
+                        const respondWithAssignment = () => {
+                            sendMakeupDutyAssignmentEmails(scholar_id, source_duty_id, makeup_duty_id, (notificationErr, notification) => {
+                                if (notificationErr) {
+                                    console.error('Makeup duty assigned but notification failed:', notificationErr);
+                                    return res.status(201).json({
+                                        message: 'Makeup duty assigned, but notification could not be sent.',
+                                        scholar_id,
+                                        makeup_duty_id,
+                                        notification: { ok: false, error: 'Notification failed' },
+                                    });
+                                }
+                                if (!notification?.ok) {
+                                    console.error('Makeup duty assigned, but some notifications failed:', notification);
+                                }
+                                res.status(201).json({
+                                    message: notification?.ok
+                                        ? 'Makeup duty assigned and notifications sent.'
+                                        : 'Makeup duty assigned, but one or more notifications could not be sent.',
+                                    scholar_id,
+                                    makeup_duty_id,
+                                    notification,
+                                });
+                            });
+                        };
+
                         const createPermission = () => db.query(`
                             INSERT INTO duty_makeup_permissions
                                 (scholar_id, source_duty_id, makeup_duty_id, reason, status, approved_by, approved_at)
@@ -613,7 +743,7 @@ exports.createMakeupPermission = (req, res) => {
                                 status = 'approved', approved_by = VALUES(approved_by), approved_at = NOW(), used_at = NULL
                         `, [scholar_id, source_duty_id, makeup_duty_id, reason || null, req.user.id], (insertErr) => {
                             if (insertErr) return res.status(500).json({ error: 'Failed to assign makeup duty' });
-                            res.status(201).json({ message: 'Makeup duty assigned', scholar_id, makeup_duty_id });
+                            respondWithAssignment();
                         });
 
                         db.query(
@@ -625,7 +755,7 @@ exports.createMakeupPermission = (req, res) => {
                             (pendingErr, pendingResult) => {
                                 if (pendingErr) return res.status(500).json({ error: 'Failed to assign makeup duty' });
                                 if (pendingResult.affectedRows) {
-                                    return res.status(201).json({ message: 'Makeup duty assigned', scholar_id, makeup_duty_id });
+                                    return respondWithAssignment();
                                 }
                                 createPermission();
                             }

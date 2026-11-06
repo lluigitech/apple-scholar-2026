@@ -3,7 +3,7 @@ import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import {
   Search, CheckCircle2, XCircle, Clock, FileText, GraduationCap,
-  School, FolderOpen, Download, Eye, Users, AlarmClock, Flag, RefreshCw, CalendarDays,
+  School, FolderOpen, Download, Eye, Users, AlarmClock,
 } from 'lucide-react';
 
 // Reusing your existing shared components instead of duplicating them
@@ -11,6 +11,7 @@ import FilePreviewModal from '../../components/Officer/ManualValidation/FilePrev
 import ReviewModal from '../../components/Officer/ManualValidation/ReviewModal';
 import { fileKind } from '../../utils/submissionHelpers';
 import { formatYearLevelLabel } from '../../utils/yearLevelLabels';
+import { readOfficerWorkPreferences } from '../../utils/officerWorkPreferences';
 
 const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:5000').replace(/\/+$/, '');
 const API = API_BASE.endsWith('/api') ? API_BASE : `${API_BASE}/api`;
@@ -56,8 +57,6 @@ const serif = { fontFamily: "'Lora', serif" };
 const sans = { fontFamily: "'Inter', sans-serif" };
 const mono = { fontFamily: "'IBM Plex Mono', ui-monospace, Menlo, monospace" };
 
-const PAGE_SIZE = 10;
-
 const authHeader = () => {
   const token = localStorage.getItem('token');
   return { Authorization: `Bearer ${token}` };
@@ -67,19 +66,22 @@ const authHeader = () => {
 const SEAL_MAP = {
   approved:     { label: 'Approved',     color: SUCCESS },
   passed:       { label: 'Passed',       color: SUCCESS },
-  rejected:     { label: 'Rejected',     color: DANGER },
   failed:       { label: 'Failed',       color: DANGER },
   pending:      { label: 'Pending',      color: WARNING },
   under_review: { label: 'Under Review', color: WARNING },
   returned:     { label: 'Returned',     color: GOLD },
 };
-const NEEDS_REVIEW_STATUSES = ['pending', 'under_review', 'returned', 'rejected'];
-const statusKeyOf = item => String(item?.status || 'pending').toLowerCase();
-const isNeedsReview = item => NEEDS_REVIEW_STATUSES.includes(statusKeyOf(item));
-const isFlaggedEntry = e => e.scholar.hasNegative || e.item.sentiment_label?.includes('Negative');
+const PENDING_STATUSES = ['pending', 'under_review'];
+const statusKeyOf = item => {
+  const status = String(item?.status || 'pending').trim().toLowerCase();
+  return ['rejected', 'needs_revision', 'needs-revision', 'needs revision'].includes(status)
+    ? 'returned'
+    : status;
+};
+const isPending = item => PENDING_STATUSES.includes(statusKeyOf(item));
 
 const StatusPill = ({ status }) => {
-  const key = String(status || 'pending').toLowerCase();
+  const key = statusKeyOf({ status });
   const s = SEAL_MAP[key] || SEAL_MAP.pending;
   const Icon = key === 'approved' || key === 'passed' ? CheckCircle2
     : key === 'rejected' || key === 'failed' ? XCircle : Clock;
@@ -98,7 +100,7 @@ const getVisibleMonthlyLetters = (letters = []) => {
   return sorted.filter(item => {
     const submittedAt = item.submitted_at ? new Date(item.submitted_at) : null;
     const monthKey = submittedAt ? `${submittedAt.getFullYear()}-${submittedAt.getMonth()}` : 'undated';
-    if (item.status === 'rejected' || item.status === 'returned') return true;
+    if (statusKeyOf(item) === 'returned') return true;
     if (includedNonRejectedMonths.has(monthKey)) return false;
     includedNonRejectedMonths.add(monthKey);
     return true;
@@ -178,8 +180,8 @@ const YearChip = ({ group, selected, onSelect }) => {
           </div>
         ))}
       </div>
-      <p style={{ ...sans, fontSize: '0.72rem', fontWeight: 600, color: group.needsReview ? WARNING : MUTED, marginTop: 10 }}>
-        {group.needsReview ? `${group.needsReview} record${group.needsReview !== 1 ? 's' : ''} need review` : 'No records need review'}
+      <p style={{ ...sans, fontSize: '0.72rem', fontWeight: 600, color: group.pending ? WARNING : MUTED, marginTop: 10 }}>
+        {group.pending ? `${group.pending} pending record${group.pending !== 1 ? 's' : ''}` : 'No pending records'}
       </p>
     </button>
   );
@@ -187,8 +189,9 @@ const YearChip = ({ group, selected, onSelect }) => {
 
 const FILTERS = [
   { key: 'all', label: 'All' },
-  { key: 'pending', label: 'Needs Review' },
-  { key: 'flagged', label: 'Flagged' },
+  { key: 'pending', label: 'Pending' },
+  { key: 'approved', label: 'Approved' },
+  { key: 'returned', label: 'Returned' },
 ];
 
 const CATEGORIES = [
@@ -341,7 +344,8 @@ const OfficerManualValidation = () => {
   const [fetchError, setFetchError] = useState('');
   const [authFailure, setAuthFailure] = useState(false);
   const [search, setSearch] = useState('');
-  const [activeFilter, setActiveFilter] = useState('all');
+  const [workPreferences] = useState(readOfficerWorkPreferences);
+  const [activeFilter, setActiveFilter] = useState(() => workPreferences.reviewStatus);
   const [busyId, setBusyId] = useState(null);
 
   const [selectedYearLevel, setSelectedYearLevel] = useState(null);
@@ -399,13 +403,12 @@ const OfficerManualValidation = () => {
   const scholarStats = useMemo(() => scholars.map(s => {
     const visibleLetters = getVisibleMonthlyLetters(s.monthly_letters);
     const flatItems = [...visibleLetters, ...s.grades, ...s.report_cards, ...s.cors, ...s.other_documents];
-    const pendingCount = flatItems.filter(isNeedsReview).length;
-    const hasNegative = visibleLetters.some(l => l.sentiment_label?.includes('Negative'));
+    const pendingCount = flatItems.filter(isPending).length;
     const allDates = flatItems.map(x => x.submitted_at).filter(Boolean);
     const lastSubmittedAt = allDates.length
       ? new Date(Math.max(...allDates.map(d => new Date(d).getTime())))
       : null;
-    return { ...s, pendingCount, hasNegative, lastSubmittedAt };
+    return { ...s, pendingCount, lastSubmittedAt };
   }), [scholars]);
 
   // Year Level Queue — one entry per year level present in this officer's
@@ -433,8 +436,8 @@ const OfficerManualValidation = () => {
         cor: entries.cor.length,
         docs: entries.docs.length,
       };
-      const needsReview = Object.values(entries).flat().filter(e => isNeedsReview(e.item)).length;
-      return { key, label: formatYearLevelLabel(key), total, submitted, percentage, counts, needsReview };
+      const pending = Object.values(entries).flat().filter(e => isPending(e.item)).length;
+      return { key, label: formatYearLevelLabel(key), total, submitted, percentage, counts, pending };
     }).sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
   }, [scholarStats, assignedYearLevels]);
 
@@ -474,9 +477,9 @@ const OfficerManualValidation = () => {
       scholars: scholarStats.length,
       yearLevels: yearLevelGroups.filter(g => g.total > 0).length,
       records: all.length,
-      needsReview: all.filter(e => isNeedsReview(e.item)).length,
+      pending: all.filter(e => isPending(e.item)).length,
       approved: all.filter(e => ['approved', 'passed'].includes(statusKeyOf(e.item))).length,
-      flagged: all.filter(isFlaggedEntry).length,
+      returned: all.filter(e => statusKeyOf(e.item) === 'returned').length,
     };
   }, [scholarStats, yearLevelGroups]);
 
@@ -492,8 +495,8 @@ const OfficerManualValidation = () => {
     return Array.from(set).sort();
   }, [scholarStats]);
 
-  // The active category's entries, further narrowed by search, the
-  // All / Needs Review / Flagged filter, and (for Grades) AY + Semester.
+  // The active category's entries, further narrowed by search, status,
+  // and (for Grades) AY + Semester.
   const displayedEntries = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = categoryEntriesAll[activeCategory] || [];
@@ -501,34 +504,33 @@ const OfficerManualValidation = () => {
       list = list.filter(e => (e.scholar.full_name || '').toLowerCase().includes(q) || (e.scholar.scholar_id || '').toLowerCase().includes(q));
     }
     if (activeFilter === 'pending') {
-      list = list.filter(e => isNeedsReview(e.item));
-    }
-    if (activeFilter === 'flagged') {
-      list = list.filter(isFlaggedEntry);
+      list = list.filter(e => isPending(e.item));
+    } else if (activeFilter === 'approved') {
+      list = list.filter(e => ['approved', 'passed'].includes(statusKeyOf(e.item)));
+    } else if (activeFilter === 'returned') {
+      list = list.filter(e => statusKeyOf(e.item) === 'returned');
     }
     if (activeCategory === 'grades') {
       if (academicYear !== 'all') list = list.filter(e => e.item.academic_year === academicYear);
       if (semester !== 'all') list = list.filter(e => e.item.semester === semester);
     }
     return [...list].sort((a, b) => {
-      const ap = isNeedsReview(a.item) ? 0 : 1;
-      const bp = isNeedsReview(b.item) ? 0 : 1;
+      const ap = isPending(a.item) ? 0 : 1;
+      const bp = isPending(b.item) ? 0 : 1;
       if (ap !== bp) return ap - bp;
       return (a.scholar.full_name || '').localeCompare(b.scholar.full_name || '');
     });
   }, [categoryEntriesAll, activeCategory, search, activeFilter, academicYear, semester]);
 
-  const pages = Math.max(1, Math.ceil(displayedEntries.length / PAGE_SIZE));
+  const pageSize = workPreferences.pageSize;
+  const pages = Math.max(1, Math.ceil(displayedEntries.length / pageSize));
   const currentPage = Math.min(page, pages);
-  const pageStart = (currentPage - 1) * PAGE_SIZE;
-  const pageEntries = displayedEntries.slice(pageStart, pageStart + PAGE_SIZE);
+  const pageStart = (currentPage - 1) * pageSize;
+  const pageEntries = displayedEntries.slice(pageStart, pageStart + pageSize);
   const rangeFrom = displayedEntries.length ? pageStart + 1 : 0;
-  const rangeTo = Math.min(pageStart + PAGE_SIZE, displayedEntries.length);
+  const rangeTo = Math.min(pageStart + pageSize, displayedEntries.length);
 
   const hasFilters = !!search || activeFilter !== 'all' || academicYear !== 'all' || semester !== 'all';
-  const resetFilters = () => {
-    setSearch(''); setActiveFilter('all'); setAcademicYear('all'); setSemester('all');
-  };
 
   const buildMeta = (scholar, item) => (
     activeCategory === 'grades'
@@ -628,7 +630,6 @@ const OfficerManualValidation = () => {
     setFilePreview({ url, kind, label, description });
   };
 
-  const todayLabel = new Date().toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
   const activeCategoryMeta = CATEGORIES.find(c => c.key === activeCategory);
   const isSelected = (scholar, item) => selectedEntry?.scholar.scholar_id === scholar.scholar_id && selectedEntry?.item === item;
   const toggleSelect = (scholar, item) => {
@@ -636,8 +637,8 @@ const OfficerManualValidation = () => {
   };
   const rowKey = (scholar, item) => `${scholar.scholar_id}-${activeCategory}-${item.id ?? `${item.semester}-${item.academic_year}`}`;
 
-  const thStyle = { ...sans, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: MUTED, padding: '11px 14px', textAlign: 'left', background: BG, borderBottom: `1px solid ${BORDER}`, whiteSpace: 'nowrap' };
-  const tdStyle = { padding: '12px 14px', verticalAlign: 'middle' };
+  const thStyle = { ...sans, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: MUTED, padding: workPreferences.density === 'compact' ? '8px 10px' : '11px 14px', textAlign: 'left', background: BG, borderBottom: `1px solid ${BORDER}`, whiteSpace: 'nowrap' };
+  const tdStyle = { padding: workPreferences.density === 'compact' ? '8px 10px' : '12px 14px', verticalAlign: 'middle' };
 
   return (
     <div className="min-h-screen overflow-x-hidden" style={{ background: BG, ...sans }}>
@@ -658,30 +659,14 @@ const OfficerManualValidation = () => {
 
       <div className="px-5 sm:px-8 pt-8 flex flex-col gap-5" style={{ paddingBottom: selectedEntry ? 110 : 32 }}>
 
-        {/* ── Standard Officer header: title card + date card ── */}
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4">
+        {/* ── Standard Officer header ── */}
+        <div>
           <div style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '20px 24px', boxShadow: SHADOW_CARD }}>
             <p style={{ ...sans, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.1em', color: GOLD }}>OFFICER PORTAL</p>
             <h1 style={{ ...serif, fontSize: '1.75rem', fontWeight: 700, color: INK, marginTop: 4 }}>Scholar Submissions</h1>
             <p style={{ ...sans, fontSize: '0.84rem', color: MUTED, marginTop: 6, maxWidth: 640 }}>
               Review and validate scholar submissions for compliance.
             </p>
-          </div>
-          <div className="flex items-stretch gap-3">
-            <div className="flex items-center gap-3" style={{ background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: '16px 24px', boxShadow: SHADOW_CARD }}>
-              <div className="flex items-center justify-center flex-shrink-0" style={{ width: 42, height: 42, borderRadius: 12, background: `${MAROON}10` }}>
-                <CalendarDays size={19} style={{ color: MAROON }} />
-              </div>
-              <div>
-                <p style={{ ...sans, fontSize: '0.68rem', color: MUTED }}>Today</p>
-                <p style={{ ...sans, fontSize: '0.92rem', fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>{todayLabel}</p>
-              </div>
-            </div>
-            <button onClick={fetchData} disabled={loading} aria-label="Refresh submissions"
-              className="ov-btn flex items-center gap-2 px-4 transition-opacity hover:opacity-90 disabled:opacity-60"
-              style={{ ...sans, fontSize: '0.78rem', fontWeight: 700, color: MAROON, background: SURFACE, border: `1px solid ${BORDER}`, borderRadius: RADIUS, boxShadow: SHADOW_CARD, cursor: loading ? 'default' : 'pointer' }}>
-              <RefreshCw size={13} className={loading ? 'animate-spin' : ''} /> Refresh
-            </button>
           </div>
         </div>
 
@@ -713,12 +698,12 @@ const OfficerManualValidation = () => {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <SummaryCard icon={Users} label="Assigned Scholars" value={summary.scholars} color={MAROON}
                 sub={`${summary.yearLevels} year level${summary.yearLevels !== 1 ? 's' : ''} · ${summary.records} submitted record${summary.records !== 1 ? 's' : ''}`} />
-              <SummaryCard icon={AlarmClock} label="Needs Review" value={summary.needsReview} color={WARNING}
-                sub="Pending, returned, or rejected records" />
+              <SummaryCard icon={AlarmClock} label="Pending Records" value={summary.pending} color={WARNING}
+                sub="Pending or under review" />
               <SummaryCard icon={CheckCircle2} label="Approved Records" value={summary.approved} color={SUCCESS}
                 sub="Approved or verified records" />
-              <SummaryCard icon={Flag} label="Flagged Records" value={summary.flagged} color={DANGER}
-                sub="Matches the Flagged filter" />
+              <SummaryCard icon={XCircle} label="Returned Records" value={summary.returned} color={GOLD}
+                sub="Returned for revision" />
             </div>
 
             {/* ── Year Level Queue ── */}
@@ -783,12 +768,6 @@ const OfficerManualValidation = () => {
                     </FilterField>
                   </>
                 )}
-                <button onClick={resetFilters} disabled={!hasFilters}
-                  className="ov-btn px-4 transition-opacity"
-                  style={{ ...sans, height: 40, fontSize: '0.78rem', fontWeight: 600, color: MAROON, background: SURFACE, border: `1px solid ${MAROON}`, borderRadius: 10,
-                    cursor: hasFilters ? 'pointer' : 'default', opacity: hasFilters ? 1 : 0.5 }}>
-                  Reset Filters
-                </button>
               </div>
 
               {displayedEntries.length === 0 ? (
@@ -865,7 +844,7 @@ const OfficerManualValidation = () => {
                       const pdfBusy = activeCategory === 'letters' && generatingPdfId === item.id;
                       return (
                         <div key={rowKey(scholar, item)} onClick={() => setSelectedEntry({ scholar, item })}
-                          style={{ borderRadius: RADIUS_SM, padding: 14, cursor: 'pointer', background: selected ? `${MAROON}0d` : SURFACE, border: `1px solid ${selected ? MAROON : BORDER}` }}>
+                          style={{ borderRadius: RADIUS_SM, padding: workPreferences.density === 'compact' ? 10 : 14, cursor: 'pointer', background: selected ? `${MAROON}0d` : SURFACE, border: `1px solid ${selected ? MAROON : BORDER}` }}>
                           <div className="flex items-center gap-3">
                             <SelectBox selected={selected} onToggle={() => toggleSelect(scholar, item)} label={`Select ${scholar.full_name || scholar.scholar_id}`} />
                             <Avatar name={scholar.full_name} id={scholar.scholar_id} selected={selected} />

@@ -21,6 +21,14 @@ test('officer summary routes allow officers and retain role protection', () => {
     routes,
     /router\.get\('\/reports\/task-completion', verifyToken, requireRole\(\['officer'\]/
   );
+  assert.match(
+    routes,
+    /router\.get\('\/reports\/submission-records', verifyToken, requireRole\(\['officer'\]/
+  );
+  assert.match(
+    routes,
+    /router\.get\('\/notifications\/compliance-due', officerController\.getComplianceDueReminders\)/
+  );
 });
 
 test('officers can request supported scholar report types without bypassing report validation', () => {

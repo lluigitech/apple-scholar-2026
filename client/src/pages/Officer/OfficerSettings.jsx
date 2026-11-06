@@ -2,25 +2,30 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import {
-  User, Mail, Phone, IdCard, ShieldCheck, Users, Lock, KeyRound, Bell, CalendarDays,
-  SlidersHorizontal, ListFilter, Rows3, LineChart, Eye, EyeOff, CheckCircle2, AlertTriangle, Save, X,
-  FileCheck, Hourglass, Undo2, Megaphone, AlarmClock, Rows2,
+  User, Mail, IdCard, ShieldCheck, Users, Lock, KeyRound, Bell,
+  SlidersHorizontal, ListFilter, Rows3, Eye, EyeOff, CheckCircle2, AlertTriangle, Save, X,
+  FileCheck, Hourglass, Megaphone, AlarmClock, Rows2,
 } from 'lucide-react';
 import { API_BASE, authHeaders } from '../../components/Officer/Reports/ReportsHelpers';
 import { formatYearLevelLabel } from '../../utils/yearLevelLabels';
+import {
+  DEFAULT_OFFICER_WORK_PREFERENCES,
+  readOfficerWorkPreferences,
+  writeOfficerWorkPreferences,
+} from '../../utils/officerWorkPreferences';
 
 /* ───────── CONTRACT — i-match sa backend (hindi ko ma-inspect ang project mo) ─────────
  * Relative sa API_BASE, gamit ang authHeaders() (Bearer token). Identity ay galing sa token sa server.
- * GET  /officer/profile -> { full_name, email, contact_number?, officer_id?, role, assigned_year_levels?: string[], created_at?, last_login? }
- * PUT  /officer/profile body { full_name, email, contact_number }   (hindi tatanggap ng role/officer_id/assignments)
+ * GET  /officer/profile -> { full_name, email, officer_id?, role, assigned_year_levels?: string[], created_at?, last_login? }
+ * PUT  /officer/profile body { full_name, email, currentPassword }   (hindi tatanggap ng role/officer_id/assignments)
  * POST /officer/change-password body { current_password, new_password }  (server verifies + hashes)
- * GET/PUT /officer/settings/notifications -> { new_submissions, pending_reviews, deadlines, returned_submissions, announcements } (booleans)
+ * GET/PUT /officer/settings/notifications -> { new_submissions, pending_reviews, deadlines, announcements } (booleans)
  * Work Preferences: browser-only (localStorage).
  */
 const PROFILE_PATH = '/officer/profile';
 const PASSWORD_PATH = '/officer/change-password';
 const NOTIF_PATH = '/officer/settings/notifications';
-const WORK_PREFS_KEY = 'appleScholar.officer.workPrefs.v1';
+const VERIFY_PASSWORD_PATH = '/officer/settings/verify-password';
 
 // ── Officer tokens ──
 const MAROON = '#7f2d3a', MAROON_DEEP = '#4f1620', GOLD = '#b98b4e', IVORY = '#FBF7F2', INK = '#241512';
@@ -32,16 +37,11 @@ const tile = { background: '#fff', border: `1px solid ${RULE}`, borderRadius: 14
 const NOTIF_EVENTS = [
   { key: 'new_submissions', label: 'New scholar submissions', note: 'Alert when a scholar submits a record.', icon: FileCheck },
   { key: 'pending_reviews', label: 'Pending reviews', note: 'Reminders for submissions awaiting action.', icon: Hourglass },
-  { key: 'deadlines', label: 'Approaching deadlines', note: 'Tasks that are about to be due.', icon: AlarmClock },
-  { key: 'returned_submissions', label: 'Returned submissions', note: 'When a returned record is resubmitted.', icon: Undo2 },
+  { key: 'deadlines', label: 'Compliance due soon', note: 'Within 3 days, for scholars who still need to submit or resubmit.', icon: AlarmClock },
   { key: 'announcements', label: 'Important announcements', note: 'Announcements posted for officers.', icon: Megaphone },
 ];
 
-const DEFAULT_WORK = { reviewStatus: 'all', pageSize: 10, period: '6m', density: 'comfortable' };
-const loadWork = () => {
-  try { return { ...DEFAULT_WORK, ...(JSON.parse(localStorage.getItem(WORK_PREFS_KEY)) || {}) }; }
-  catch { return DEFAULT_WORK; }
-};
+const DEFAULT_WORK = DEFAULT_OFFICER_WORK_PREFERENCES;
 
 const classify = (err) => {
   const status = err?.response?.status;
@@ -145,9 +145,35 @@ const OfficerSettings = () => {
   const [profile, setProfile] = useState(null);
   const [profileState, setProfileState] = useState('loading');
   const [profileMsg, setProfileMsg] = useState('');
-  const [draft, setDraft] = useState({ full_name: '', email: '', contact_number: '' });
+  const [draft, setDraft] = useState({ full_name: '', email: '' });
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileFeedback, setProfileFeedback] = useState(null);
+  const [confirmAction, setConfirmAction] = useState(null);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [confirmError, setConfirmError] = useState('');
+  const [confirmBusy, setConfirmBusy] = useState(false);
+
+  const requestSettingsConfirmation = (action) => {
+    setConfirmAction(action);
+    setConfirmPassword('');
+    setConfirmError('');
+  };
+
+  const closeSettingsConfirmation = () => {
+    if (confirmBusy) return;
+    setConfirmAction(null);
+    setConfirmPassword('');
+    setConfirmError('');
+  };
+
+  useEffect(() => {
+    if (!confirmAction) return undefined;
+    const onKeyDown = event => {
+      if (event.key === 'Escape') closeSettingsConfirmation();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [confirmAction, confirmBusy]);
 
   const loadProfile = useCallback(async () => {
     setProfileState('loading'); setProfileMsg('');
@@ -155,7 +181,7 @@ const OfficerSettings = () => {
       const res = await axios.get(`${API_BASE}${PROFILE_PATH}`, authHeaders());
       const data = res.data || {};
       setProfile(data);
-      setDraft({ full_name: data.full_name || '', email: data.email || '', contact_number: data.contact_number || '' });
+      setDraft({ full_name: data.full_name || '', email: data.email || '' });
       setProfileState('ready');
     } catch (e) {
       const c = classify(e);
@@ -164,25 +190,61 @@ const OfficerSettings = () => {
     }
   }, []);
 
-  const profileDirty = !!profile && (draft.full_name !== (profile.full_name || '') || draft.email !== (profile.email || '') || draft.contact_number !== (profile.contact_number || ''));
+  const profileDirty = !!profile && (draft.full_name !== (profile.full_name || '') || draft.email !== (profile.email || ''));
   const emailValid = /^\S+@\S+\.\S+$/.test(draft.email.trim());
   const profileValid = draft.full_name.trim().length > 0 && emailValid;
 
-  const saveProfile = async () => {
+  const saveProfile = async (currentPassword) => {
     if (!profileDirty || !profileValid || profileSaving) return;
     setProfileSaving(true); setProfileFeedback(null);
     try {
-      const body = { full_name: draft.full_name.trim(), email: draft.email.trim(), contact_number: draft.contact_number.trim() };
-      const res = await axios.put(`${API_BASE}${PROFILE_PATH}`, body, authHeaders());
+      const body = { full_name: draft.full_name.trim(), email: draft.email.trim() };
+      const res = await axios.put(`${API_BASE}${PROFILE_PATH}`, { ...body, currentPassword }, authHeaders());
       const next = { ...profile, ...body, ...(res.data && typeof res.data === 'object' ? res.data : {}) };
       setProfile(next);
-      setDraft({ full_name: next.full_name || '', email: next.email || '', contact_number: next.contact_number || '' });
+      setDraft({ full_name: next.full_name || '', email: next.email || '' });
       setProfileFeedback({ tone: 'success', text: 'Profile updated.' });
+      return true;
     } catch (e) {
-      const c = classify(e);
-      if (c.kind === 'auth') setAuthExpired(true);
-      setProfileFeedback({ tone: 'error', text: c.message });
+      const message = e.response?.data?.error;
+      if (e.response?.status === 401 && /password/i.test(message || '')) {
+        setConfirmError(message);
+        setProfileFeedback({ tone: 'error', text: message });
+      } else {
+        const c = classify(e);
+        if (c.kind === 'auth') setAuthExpired(true);
+        setProfileFeedback({ tone: 'error', text: c.message });
+        setConfirmError(c.message);
+      }
+      return false;
     } finally { setProfileSaving(false); }
+  };
+
+  const confirmSettingsChange = async (event) => {
+    event.preventDefault();
+    if (!confirmAction || !confirmPassword || confirmBusy) return;
+    setConfirmBusy(true); setConfirmError('');
+    try {
+      let saved = false;
+      if (confirmAction === 'profile') {
+        saved = await saveProfile(confirmPassword);
+      } else if (confirmAction === 'notifications') {
+        saved = await saveNotifs(confirmPassword);
+      } else if (confirmAction === 'work') {
+        await axios.post(`${API_BASE}${VERIFY_PASSWORD_PATH}`, { currentPassword: confirmPassword }, authHeaders());
+        saved = saveWork();
+      }
+      if (saved) {
+        setConfirmAction(null);
+        setConfirmPassword('');
+      }
+    } catch (error) {
+      const message = error.response?.data?.error || 'Unable to verify your current password. Please try again.';
+      if (error.response?.status === 401 && /invalid or expired token|no token provided/i.test(message)) setAuthExpired(true);
+      setConfirmError(message);
+    } finally {
+      setConfirmBusy(false);
+    }
   };
 
   // ── Password (modal) ──
@@ -246,38 +308,51 @@ const OfficerSettings = () => {
   }, []);
   const notifDirty = !!notifSaved && NOTIF_EVENTS.some(ev => notifDraft?.[ev.key] !== notifSaved[ev.key]);
 
-  const saveNotifs = async () => {
+  const saveNotifs = async (currentPassword) => {
     if (!notifDirty || notifSaving) return;
     setNotifSaving(true); setNotifFeedback(null);
     try {
-      await axios.put(`${API_BASE}${NOTIF_PATH}`, notifDraft, authHeaders());
+      await axios.put(`${API_BASE}${NOTIF_PATH}`, { ...notifDraft, currentPassword }, authHeaders());
       setNotifSaved(notifDraft);
       setNotifFeedback({ tone: 'success', text: 'Notification preferences saved.' });
+      return true;
     } catch (e) {
-      const c = classify(e);
-      if (c.kind === 'auth') setAuthExpired(true);
-      setNotifFeedback({ tone: 'error', text: c.message });
+      const message = e.response?.data?.error;
+      if (e.response?.status === 401 && /password/i.test(message || '')) {
+        setConfirmError(message);
+        setNotifFeedback({ tone: 'error', text: message });
+      } else {
+        const c = classify(e);
+        if (c.kind === 'auth') setAuthExpired(true);
+        setNotifFeedback({ tone: 'error', text: c.message });
+        setConfirmError(c.message);
+      }
+      return false;
     } finally { setNotifSaving(false); }
   };
 
   // ── Work preferences (browser-only) ──
-  const [workSaved, setWorkSaved] = useState(loadWork);
-  const [workDraft, setWorkDraft] = useState(loadWork);
+  const [workSaved, setWorkSaved] = useState(readOfficerWorkPreferences);
+  const [workDraft, setWorkDraft] = useState(readOfficerWorkPreferences);
   const [workFeedback, setWorkFeedback] = useState(null);
   const workDirty = Object.keys(DEFAULT_WORK).some(k => workDraft[k] !== workSaved[k]);
   const saveWork = () => {
     try {
-      localStorage.setItem(WORK_PREFS_KEY, JSON.stringify(workDraft));
+      writeOfficerWorkPreferences(workDraft);
       setWorkSaved(workDraft);
       setWorkFeedback({ tone: 'success', text: 'Preferences saved on this browser.' });
-    } catch { setWorkFeedback({ tone: 'error', text: 'Could not save preferences in this browser.' }); }
+      return true;
+    } catch (error) {
+      console.error('Failed to save Officer work preferences:', error);
+      setWorkFeedback({ tone: 'error', text: 'Could not save preferences in this browser.' });
+      setConfirmError('Could not save preferences in this browser.');
+      return false;
+    }
   };
 
   useEffect(() => { loadProfile(); loadNotifs(); }, [loadProfile, loadNotifs]);
 
   const yearLevels = useMemo(() => (Array.isArray(profile?.assigned_year_levels) ? profile.assigned_year_levels.map(formatYearLevelLabel).join(', ') : ''), [profile]);
-  const todayLabel = new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
-
   const densityOptions = [
     { key: 'comfortable', title: 'Comfortable', note: 'Default spacing', icon: Rows3 },
     { key: 'compact', title: 'Compact', note: 'Tighter spacing', icon: Rows2 },
@@ -310,20 +385,11 @@ const OfficerSettings = () => {
       <div className="flex flex-col gap-4 px-4 py-5 sm:px-6 lg:px-8" style={{ minWidth: 0 }}>
 
         {/* ── Standard Officer header ── */}
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-[1fr_auto]">
+        <div>
           <div style={{ ...tile, padding: '20px 24px' }}>
             <p style={{ ...sans, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.1em', color: GOLD }}>OFFICER PORTAL</p>
             <h1 style={{ ...serif, fontSize: '1.75rem', fontWeight: 700, color: MAROON_DEEP, marginTop: 4, lineHeight: 1.2 }}>Settings</h1>
             <p style={{ ...sans, fontSize: '0.84rem', color: '#a89890', marginTop: 6, maxWidth: 640 }}>Manage your account, security, notifications, and work preferences.</p>
-          </div>
-          <div className="flex items-center gap-3" style={{ ...tile, padding: '16px 24px' }}>
-            <span className="inline-flex flex-shrink-0 items-center justify-center" style={{ width: 42, height: 42, borderRadius: 12, background: `${MAROON}10` }}>
-              <CalendarDays size={19} style={{ color: MAROON }} />
-            </span>
-            <div>
-              <p style={{ ...sans, fontSize: '0.68rem', color: '#a89890' }}>Today</p>
-              <p style={{ ...sans, fontSize: '0.92rem', fontWeight: 600, color: INK, whiteSpace: 'nowrap' }}>{todayLabel}</p>
-            </div>
           </div>
         </div>
 
@@ -336,11 +402,11 @@ const OfficerSettings = () => {
 
         {/* ── Row 1: Officer Profile + Work Preferences ── */}
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-          <Card icon={User} title="Officer Profile" description="Update your name, email, and contact number."
+          <Card icon={User} title="Officer Profile" description="Update your name and email."
             footer={profileState === 'ready' && (
               <>
-                <button type="button" className="os-btn" disabled={!profileDirty || profileSaving} onClick={() => { setDraft({ full_name: profile.full_name || '', email: profile.email || '', contact_number: profile.contact_number || '' }); setProfileFeedback(null); }} style={ghostBtn(!profileDirty || profileSaving)}>Cancel</button>
-                <button type="button" className="os-btn" disabled={!profileDirty || !profileValid || profileSaving} onClick={saveProfile} style={primaryBtn(!profileDirty || !profileValid || profileSaving)}><Save size={14} /> {profileSaving ? 'Saving…' : 'Save Changes'}</button>
+                <button type="button" className="os-btn" disabled={!profileDirty || profileSaving} onClick={() => { setDraft({ full_name: profile.full_name || '', email: profile.email || '' }); setProfileFeedback(null); }} style={ghostBtn(!profileDirty || profileSaving)}>Cancel</button>
+                <button type="button" className="os-btn" disabled={!profileDirty || !profileValid || profileSaving} onClick={() => requestSettingsConfirmation('profile')} style={primaryBtn(!profileDirty || !profileValid || profileSaving)}><Save size={14} /> {profileSaving ? 'Saving…' : 'Save Changes'}</button>
               </>
             )}>
             {profileState === 'loading' && skeletons(3, 40)}
@@ -351,7 +417,6 @@ const OfficerSettings = () => {
                 <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
                   <IconInput id="os-name" icon={User} label="Display Name" value={draft.full_name} onChange={e => setDraft(d => ({ ...d, full_name: e.target.value }))} autoComplete="name" />
                   <IconInput id="os-email" icon={Mail} label="Email Address" type="email" value={draft.email} onChange={e => setDraft(d => ({ ...d, email: e.target.value }))} autoComplete="email" error={draft.email && !emailValid ? 'Enter a valid email address.' : ''} />
-                  <IconInput id="os-contact" icon={Phone} label="Contact Number" type="tel" value={draft.contact_number} onChange={e => setDraft(d => ({ ...d, contact_number: e.target.value }))} autoComplete="tel" />
                   <IconInput id="os-role" icon={ShieldCheck} label="Role" readOnly value={profile?.role || '—'} />
                   <IconInput id="os-officer-id" icon={IdCard} label="Officer ID" readOnly value={profile?.officer_id || '—'} />
                   <IconInput id="os-years" icon={Users} label="Assigned Year Levels" readOnly value={yearLevels || '—'} />
@@ -383,7 +448,7 @@ const OfficerSettings = () => {
             footer={
               <>
                 <button type="button" className="os-btn" disabled={!workDirty} onClick={() => { setWorkDraft(workSaved); setWorkFeedback(null); }} style={ghostBtn(!workDirty)}>Reset to Saved</button>
-                <button type="button" className="os-btn" disabled={!workDirty} onClick={saveWork} style={primaryBtn(!workDirty)}><Save size={14} /> Save Preferences</button>
+                <button type="button" className="os-btn" disabled={!workDirty} onClick={() => requestSettingsConfirmation('work')} style={primaryBtn(!workDirty)}><Save size={14} /> Save Preferences</button>
               </>
             }>
             <div className="flex flex-col gap-4">
@@ -392,8 +457,6 @@ const OfficerSettings = () => {
                   options={[['all', 'All'], ['pending', 'Pending'], ['approved', 'Approved'], ['returned', 'Returned']]} />
                 <SelectInput id="os-wp-size" icon={Rows3} label="Default page size" value={workDraft.pageSize} onChange={e => setWorkDraft(d => ({ ...d, pageSize: Number(e.target.value) }))}
                   options={[10, 20, 50].map(n => [n, `${n} rows`])} />
-                <SelectInput id="os-wp-period" icon={LineChart} label="Reporting period" value={workDraft.period} onChange={e => setWorkDraft(d => ({ ...d, period: e.target.value }))}
-                  options={[['1m', 'Last month (1m)'], ['3m', 'Last 3 months (3m)'], ['6m', 'Last 6 months (6m)']]} />
               </div>
 
               <div>
@@ -424,7 +487,7 @@ const OfficerSettings = () => {
           footer={notifState === 'ready' && (
             <>
               <button type="button" className="os-btn" disabled={!notifDirty || notifSaving} onClick={() => { setNotifDraft(notifSaved); setNotifFeedback(null); }} style={ghostBtn(!notifDirty || notifSaving)}>Reset to Saved</button>
-              <button type="button" className="os-btn" disabled={!notifDirty || notifSaving} onClick={saveNotifs} style={primaryBtn(!notifDirty || notifSaving)}><Save size={14} /> {notifSaving ? 'Saving…' : 'Save Preferences'}</button>
+              <button type="button" className="os-btn" disabled={!notifDirty || notifSaving} onClick={() => requestSettingsConfirmation('notifications')} style={primaryBtn(!notifDirty || notifSaving)}><Save size={14} /> {notifSaving ? 'Saving…' : 'Save Preferences'}</button>
             </>
           )}>
           {notifState === 'loading' && skeletons(4, 48)}
@@ -449,6 +512,56 @@ const OfficerSettings = () => {
           )}
         </Card>
       </div>
+
+      {confirmAction && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(36,21,18,0.5)' }}
+          onMouseDown={event => { if (event.target === event.currentTarget) closeSettingsConfirmation(); }}
+        >
+          <form
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="os-confirm-title"
+            onSubmit={confirmSettingsChange}
+            className="w-full"
+            style={{ ...tile, maxWidth: 420, padding: 20, boxShadow: '0 28px 60px -24px rgba(36,21,18,0.5)' }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <IconChip icon={Lock} size={38} />
+                <div>
+                  <h2 id="os-confirm-title" style={{ ...serif, fontSize: '1.08rem', fontWeight: 700, color: INK }}>Confirm your password</h2>
+                  <p style={{ ...sans, fontSize: '0.74rem', color: '#a89890', marginTop: 2 }}>Enter your current password to save these settings.</p>
+                </div>
+              </div>
+              <button type="button" onClick={closeSettingsConfirmation} disabled={confirmBusy} aria-label="Close" className="os-btn" style={{ ...ghostBtn(confirmBusy), padding: 0, width: 34, height: 34, borderColor: RULE, color: '#7a6a62' }}><X size={15} /></button>
+            </div>
+            <div style={{ marginTop: 16 }}>
+              <IconInput id="os-confirm-current-password" icon={Lock} label="Current Password">
+                <input
+                  id="os-confirm-current-password"
+                  className="os-field"
+                  type="password"
+                  autoComplete="current-password"
+                  autoFocus
+                  required
+                  value={confirmPassword}
+                  onChange={event => setConfirmPassword(event.target.value)}
+                  style={inputBase}
+                />
+              </IconInput>
+            </div>
+            {confirmError && <p role="alert" style={{ ...sans, color: CLAY, background: `${CLAY}12`, border: `1px solid ${CLAY}44`, borderRadius: 10, padding: '8px 12px', marginTop: 12, fontSize: '0.78rem' }}>{confirmError}</p>}
+            <div className="flex justify-end gap-2" style={{ marginTop: 18 }}>
+              <button type="button" onClick={closeSettingsConfirmation} disabled={confirmBusy} className="os-btn" style={ghostBtn(confirmBusy)}>Cancel</button>
+              <button type="submit" disabled={confirmBusy || !confirmPassword} className="os-btn" style={primaryBtn(confirmBusy || !confirmPassword)}>
+                {confirmBusy ? 'Confirming…' : 'Confirm & Save'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* ── Change Password modal ── */}
       {pwOpen && (

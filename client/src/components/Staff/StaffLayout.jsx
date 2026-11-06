@@ -21,6 +21,50 @@ const StaffLayout = () => {
 
     return (
         <div className="flex h-screen overflow-hidden" style={{ background: BG, ...body }}>
+            <style>{`
+                @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&family=Lora:wght@600;700&family=Work+Sans:wght@400;500;600;700&display=swap');
+
+                .staff-page-eyebrow {
+                    display: block;
+                    font-family: 'Work Sans', 'Segoe UI', sans-serif;
+                    font-size: 0.68rem;
+                    font-weight: 700;
+                    letter-spacing: 0.16em;
+                    color: ${GOLD};
+                }
+                .staff-page-header-card {
+                    min-height: 108px;
+                }
+                .staff-page-title {
+                    margin: 4px 0 0;
+                    font-family: 'Lora', Georgia, 'Times New Roman', serif;
+                    font-size: 1.9rem;
+                    font-weight: 700;
+                    line-height: 1.2;
+                    color: ${MAROON};
+                }
+                .staff-page-description {
+                    margin: 4px 0 0;
+                    font-family: 'Work Sans', 'Segoe UI', sans-serif;
+                    font-size: 0.86rem;
+                    line-height: 1.5;
+                    color: #8A7A68;
+                }
+                .staff-page-date-label {
+                    display: block;
+                    font-family: 'Work Sans', 'Segoe UI', sans-serif;
+                    font-size: 0.74rem;
+                    color: #8A7A68;
+                }
+                .staff-page-date-value {
+                    display: block;
+                    margin-top: 2px;
+                    font-family: 'Lora', Georgia, 'Times New Roman', serif;
+                    font-size: 1.05rem;
+                    font-weight: 700;
+                    color: #241512;
+                }
+            `}</style>
             <StaffSidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
             <main className="flex-1 min-w-0 w-full overflow-y-auto overflow-x-hidden">

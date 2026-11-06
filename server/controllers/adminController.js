@@ -5,8 +5,8 @@ const fs     = require('fs');
 const path   = require('path');
 const { sendAnnouncementNotifyEmails, sendWelcomeEmail } = require('../utils/notifyHelpers');
 const { logAuditEvent } = require('../utils/auditLogger');
-const { getAssignedYearLevels } = require('../utils/officerAssignments');
-const { logComplianceIncident, clampCompliance, getComplianceSettings, calculateCurrentCompliance, calculateComplianceScore, resolveGradeScale } = require('../utils/complianceLogger');
+const { getAssignedYearLevels, normalizeYearLevel, yearLevelSqlExpression } = require('../utils/officerAssignments');
+const { logComplianceIncident, clampCompliance, getComplianceSettings, calculateCurrentCompliance, calculateComplianceScore, getOverdueComplianceTaskCounts, resolveGradeScale } = require('../utils/complianceLogger');
 
 exports.getPrivacyRequests = (req, res) => {
     db.query(
@@ -1052,8 +1052,7 @@ exports.getScholarComplianceSummary = (req, res) => {
                                 if (attErr) return res.status(500).json({ error: 'Error fetching attendance' });
 
                                 const present = attData.filter(a => a.status === 'present').length;
-                                const absent  = attData.filter(a => a.status === 'absent').length;
-                                const excused = attData.filter(a => a.status === 'excused').length;
+                                const absent  = attData.filter(a => a.status === 'absent' || a.status === 'excused').length;
                                 const total   = attData.length;
                                 const attRate = total > 0 ? Math.round((present / total) * 100) : 0;
 
@@ -1084,7 +1083,7 @@ exports.getScholarComplianceSummary = (req, res) => {
                                                 total_hours: totalHours, required_hours: requiredHours,
                                                 progress: svcProgress, items: svcData,
                                             },
-                                            attendance: { present, absent, excused, total, rate: attRate },
+                                            attendance: { present, absent, total, rate: attRate },
                                             academic: { passed_sems: passedSems, total_sems: totalSems },
                                         });
                                     }
@@ -1254,6 +1253,7 @@ exports.getComplianceSummary = (req, res) => {
                 SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) AS absent
             FROM duty_attendance
             WHERE scholar_id IN (${placeholders})
+              AND (COALESCE(is_makeup, 0) = 0 OR check_out_at IS NOT NULL)
             GROUP BY scholar_id
         `;
 
@@ -1271,26 +1271,37 @@ exports.getComplianceSummary = (req, res) => {
                     const attMap = {};
                     attStats.forEach(a => { attMap[a.scholar_id] = a; });
 
-                    const results = scholars.map(scholar => {
-                        const sub = subMap[scholar.scholar_id] || {};
-                        const att = attMap[scholar.scholar_id] || {};
-                        const score = calculateComplianceScore({ sub, att, settings, today: new Date() });
-                        const overallCompliance = Number(score?.overallCompliance ?? 0);
-                        const riskStatus = overallCompliance >= 70 ? 'low' : overallCompliance >= 50 ? 'medium' : 'high';
+                    const today = new Date();
+                    getOverdueComplianceTaskCounts(scholars, today, (taskErr, overdueTasksByScholar) => {
+                        if (taskErr) return res.status(500).json({ error: 'Failed to calculate overdue compliance tasks.' });
 
-                        return {
-                            id: scholar.id,
-                            name: scholar.full_name,
-                            studentId: scholar.scholar_id,
-                            completionRate: overallCompliance,
-                            credits: overallCompliance,
-                            riskStatus,
-                            year_level: scholar.year_level || 'N/A',
-                        };
+                        const results = scholars.map(scholar => {
+                            const sub = subMap[scholar.scholar_id] || {};
+                            const att = attMap[scholar.scholar_id] || {};
+                            const score = calculateComplianceScore({
+                                sub,
+                                att,
+                                settings,
+                                overdueTaskCount: overdueTasksByScholar[scholar.scholar_id] || 0,
+                                today,
+                            });
+                            const overallCompliance = Number(score?.overallCompliance ?? 0);
+                            const riskStatus = overallCompliance >= 70 ? 'low' : overallCompliance >= 50 ? 'medium' : 'high';
+
+                            return {
+                                id: scholar.id,
+                                name: scholar.full_name,
+                                studentId: scholar.scholar_id,
+                                completionRate: overallCompliance,
+                                credits: overallCompliance,
+                                riskStatus,
+                                year_level: scholar.year_level || 'N/A',
+                            };
+                        });
+
+                        results.sort((a, b) => b.completionRate - a.completionRate);
+                        res.json(results);
                     });
-
-                    results.sort((a, b) => b.completionRate - a.completionRate);
-                    res.json(results);
                 });
             });
         });
@@ -1301,28 +1312,6 @@ exports.getComplianceSummary = (req, res) => {
 // Returns monthly scholar submissions for review
 exports.getMonthlySubmissions = (req, res) => {
     const { year_level, month } = req.query;
-
-    const normalizeYearLevel = (value) => String(value || '')
-        .trim()
-        .toLowerCase()
-        .replace(/[_-]/g, ' ')
-        .replace(/\s+/g, ' ');
-
-    const yearLevelAliases = new Set();
-    if (year_level) {
-        const raw = String(year_level).trim();
-        const aliases = [
-            raw,
-            raw.replace(/\s*college\s*$/i, ''),
-            raw.replace(/\s*year\s*$/i, ''),
-            raw.replace(/\s*college\s*$/i, ' College'),
-            raw.replace(/\s*college\s*$/i, ''),
-        ];
-        aliases.forEach(value => {
-            const normalized = normalizeYearLevel(value);
-            if (normalized) yearLevelAliases.add(normalized);
-        });
-    }
 
     let sql = `
         SELECT
@@ -1352,6 +1341,7 @@ exports.getMonthlySubmissions = (req, res) => {
                = LOWER(REPLACE(REPLACE(TRIM(u.year_level), '_', ' '), '-', ' '))
         LEFT JOIN users ou ON ou.id = oya.officer_id
         WHERE s.status = 'approved'
+          AND s.finalized_at IS NOT NULL
           AND COALESCE(s.archived_at, s.archive_at) IS NULL
     `;
     const values = [];
@@ -1362,10 +1352,9 @@ exports.getMonthlySubmissions = (req, res) => {
         values.push(parseInt(year), parseInt(monthStr));
     }
 
-    if (yearLevelAliases.size) {
-        const normalizedList = [...yearLevelAliases];
-        sql += ` AND LOWER(REPLACE(REPLACE(TRIM(u.year_level), '_', ' '), '-', ' ')) IN (${normalizedList.map(() => '?').join(', ')})`;
-        values.push(...normalizedList);
+    if (year_level) {
+        sql += ` AND ${yearLevelSqlExpression('u.year_level')} = ?`;
+        values.push(normalizeYearLevel(year_level));
     }
 
     sql += ` GROUP BY s.id, s.submission_type, s.scholar_id, u.full_name, u.year_level, s.submitted_at, s.status, s.quality_score, s.generated_pdf_path, u.email, s.letter_content, s.service_activity, s.service_hours, s.sentiment_label ORDER BY s.submitted_at DESC LIMIT 500`;

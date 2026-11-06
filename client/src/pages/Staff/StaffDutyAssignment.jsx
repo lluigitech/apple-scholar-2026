@@ -3,8 +3,8 @@ import axios from 'axios';
 import {
     ClipboardList, CalendarDays, MapPin, Clock,
     Plus, X, Save, Loader2,
-    CheckSquare, Square, AlertCircle, RefreshCw, TrendingUp,
-    ChevronDown, Search,
+    CheckSquare, Square, AlertCircle, TrendingUp,
+    Search,
 } from 'lucide-react';
 
 const API = 'http://localhost:5000/api';
@@ -16,7 +16,6 @@ const BG = '#F7F4EE';
 const CARD = '#FFFFFF';
 const BORDER = '#E8DCCB';
 const MAROON = '#7A1F2B';
-const MAROON_DEEP = '#5B1621';
 const GOLD = '#B78A4A';
 const INK = '#241512';
 const MUTED = '#8C7E74';
@@ -42,13 +41,17 @@ const STATUS_CONFIG = {
     unscheduled: { color: GOLD,    bg: `${GOLD}18`,    label: 'Unscheduled' },
 };
 
-const getDutyStatus = (duty) => {
+const getDutyStatus = (duty, now = new Date()) => {
     const storedStatus = String(duty.status || '').trim().toLowerCase();
     if (storedStatus === 'completed' || storedStatus === 'cancelled') return storedStatus;
 
-    const start = new Date(`${duty.duty_date}T${duty.time_start || '00:00'}`);
-    const end = new Date(`${duty.duty_date}T${duty.time_end || '23:59'}`);
-    const now = new Date();
+    const rawDutyDate = String(duty.duty_date || '');
+    const parsedDutyDate = duty.duty_date instanceof Date ? duty.duty_date : new Date(duty.duty_date);
+    const dutyDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDutyDate)
+        ? rawDutyDate
+        : `${parsedDutyDate.getFullYear()}-${String(parsedDutyDate.getMonth() + 1).padStart(2, '0')}-${String(parsedDutyDate.getDate()).padStart(2, '0')}`;
+    const start = new Date(`${dutyDate}T${duty.time_start || '00:00:00'}`);
+    const end = new Date(`${dutyDate}T${duty.time_end || '23:59:59'}`);
     if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
         return ['upcoming', 'ongoing'].includes(storedStatus) ? storedStatus : 'upcoming';
     }
@@ -154,12 +157,10 @@ const StaffDutyAssignment = () => {
     const [saving, setSaving]         = useState(false);
     const [formError, setFormError]   = useState('');
     const [successMsg, setSuccessMsg] = useState('');
-    const [makeupSources, setMakeupSources] = useState([]);
     const [activeStatusFilter, setActiveStatusFilter] = useState('total');
+    const [currentTime, setCurrentTime] = useState(0);
 
     // ---- Presentation-only UI state ----
-    const [makeupOpen, setMakeupOpen] = useState(false);      // collapsed by default
-    const [makeupHover, setMakeupHover] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
 
 
@@ -192,30 +193,16 @@ const StaffDutyAssignment = () => {
         }
     };
 
-    const fetchMakeupRequestData = async () => {
-        try {
-            const res = await axios.get(`${API}/staff/makeup-request-data`, authHeaders());
-            setMakeupSources(res.data.sources || []);
-        } catch (err) {
-            console.error(err);
-        }
-    };
+    useEffect(() => { fetchDuties(); fetchGroups(); }, []);
 
-    useEffect(() => { fetchDuties(); fetchGroups(); fetchMakeupRequestData(); }, []);
     useEffect(() => {
-        const intervalId = setInterval(fetchMakeupRequestData, 60 * 1000);
-        return () => clearInterval(intervalId);
+        const initializeTimeout = setTimeout(() => setCurrentTime(Date.now()), 0);
+        const intervalId = setInterval(() => setCurrentTime(Date.now()), 30 * 1000);
+        return () => {
+            clearTimeout(initializeTimeout);
+            clearInterval(intervalId);
+        };
     }, []);
-
-    // ---- Presentation-only: combined refresh for the Refresh button.
-    // Calls the exact same fetch functions above; adds no new
-    // request or business logic of its own.
-    const [refreshing, setRefreshing] = useState(false);
-    const handleRefreshAll = async () => {
-        setRefreshing(true);
-        await Promise.all([fetchDuties(), fetchGroups(), fetchMakeupRequestData()]);
-        setTimeout(() => setRefreshing(false), 400);
-    };
 
     // ─── Duty Form handlers ───────────────────────────────────────────────────
     const setField = (k, v) => setForm(f => ({ ...f, [k]: v }));
@@ -256,7 +243,7 @@ const StaffDutyAssignment = () => {
     };
 
     const dutyStatusCounts = duties.reduce((counts, duty) => {
-        const status = getDutyStatus(duty);
+        const status = getDutyStatus(duty, currentTime ? new Date(currentTime) : new Date(0));
         counts[status] = (counts[status] || 0) + 1;
         return counts;
     }, { upcoming: 0, ongoing: 0, completed: 0, cancelled: 0 });
@@ -270,7 +257,7 @@ const StaffDutyAssignment = () => {
 
     const filteredDuties = activeStatusFilter === 'total'
         ? duties
-        : duties.filter(duty => getDutyStatus(duty) === activeStatusFilter);
+        : duties.filter(duty => getDutyStatus(duty, currentTime ? new Date(currentTime) : new Date(0)) === activeStatusFilter);
 
     // Presentation-only search, layered on top of filteredDuties (client-side, no requests).
     const normalizedSearch = searchTerm.trim().toLowerCase();
@@ -289,8 +276,6 @@ const StaffDutyAssignment = () => {
     // ---- Presentation-only KPI values, derived from existing counts ----
     const completionRate = duties.length ? Math.round((dutyStatusCounts.completed / duties.length) * 100) : 0;
 
-    const todayLabel = new Date().toLocaleDateString('en-PH', { weekday: 'short', year: 'numeric', month: 'long', day: 'numeric' });
-
     const thStyle = {
         ...body, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.04em', color: MUTED,
         textAlign: 'left', padding: '12px 16px', borderBottom: `1px solid ${BORDER}`, background: BG, whiteSpace: 'nowrap',
@@ -301,32 +286,24 @@ const StaffDutyAssignment = () => {
         <div className="min-h-screen p-4 sm:p-6 lg:p-8" style={{ ...body, background: BG, overflowX: 'hidden' }}>
             <div className="w-full">
 
-                {/* ── Standard header: title card + date card ── */}
-                <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3 sm:gap-4 mb-5">
+                {/* ── Standard Staff page header ── */}
+                <div className="mb-5">
                     <div
-                        className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 min-w-0"
+                        className="staff-page-header-card flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 min-w-0"
                         style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: 'clamp(14px, 3vw, 20px)', ...cardShadow }}
                     >
                         <div className="min-w-0">
-                            <p style={{ ...body, fontSize: '0.68rem', fontWeight: 700, letterSpacing: '0.08em', color: GOLD }}>{isAdmin ? 'ADMIN PORTAL' : 'STAFF PORTAL'}</p>
-                            <h1 style={{ ...display, fontSize: 'clamp(1.3rem, 4vw, 1.6rem)', fontWeight: 600, color: MAROON, marginTop: 4, lineHeight: 1.2 }}>Duty Operations Center</h1>
-                            <p style={{ ...body, fontSize: '0.82rem', color: MUTED, marginTop: 4, lineHeight: 1.5 }}>
+                            <p className="staff-page-eyebrow">{isAdmin ? 'ADMIN PORTAL' : 'STAFF PORTAL'}</p>
+                            <h1 className="staff-page-title">Duty Operations Center</h1>
+                            <p className="staff-page-description">
                                 Manage duty schedules, assigned groups, and makeup-duty requests.
                             </p>
                             <p style={{ ...body, fontSize: '0.74rem', color: MUTED, marginTop: 2, lineHeight: 1.5 }}>
-                                {isAdmin ? 'Create duties for groups whose staff assignments are already configured in Team Assignments.' : 'Track duty schedules, notifications, attendance, and makeup requests.'}
+                                {isAdmin ? 'Create duties for groups whose staff assignments are already configured in Team Assignments.' : 'Track duty schedules, assigned groups, and notifications.'}
                             </p>
                         </div>
 
                         <div className="flex items-center gap-2.5 flex-wrap flex-shrink-0">
-                            <button
-                                type="button"
-                                onClick={handleRefreshAll}
-                                className="flex items-center justify-center gap-1.5"
-                                style={{ background: '#fff', border: `1px solid ${BORDER}`, color: MAROON, borderRadius: 999, padding: '8px 16px', ...body, fontSize: '0.78rem', fontWeight: 700, cursor: 'pointer' }}
-                            >
-                                <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} /> Refresh
-                            </button>
                             {isAdmin && (
                                 <button type="button" onClick={() => { setShowCreate(true); setFormError(''); }}
                                     className="flex items-center justify-center gap-2"
@@ -337,18 +314,6 @@ const StaffDutyAssignment = () => {
                         </div>
                     </div>
 
-                    <div
-                        className="flex items-center gap-3"
-                        style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: RADIUS, padding: 'clamp(14px, 3vw, 20px)', ...cardShadow }}
-                    >
-                        <div className="flex items-center justify-center flex-shrink-0" style={{ width: 42, height: 42, borderRadius: 12, background: `${GOLD}22`, color: GOLD }}>
-                            <CalendarDays size={17} />
-                        </div>
-                        <div>
-                            <p style={{ ...mono, fontSize: '0.64rem', fontWeight: 700, letterSpacing: '0.05em', color: MUTED }}>Today</p>
-                            <p style={{ ...display, fontSize: '0.95rem', fontWeight: 600, color: INK, marginTop: 2, whiteSpace: 'nowrap' }}>{todayLabel}</p>
-                        </div>
-                    </div>
                 </div>
 
                 {successMsg && (
@@ -365,7 +330,7 @@ const StaffDutyAssignment = () => {
                     <KPICard icon={TrendingUp} label="Completion Rate" value={`${completionRate}%`} />
                 </div>
 
-                {/* ── Single-column layout: duties table, then collapsible makeup request ── */}
+                {/* ── Assigned duties ── */}
                 <div className="flex flex-col gap-5">
 
                     {/* Assigned Duties (full width) */}
@@ -449,7 +414,7 @@ const StaffDutyAssignment = () => {
                                     </thead>
                                     <tbody>
                                         {visibleDuties.map((duty, index) => {
-                                            const dutyStatus = getDutyStatus(duty);
+                                            const dutyStatus = getDutyStatus(duty, currentTime ? new Date(currentTime) : new Date(0));
                                             return (
                                                 <tr key={duty.id}>
                                                     <td style={{ ...tdStyle, color: MUTED }}>{index + 1}</td>
@@ -506,90 +471,6 @@ const StaffDutyAssignment = () => {
                         )}
                     </section>
 
-                    {/* Absence records available for Admin makeup-duty assignment */}
-                    <section className="min-w-0" style={{ background: CARD, border: `1px solid ${BORDER}`, borderRadius: RADIUS, ...cardShadow, overflow: 'hidden' }}>
-                        <button
-                            type="button"
-                            id="makeup-toggle"
-                            onClick={() => setMakeupOpen(open => !open)}
-                            onMouseEnter={() => setMakeupHover(true)}
-                            onMouseLeave={() => setMakeupHover(false)}
-                            aria-expanded={makeupOpen}
-                            aria-controls="makeup-panel"
-                            className="w-full flex items-center gap-3 sm:gap-4 text-left"
-                            style={{
-                                padding: 'clamp(14px, 3vw, 20px)', border: 'none', cursor: 'pointer',
-                                background: makeupHover ? '#FBF8F2' : CARD,
-                                transition: 'background-color 180ms ease',
-                            }}
-                        >
-                            <div className="flex items-center justify-center flex-shrink-0" style={{ width: 44, height: 44, borderRadius: 999, background: `${MAROON}12`, color: MAROON }}>
-                                <AlertCircle size={18} />
-                            </div>
-                            <div className="min-w-0 flex-1">
-                                <h2 style={{ ...display, fontSize: '1.1rem', fontWeight: 600, color: MAROON }}>Absences for Admin Assignment</h2>
-                                <p style={{ ...body, fontSize: '0.78rem', color: MUTED, marginTop: 3 }}>Admin assigns the next duty for scholars marked absent or excused.</p>
-                            </div>
-                            <span style={{ ...body, fontSize: '0.72rem', fontWeight: 700, color: MAROON, background: `${MAROON}12`, borderRadius: 999, padding: '5px 10px' }}>
-                                {makeupSources.length} awaiting assignment
-                            </span>
-                            <ChevronDown
-                                size={20}
-                                aria-hidden="true"
-                                className="flex-shrink-0"
-                                style={{ color: MAROON, transition: 'transform 220ms ease', transform: makeupOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}
-                            />
-                        </button>
-
-                        <div
-                            id="makeup-panel"
-                            role="region"
-                            aria-labelledby="makeup-toggle"
-                            aria-hidden={!makeupOpen}
-                            style={{
-                                display: 'grid',
-                                gridTemplateRows: makeupOpen ? '1fr' : '0fr',
-                                visibility: makeupOpen ? 'visible' : 'hidden',
-                                transition: makeupOpen
-                                    ? 'grid-template-rows 240ms ease, visibility 0s'
-                                    : 'grid-template-rows 240ms ease, visibility 0s linear 240ms',
-                            }}
-                        >
-                            <div style={{ overflow: 'hidden', minHeight: 0 }}>
-                                <div style={{ borderTop: `1px solid ${BORDER}`, padding: 'clamp(14px, 3vw, 20px)' }}>
-                                    <p className="mb-4" style={{ ...body, fontSize: '0.76rem', color: MUTED }}>
-                                        Absences are recorded in attendance and shown here for visibility. Admin chooses and assigns the makeup duty.
-                                    </p>
-                                    {makeupSources.length === 0 ? (
-                                        <p style={{ ...body, fontSize: '0.8rem', color: MUTED, textAlign: 'center', padding: '20px 12px', background: BG, borderRadius: 10 }}>
-                                            No absent or excused scholars are awaiting a makeup-duty assignment.
-                                        </p>
-                                    ) : (
-                                        <div className="overflow-x-auto" style={{ border: `1px solid ${BORDER}`, borderRadius: 10, background: '#fff' }}>
-                                            <table style={{ width: '100%', minWidth: 560, borderCollapse: 'collapse' }}>
-                                                <thead>
-                                                    <tr>
-                                                        <th style={{ ...body, fontSize: '0.68rem', textAlign: 'left', color: MUTED, padding: '10px 12px', background: BG }}>Scholar</th>
-                                                        <th style={{ ...body, fontSize: '0.68rem', textAlign: 'left', color: MUTED, padding: '10px 12px', background: BG }}>Missed Duty</th>
-                                                        <th style={{ ...body, fontSize: '0.68rem', textAlign: 'left', color: MUTED, padding: '10px 12px', background: BG }}>Status</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {makeupSources.map(source => (
-                                                        <tr key={`${source.scholar_id}-${source.source_duty_id}`}>
-                                                            <td style={{ ...body, fontSize: '0.78rem', color: INK, padding: '11px 12px', borderTop: `1px solid ${BORDER}` }}>{source.scholar_name}</td>
-                                                            <td style={{ ...body, fontSize: '0.78rem', color: INK, padding: '11px 12px', borderTop: `1px solid ${BORDER}` }}>{source.source_duty_title}</td>
-                                                            <td style={{ ...body, fontSize: '0.72rem', fontWeight: 700, color: CLAY, padding: '11px 12px', borderTop: `1px solid ${BORDER}`, textTransform: 'capitalize' }}>{source.source_status}</td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    </section>
                 </div>
             </div>
 

@@ -391,6 +391,31 @@ const AdminDutyAssignment = () => {
 
   useEffect(() => { fetchData(); }, []);
 
+  useEffect(() => {
+    let active = true;
+    const refreshMakeupCandidates = async () => {
+      try {
+        const response = await axios.get(`${API}/staff/duties/makeup-candidates`, authHeaders());
+        if (!active) return;
+        setMakeupCandidates(response.data || []);
+        setError('');
+      } catch (refreshError) {
+        console.error('Failed to refresh make-up assignment candidates:', refreshError);
+        if (active) {
+          setError(refreshError.response?.data?.error || 'Unable to refresh make-up assignment candidates.');
+        }
+      }
+    };
+
+    const intervalId = setInterval(refreshMakeupCandidates, 60 * 1000);
+    window.addEventListener('focus', refreshMakeupCandidates);
+    return () => {
+      active = false;
+      clearInterval(intervalId);
+      window.removeEventListener('focus', refreshMakeupCandidates);
+    };
+  }, []);
+
   // Keeps the "Last updated" label fresh.
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 30000);
@@ -499,13 +524,16 @@ const AdminDutyAssignment = () => {
     setApprovingMakeup(true);
     const makeupDuty = duties.find(duty => String(duty.id) === String(makeupDutyId));
     try {
-      await axios.post(`${API}/staff/duties/makeup-permissions`, {
+      const assignmentResponse = await axios.post(`${API}/staff/duties/makeup-permissions`, {
         scholar_id: candidate.scholar_id,
         source_duty_id: candidate.source_duty_id,
         makeup_duty_id: makeupDutyId,
         reason: makeupReason,
       }, authHeaders());
-      setMakeupMessage(`${candidate.scholar_name} assigned to ${makeupDuty?.title || 'the selected makeup duty'}.`);
+      const notification = assignmentResponse.data?.notification;
+      setMakeupMessage(notification?.ok
+        ? `${candidate.scholar_name} assigned to ${makeupDuty?.title || 'the selected makeup duty'}; email notifications sent.`
+        : `${candidate.scholar_name} assigned to ${makeupDuty?.title || 'the selected makeup duty'}, but email notification could not be sent.`);
       setMakeupReason('');
       setSelectedMakeup('');
       setMakeupDutyId('');
@@ -902,7 +930,7 @@ const AdminDutyAssignment = () => {
             titleId="makeup-dialog-title"
             eyebrow="MAKEUP ASSIGNMENT"
             title="Makeup Duty Assignment"
-            subtitle="Choose the next duty for each absent or excused scholar."
+            subtitle="Choose the next duty for each absent scholar."
             right={
               <div className="flex items-center gap-2">
                 <span className="inline-flex items-center gap-1.5" style={{ ...body, fontSize: '0.72rem', fontWeight: 700, color: hasPendingMakeup ? WARNING : SUCCESS, background: hasPendingMakeup ? `${WARNING}16` : `${SUCCESS}14`, border: `1px solid ${hasPendingMakeup ? WARNING : SUCCESS}33`, borderRadius: 8, padding: '4px 10px', whiteSpace: 'nowrap' }}>
@@ -979,7 +1007,7 @@ const AdminDutyAssignment = () => {
                   <CheckCircle2 size={20} style={{ color: SUCCESS }} />
                 </div>
                   <p style={{ ...display, fontSize: '0.98rem', fontWeight: 700, color: INK }}>You&apos;re all caught up</p>
-                  <p style={{ ...body, fontSize: '0.8rem', color: MUTED, marginTop: 4, maxWidth: 320 }}>No absent or excused scholars are waiting for a makeup-duty assignment.</p>
+                  <p style={{ ...body, fontSize: '0.8rem', color: MUTED, marginTop: 4, maxWidth: 320 }}>No absent scholars are waiting for a makeup-duty assignment.</p>
               </div>
             )}
             {makeupMessage && <Notice tone="success" icon={CheckCircle2}>{makeupMessage}</Notice>}

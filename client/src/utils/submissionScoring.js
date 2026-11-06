@@ -109,7 +109,7 @@ export function calcInfoScore(info) {
     score += asText(info.course).length > 2 ? 2 : 0;
     score += asText(info.school).length > 2 ? 2 : 0;
     score += asText(info.date).length > 0 ? 0.5 : 0;
-    return Math.min(score, 10);
+    return Math.min(Math.round(score), 10);
 }
 
 export function isInfoBlank(info) {
@@ -137,8 +137,8 @@ export function buildEval(info, body, media) {
     const mediaScore = calcMediaScore(media);
     const infoScore = calcInfoScore(info);
 
-    const reportScore = rawReportScore * LETTER_BODY_MAX / 100;
-    const overallScore = Math.min(reportScore + mediaScore + infoScore, 100);
+    const reportScore = Math.round(rawReportScore * LETTER_BODY_MAX / 100);
+    const overallScore = Math.min(Math.round(reportScore + mediaScore + infoScore), 100);
 
     const checklist = CHECKLIST.map(item => ({ item, passed: item.check(info, body, media) }));
     const tone = classifyAcademicTone(body);

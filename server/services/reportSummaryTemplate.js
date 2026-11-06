@@ -21,6 +21,8 @@ const buildReportSummaryHTML = ({
     : `Summary of ${safeRoleLabel} reports`;
   const detailRows = rows.filter(row => row.scholarName);
   const isMonthlyReport = String(reportType || '').toLowerCase() === 'monthly letter';
+  const isMonthlyLetterReview = String(reportType || '').toLowerCase() === 'monthly letter review';
+  const isSubmissionRecords = String(reportType || '').toLowerCase() === 'submission records';
   const isTaskCompletion = String(reportType || '').toLowerCase() === 'task completion';
   const isAttendanceReport = String(reportType || '').toLowerCase() === 'attendance reports'
     || detailRows.some(row => row.attendanceStatus || row.attendanceDate || row.attendanceTime);
@@ -43,6 +45,25 @@ const buildReportSummaryHTML = ({
   }), { assigned: 0, completed: 0, missing: 0, pending: 0 });
   const formatDate = value => value ? new Date(value).toLocaleDateString('en-PH') : '—';
   const formatDateTime = value => value ? new Date(value).toLocaleString('en-PH') : '—';
+  const submissionRecordRows = isSubmissionRecords ? detailRows.map(row => `
+      <tr>
+        <td>${escapeHtml(row.scholarName)}</td>
+        <td>${escapeHtml(row.studentId || '—')}</td>
+        <td>${escapeHtml(row.yearLevel || '—')}</td>
+        <td>${escapeHtml(row.requirement || '—')}</td>
+        <td>${escapeHtml(row.period || '—')}</td>
+        <td>${escapeHtml(formatDate(row.submittedAt))}</td>
+        <td class="${row.reviewStatus === 'Not Submitted' ? 'muted' : 'submitted'}">${escapeHtml(row.reviewStatus || '—')}</td>
+      </tr>`).join('') : '';
+  const monthlyLetterReviewRows = isMonthlyLetterReview ? detailRows.map(row => `
+      <tr>
+        <td>${escapeHtml(row.scholarName)}</td>
+        <td>${escapeHtml(row.studentId || '—')}</td>
+        <td>${escapeHtml(row.yearLevel || '—')}</td>
+        <td>${escapeHtml(row.qualityScore ?? '—')}</td>
+        <td>${escapeHtml(row.sentiment || '—')}</td>
+        <td>${escapeHtml(formatDate(row.submittedAt))}</td>
+      </tr>`).join('') : '';
   const attendanceRows = isAttendanceReport ? detailRows.map(row => `
       <tr>
         <td>${escapeHtml(row.scholarName || '—')}</td>
@@ -115,6 +136,10 @@ const buildReportSummaryHTML = ({
   const highRiskCount = isComplianceSummary ? detailRows.filter(row => String(row.riskStatus || '').toLowerCase() === 'high').length : 0;
   const safeRows = isAttendanceReport
     ? attendanceRows
+    : isMonthlyLetterReview
+    ? monthlyLetterReviewRows
+    : isSubmissionRecords
+    ? submissionRecordRows
     : isComplianceSummary
     ? complianceRows || '<tr><td colspan="4" class="empty">No compliance data available</td></tr>'
     : isTaskCompletion ? detailRows.map(row => `
@@ -130,6 +155,7 @@ const buildReportSummaryHTML = ({
       <tr>
         <td>${escapeHtml(row.scholarName)}</td>
         <td>${escapeHtml(row.studentId || '—')}</td>
+        <td>${escapeHtml(Array.isArray(row.submissionTypes) && row.submissionTypes.length ? row.submissionTypes.join(', ') : '—')}</td>
         <td class="${row.submitted > 0 ? 'submitted' : 'muted'}">${row.submitted > 0 ? 'Submitted' : 'Not Submitted'}</td>
         <td>${escapeHtml(row.submitted)}</td>
         ${isMonthlyReport ? `<td>${escapeHtml(row.submittedAt ? new Date(row.submittedAt).toLocaleDateString('en-PH') : '—')}</td><td>${escapeHtml(row.qualityStatus || '—')}</td>` : ''}
@@ -211,10 +237,18 @@ const buildReportSummaryHTML = ({
         <div class="seal" aria-label="Apple Scholar seal"><img src="${escapeHtml(logoBase64)}" alt="Apple Scholar"></div>
       </header>
       <div class="divider"></div>
-      ${isTaskCompletion ? `<table>
+      ${isSubmissionRecords ? `<table>
+        <colgroup><col style="width:20%"><col style="width:14%"><col style="width:13%"><col style="width:15%"><col style="width:13%"><col style="width:13%"><col style="width:12%"></colgroup>
+        <thead><tr><th>SCHOLAR</th><th>STUDENT ID</th><th>YEAR LEVEL</th><th>REQUIREMENT</th><th>PERIOD</th><th>SUBMITTED AT</th><th>STATUS</th></tr></thead>
+        <tbody>${safeRows || '<tr><td colspan="7" class="empty">No submission records available</td></tr>'}</tbody>
+      </table>` : isTaskCompletion ? `<table>
         <colgroup><col style="width:28%"><col style="width:20%"><col style="width:13%"><col style="width:13%"><col style="width:13%"><col style="width:13%"></colgroup>
         <thead><tr><th>SCHOLAR</th><th>STUDENT ID</th><th>ASSIGNED</th><th>COMPLETED</th><th>MISSING</th><th>PENDING</th></tr></thead>
         <tbody>${safeRows || '<tr><td colspan="6" class="empty">No task records available</td></tr>'}</tbody>
+      </table>` : isMonthlyLetterReview ? `<table>
+        <colgroup><col style="width:20%"><col style="width:17%"><col style="width:13%"><col style="width:15%"><col style="width:15%"><col style="width:20%"></colgroup>
+        <thead><tr><th>SCHOLAR</th><th>STUDENT ID</th><th>YEAR LEVEL</th><th>QUALITY SCORE</th><th>SENTIMENT</th><th>SUBMITTED AT</th></tr></thead>
+        <tbody>${safeRows || '<tr><td colspan="6" class="empty">No monthly letters available</td></tr>'}</tbody>
       </table>` : isAttendanceReport ? `<table>
         <colgroup><col style="width:17%"><col style="width:13%"><col style="width:14%"><col style="width:15%"><col style="width:15%"><col style="width:18%"><col style="width:8%"></colgroup>
         <thead><tr><th>SCHOLAR</th><th>STUDENT ID</th><th>GROUP</th><th>ASSIGNED STAFF</th><th>DUTY</th><th>ATTENDANCE TIME</th><th>STATUS</th></tr></thead>
@@ -233,11 +267,11 @@ const buildReportSummaryHTML = ({
         <tbody>${safeRows || '<tr><td colspan="4" class="empty">No compliance data available</td></tr>'}</tbody>
       </table>` : `<table>
         ${detailRows.length
-          ? (isExportReport ? '<colgroup><col style="width:18%"><col style="width:14%"><col style="width:16%"><col style="width:12%"><col style="width:13%"><col style="width:13%"><col style="width:14%"></colgroup><thead><tr><th>SCHOLAR</th><th>STUDENT ID</th><th>REQUIREMENT</th><th>DEADLINE</th><th>SUBMITTED AT</th><th>APPROVED AT</th><th>STATUS</th></tr></thead>' : isMonthlyReport ? '<colgroup><col style="width:22%"><col style="width:16%"><col style="width:16%"><col style="width:10%"><col style="width:14%"><col style="width:10%"><col style="width:12%"></colgroup><thead><tr><th>SCHOLAR</th><th>STUDENT ID</th><th>SUBMISSION STATUS</th><th>COUNT</th><th>SUBMITTED AT</th><th>QUALITY STATUS</th><th>OFFICER REVIEW</th></tr></thead>' : '<colgroup><col style="width:28%"><col style="width:20%"><col style="width:20%"><col style="width:12%"><col style="width:20%"></colgroup><thead><tr><th>BATCH</th><th>COMPLIANCE</th><th>MISSING</th></tr></thead>')
+          ? (isExportReport ? '<colgroup><col style="width:18%"><col style="width:14%"><col style="width:16%"><col style="width:12%"><col style="width:13%"><col style="width:13%"><col style="width:14%"></colgroup><thead><tr><th>SCHOLAR</th><th>STUDENT ID</th><th>REQUIREMENT</th><th>DEADLINE</th><th>SUBMITTED AT</th><th>APPROVED AT</th><th>STATUS</th></tr></thead>' : isMonthlyReport ? '<colgroup><col style="width:18%"><col style="width:13%"><col style="width:16%"><col style="width:10%"><col style="width:12%"><col style="width:10%"><col style="width:10%"><col style="width:11%"></colgroup><thead><tr><th>SCHOLAR</th><th>STUDENT ID</th><th>SUBMISSION TYPE</th><th>SUBMISSION STATUS</th><th>COUNT</th><th>SUBMITTED AT</th><th>QUALITY STATUS</th><th>OFFICER REVIEW</th></tr></thead>' : '<colgroup><col style="width:22%"><col style="width:14%"><col style="width:20%"><col style="width:16%"><col style="width:12%"><col style="width:16%"></colgroup><thead><tr><th>SCHOLAR</th><th>STUDENT ID</th><th>SUBMISSION TYPE</th><th>SUBMISSION STATUS</th><th>COUNT</th><th>OFFICER REVIEW</th></tr></thead>')
           : '<colgroup><col class="batch"><col class="compliance"><col class="missing"></colgroup><thead><tr><th>BATCH</th><th>COMPLIANCE</th><th>MISSING</th></tr></thead>'}
         <tbody>${safeRows || '<tr><td colspan="3" class="empty">No report rows available</td></tr>'}</tbody>
       </table>`}
-      ${detailRows.length && !isAttendanceReport ? `<section class="summary ${isExportReport ? 'summary-breakdown' : isTaskCompletion ? 'task-summary' : ''}">
+      ${detailRows.length && !isAttendanceReport && !isSubmissionRecords && !isMonthlyLetterReview ? `<section class="summary ${isExportReport ? 'summary-breakdown' : isTaskCompletion ? 'task-summary' : ''}">
         ${isComplianceSummary ? `<div><span class="summary-label">LOW RISK</span><strong>${lowRiskCount}</strong></div>
         <div><span class="summary-label">MEDIUM RISK</span><strong>${mediumRiskCount}</strong></div>
         <div><span class="summary-label">HIGH RISK</span><strong>${highRiskCount}</strong></div>` : isExportReport ? `<div class="breakdown-heading"><span class="summary-label">REPORT BREAKDOWN</span>${exportBreakdown}</div>` : isTaskCompletion ? `<div><span class="summary-label">ASSIGNED</span><strong>${taskTotals.assigned}</strong></div>

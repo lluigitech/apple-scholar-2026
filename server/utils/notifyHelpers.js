@@ -1,5 +1,16 @@
 const nodemailer = require('nodemailer');
 const db = require('../config/db');
+const {
+    buildDutyReminderEmail,
+    buildMakeupDutyAssignmentEmail,
+    buildWelcomeEmail,
+    buildPasswordResetEmail,
+    buildAnnouncementEmail,
+    buildDeadlineReminderEmail,
+    buildRepeatedRiskEmail,
+    buildUnsubmittedTaskSummaryEmail,
+    buildTaskDeadlineSummaryEmail,
+} = require('./emailTemplates');
 
 const getTransporter = () => {
     const host = process.env.SMTP_HOST;
@@ -15,6 +26,17 @@ const getTransporter = () => {
         secure: Number(port) === 465,
         auth: { user, pass },
     });
+};
+
+const getPortalUrl = (path = '') => {
+    const baseUrl = (process.env.CLIENT_URL || 'http://localhost:5173').replace(/\/+$/, '');
+    try {
+        const parsed = new URL(baseUrl);
+        return ['http:', 'https:'].includes(parsed.protocol) ? `${parsed.href.replace(/\/+$/, '')}${path}` : undefined;
+    } catch (error) {
+        console.error('Invalid CLIENT_URL for notification links:', error.message);
+        return undefined;
+    }
 };
 
 const queryDb = (sql, params = []) => new Promise((resolve, reject) => {
@@ -87,6 +109,14 @@ const normalizeTargetLevels = (levels) => {
     }
 
     return values;
+};
+
+const normalizeYearLevel = (value) => {
+    const normalized = String(value || '').trim().toLowerCase().replace(/[_-]+/g, ' ').replace(/\s+/g, ' ');
+    const collegeMatch = normalized.match(/^(?:college\s*(\d+)|(\d+)(?:st|nd|rd|th)?\s+year(?:\s+college)?)$/);
+    if (collegeMatch) return `college ${collegeMatch[1] || collegeMatch[2]}`;
+    const gradeMatch = normalized.match(/^grade\s*(\d+)$/);
+    return gradeMatch ? `grade ${gradeMatch[1]}` : normalized;
 };
 
 const buildRecipientEmailText = (title, content, scope) => {
@@ -183,6 +213,11 @@ exports.sendDutyNotifyEmails = (dutyId, cb) => {
                     to: recipient.email,
                     subject,
                     text,
+                    html: buildDutyReminderEmail({
+                        recipientName: recipient.full_name,
+                        duty,
+                        actionUrl: getPortalUrl('/scholar/duties'),
+                    }),
                 });
 
                 sent.push({ recipient: recipient.email, messageId: info.messageId || null });
@@ -219,6 +254,105 @@ exports.sendDutyNotifyEmails = (dutyId, cb) => {
     })().catch((err) => cb(err));
 };
 
+exports.sendMakeupDutyAssignmentEmails = (scholarId, sourceDutyId, makeupDutyId, cb) => {
+    (async () => {
+        const [duties, scholars, staff] = await Promise.all([
+            queryDb(
+                `SELECT id, title, duty_date, time_start, time_end, location
+                 FROM duties WHERE id = ? LIMIT 1`,
+                [makeupDutyId]
+            ),
+            queryDb(
+                `SELECT scholar_id, full_name, email
+                 FROM users WHERE scholar_id = ? AND role = 'scholar' AND status = 'active' LIMIT 1`,
+                [scholarId]
+            ),
+            queryDb(`
+                SELECT DISTINCT u.id, u.full_name, u.email, preferences.makeup_requests
+                FROM duty_group_assignments dga
+                JOIN scholar_groups g ON g.id = dga.group_id
+                JOIN users u ON u.id = g.assigned_staff_id
+                    AND LOWER(u.role) = 'staff' AND u.status = 'active'
+                LEFT JOIN staff_notification_preferences_v2 preferences ON preferences.staff_id = u.id
+                WHERE dga.duty_id = ? AND u.email IS NOT NULL AND u.email <> ''
+            `, [makeupDutyId]),
+        ]);
+        if (!duties.length) throw new Error('Makeup duty not found');
+        if (!scholars.length) throw new Error('Active scholar not found');
+
+        const scholar = scholars[0];
+        const detail = `source:${sourceDutyId}:makeup:${makeupDutyId}:scholar:${scholarId}`;
+        const recipients = [];
+        if (scholar.email) recipients.push({ ...scholar, role: 'scholar', actionPath: '/scholar/duties' });
+        for (const recipient of staff) {
+            if (recipient.makeup_requests === 0) continue;
+            recipients.push({ ...recipient, role: 'staff', actionPath: '/staff/duties' });
+        }
+
+        const transporter = getTransporter();
+        if (!transporter) {
+            return cb(null, {
+                ok: false,
+                sent_count: 0,
+                failed_count: recipients.length,
+                error: 'SMTP not configured',
+            });
+        }
+
+        let sentCount = 0;
+        const failures = [];
+        for (const recipient of recipients) {
+            try {
+                const alreadySent = await queryDb(
+                    `SELECT id FROM notification_logs
+                     WHERE recipient = ? AND type = 'makeup_duty_assignment' AND detail = ? AND status = 'sent'
+                     LIMIT 1`,
+                    [recipient.email, detail]
+                );
+                if (alreadySent.length) continue;
+
+                const text = recipient.role === 'scholar'
+                    ? `Hello ${recipient.full_name || 'Scholar'},\n\nYou have been assigned to makeup duty "${duties[0].title}" on ${duties[0].duty_date}.\nPlease attend the duty to make up for the missed duty.`
+                    : `Hello ${recipient.full_name || 'Staff'},\n\n${scholar.full_name || scholar.scholar_id} (${scholar.scholar_id}) has been assigned to makeup duty "${duties[0].title}" on ${duties[0].duty_date}.\nPlease note the scholar in the duty attendance list.`;
+                await transporter.sendMail({
+                    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+                    to: recipient.email,
+                    subject: `Makeup duty assigned: ${duties[0].title}`,
+                    text,
+                    html: buildMakeupDutyAssignmentEmail({
+                        recipientName: recipient.full_name,
+                        scholarName: scholar.full_name,
+                        scholarId: scholar.scholar_id,
+                        duty: duties[0],
+                        recipientRole: recipient.role,
+                        actionUrl: getPortalUrl(recipient.actionPath),
+                    }),
+                });
+                await logNotification({
+                    scholar_id: recipient.role === 'scholar' ? scholar.scholar_id : null,
+                    recipient: recipient.email,
+                    channel: 'email',
+                    type: 'makeup_duty_assignment',
+                    status: 'sent',
+                    detail,
+                });
+                sentCount += 1;
+            } catch (error) {
+                failures.push({ recipient: recipient.email, error: String(error.message || error) });
+                await logNotification({
+                    scholar_id: recipient.role === 'scholar' ? scholar.scholar_id : null,
+                    recipient: recipient.email,
+                    channel: 'email',
+                    type: 'makeup_duty_assignment',
+                    status: 'failed',
+                    detail: `${detail}:${String(error.message || error)}`,
+                });
+            }
+        }
+        cb(null, { ok: failures.length === 0, sent_count: sentCount, failed_count: failures.length, failures });
+    })().catch(error => cb(error));
+};
+
 exports.sendWelcomeEmail = (user, plainPassword, cb) => {
     (async () => {
         const transporter = getTransporter();
@@ -242,6 +376,13 @@ exports.sendWelcomeEmail = (user, plainPassword, cb) => {
                 to: user.email,
                 subject,
                 text,
+                html: buildWelcomeEmail({
+                    fullName: user.full_name,
+                    loginId: user.generatedId,
+                    email: user.email,
+                    temporaryPassword: plainPassword,
+                    setupUrl: portalUrl,
+                }),
             });
             await logNotification({
                 scholar_id: user.generatedId,
@@ -276,6 +417,11 @@ exports.sendPasswordResetEmail = (user, resetUrl, cb) => {
             to: user.email,
             subject: 'Kalinga Scholar - Reset your password',
             text: `Hello ${user.full_name || ''},\n\nUse this link to reset your Scholar Portal password:\n${resetUrl}\n\nThis link expires in 15 minutes. If you did not request this, you can ignore this email.`,
+            html: buildPasswordResetEmail({
+                fullName: user.full_name,
+                resetUrl,
+                expiresInMinutes: 15,
+            }),
         });
         await logNotification({
             scholar_id: user.scholar_id,
@@ -314,6 +460,16 @@ exports.sendAnnouncementNotifyEmails = (announcementId, cb) => {
                     to: recipient.email,
                     subject,
                     text,
+                    html: buildAnnouncementEmail({
+                        title: announcement.title,
+                        content: announcement.content,
+                        actionUrl: getPortalUrl({
+                            scholar: '/scholar/announcements',
+                            officer: '/officer/announcements',
+                            staff: '/staff/announcements',
+                            admin: '/admin/announcements',
+                        }[String(recipient.role || '').toLowerCase()] || '/'),
+                    }),
                 });
 
                 sent.push({ recipient: recipient.email, messageId: info.messageId || null });
@@ -393,6 +549,14 @@ exports.sendTaskDeadlineReminders = async () => {
                     to: recipient.email,
                     subject: `Kalinga Scholar — Deadline Reminder: ${task.title}`,
                     text: `Hello ${recipient.full_name || 'Scholar'},\n\nYour task is due ${daysLeft === 0 ? 'today' : 'in 3 days'}.\n\nTask: ${task.title}\nType: ${task.type}\nDeadline: ${dueDate}\n\nPlease submit the requirement through your Scholar Portal.`,
+                    html: buildDeadlineReminderEmail({
+                        recipientName: recipient.full_name,
+                        taskTitle: task.title,
+                        taskType: task.type,
+                        dueDate: task.due_date,
+                        daysLeft,
+                        actionUrl: getPortalUrl('/scholar/submission'),
+                    }),
                 });
                 await logNotification({ scholar_id: recipient.scholar_id, recipient: recipient.email, channel: 'email', type: 'deadline_reminder', status: 'sent', detail });
                 sentCount += 1;
@@ -410,14 +574,36 @@ exports.sendComplianceAlerts = async () => {
     const transporter = getTransporter();
     if (!transporter) return { ok: false, skipped: true, reason: 'SMTP not configured' };
 
-    const [tasks, scholars, staff] = await Promise.all([
+    const [tasks, expiredTasks, scholars, assignedOfficers, staff] = await Promise.all([
         queryDb(`
             SELECT id, title, type, DATE_FORMAT(due_date, '%Y-%m-%d') AS due_date, created_at, target_year_levels
-            FROM tasks WHERE is_active = 1 AND due_date < CURDATE()
+            FROM tasks
+            WHERE is_active = 1 AND due_date = DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+            ORDER BY due_date ASC, id ASC
         `),
         queryDb(`
-            SELECT scholar_id, full_name, email, year_level FROM users
-            WHERE role = 'scholar' AND status = 'active' AND email IS NOT NULL AND email <> ''
+            SELECT t.id, t.title, t.type, DATE_FORMAT(t.due_date, '%Y-%m-%d') AS due_date,
+                   t.created_at, t.target_year_levels, u.email AS creator_email,
+                   u.full_name AS creator_name, p.settings_json AS creator_preferences
+            FROM tasks t
+            JOIN users u ON u.id = t.created_by
+            LEFT JOIN admin_preferences p ON p.user_id = u.id
+            WHERE t.is_active = 1 AND t.created_by_role = 'admin'
+              AND t.due_date = DATE_SUB(CURDATE(), INTERVAL 1 DAY)
+              AND u.role = 'admin' AND u.status = 'active'
+              AND u.email IS NOT NULL AND u.email <> ''
+            ORDER BY t.due_date ASC, t.id ASC
+        `),
+        queryDb(`
+            SELECT scholar_id, full_name, year_level FROM users
+            WHERE role = 'scholar' AND status = 'active'
+        `),
+        queryDb(`
+            SELECT DISTINCT u.id, u.email, u.full_name, u.role, oya.year_level
+            FROM officer_year_level_assignments oya
+            JOIN users u ON u.id = oya.officer_id
+            WHERE u.role = 'officer'
+              AND u.status = 'active' AND u.email IS NOT NULL AND u.email <> ''
         `),
         queryDb(`
             SELECT u.id, u.email, u.full_name, u.role, p.settings_json AS preferences
@@ -438,41 +624,119 @@ exports.sendComplianceAlerts = async () => {
         }
     });
 
-    const typeMap = { 'Monthly Report': 'letter', 'Report Card': 'report_card', 'COR Upload': 'cor' };
+    const submissionTypeMap = {
+        'Monthly Report': 'letter',
+        'Report Card': 'report_card',
+        'COR Upload': 'cor',
+        'Other Documents': 'other',
+    };
     const today = new Date().toISOString().slice(0, 10);
     let sentCount = 0;
 
     for (const task of tasks) {
         const targetLevels = normalizeTargetLevels(task.target_year_levels);
-        const taskType = typeMap[task.type];
-        if (!taskType) continue;
-        const recipients = scholars.filter(scholar => !targetLevels.length || targetLevels.includes(String(scholar.year_level)));
+        const submissionType = submissionTypeMap[task.type];
+        if (!submissionType) continue;
+        const targetedScholars = scholars.filter(scholar =>
+            !targetLevels.length || targetLevels.some(level => normalizeYearLevel(level) === normalizeYearLevel(scholar.year_level))
+        );
+        const scholarIds = targetedScholars.map(scholar => scholar.scholar_id);
+        if (!scholarIds.length) continue;
 
-        for (const scholar of recipients) {
-            const records = taskType === 'report_card'
-                ? await queryDb(`SELECT created_at AS submitted_at FROM grades WHERE scholar_id = ? AND verification_status = 'approved' AND created_at >= ? LIMIT 1`, [scholar.scholar_id, task.created_at])
-                : await queryDb(`SELECT submitted_at FROM submissions WHERE scholar_id = ? AND submission_type = ? AND status = 'approved' AND submitted_at >= ? LIMIT 1`, [scholar.scholar_id, taskType, task.created_at]);
-            if (records.length) continue;
+        const placeholders = scholarIds.map(() => '?').join(', ');
+        const submittedRows = submissionType === 'report_card'
+            ? await queryDb(
+                `SELECT DISTINCT scholar_id FROM grades WHERE created_at >= ? AND scholar_id IN (${placeholders})`,
+                [task.created_at, ...scholarIds]
+            )
+            : await queryDb(
+                `SELECT DISTINCT scholar_id FROM submissions WHERE submission_type = ? AND submitted_at >= ? AND scholar_id IN (${placeholders})`,
+                [submissionType, task.created_at, ...scholarIds]
+            );
+        const submittedIds = new Set(submittedRows.map(row => String(row.scholar_id)));
+        const unsubmittedScholars = targetedScholars.filter(scholar => !submittedIds.has(String(scholar.scholar_id)));
+        if (!unsubmittedScholars.length) continue;
 
-            const detail = `overdue-task:${task.id}:scholar:${scholar.scholar_id}:date:${today}`;
-            const existing = await queryDb(`SELECT id FROM notification_logs WHERE type = 'overdue_requirement' AND detail = ? LIMIT 1`, [detail]);
-            if (existing.length) continue;
-            const text = `Scholar ${scholar.full_name || scholar.scholar_id} has not completed the overdue requirement "${task.title}" (deadline: ${task.due_date}).`;
+        const detail = `task:${task.id}:due:${task.due_date}:stage:unsubmitted-summary`;
+        const officersById = new Map();
+        for (const assignment of assignedOfficers) {
+            const officer = officersById.get(assignment.id) || { ...assignment, assignedLevels: new Set() };
+            officer.assignedLevels.add(normalizeYearLevel(assignment.year_level));
+            officersById.set(assignment.id, officer);
+        }
+        for (const recipient of officersById.values()) {
+            const recipientScholars = unsubmittedScholars.filter(scholar =>
+                recipient.assignedLevels.has(normalizeYearLevel(scholar.year_level))
+            );
+            if (!recipientScholars.length) continue;
             try {
-                await transporter.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to: scholar.email, subject: `Overdue requirement: ${task.title}`, text: `Hello ${scholar.full_name || 'Scholar'},\n\n${text}\nPlease submit the requirement through your Scholar Portal.` });
-                await logNotification({ scholar_id: scholar.scholar_id, recipient: scholar.email, channel: 'email', type: 'overdue_requirement', status: 'sent', detail });
+                const alreadySent = await queryDb(
+                    `SELECT id FROM notification_logs
+                     WHERE recipient = ? AND type = 'unsubmitted_task_summary' AND detail = ? AND status = 'sent'
+                     LIMIT 1`,
+                    [recipient.email, detail]
+                );
+                if (alreadySent.length) continue;
+
+                const scholarLines = recipientScholars.map((scholar, index) =>
+                    `${index + 1}. ${scholar.full_name || 'Unnamed Scholar'} (${scholar.scholar_id})${scholar.year_level ? ` — ${scholar.year_level}` : ''}`
+                );
+                const text = `The deadline for "${task.title}" is tomorrow (${task.due_date}).\n\nScholars who have not submitted:\n${scholarLines.join('\n')}\n\nPlease review the task before it closes.`;
+                await transporter.sendMail({
+                    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+                    to: recipient.email,
+                    subject: `Task deadline tomorrow: ${task.title} (${recipientScholars.length} not submitted)`,
+                    text,
+                    html: buildUnsubmittedTaskSummaryEmail({
+                        taskTitle: task.title,
+                        taskType: task.type,
+                        dueDate: task.due_date,
+                        scholars: recipientScholars,
+                        actionUrl: getPortalUrl('/officer/task-assignment'),
+                    }),
+                });
+                await logNotification({ recipient: recipient.email, channel: 'email', type: 'unsubmitted_task_summary', status: 'sent', detail });
                 sentCount += 1;
-                for (const recipient of staffRecipients) {
-                    try {
-                        await transporter.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to: recipient.email, subject: `Scholar overdue requirement: ${task.title}`, text });
-                        await logNotification({ scholar_id: scholar.scholar_id, recipient: recipient.email, channel: 'email', type: 'overdue_requirement', status: 'sent', detail });
-                    } catch (staffErr) {
-                        await logNotification({ scholar_id: scholar.scholar_id, recipient: recipient.email, channel: 'email', type: 'overdue_requirement', status: 'failed', detail: `${detail}:${String(staffErr)}` });
-                    }
-                }
             } catch (sendErr) {
-                await logNotification({ scholar_id: scholar.scholar_id, recipient: scholar.email, channel: 'email', type: 'overdue_requirement', status: 'failed', detail: `${detail}:${String(sendErr)}` });
+                await logNotification({ recipient: recipient.email, channel: 'email', type: 'unsubmitted_task_summary', status: 'failed', detail: `${detail}:${String(sendErr)}` });
             }
+        }
+    }
+
+    for (const task of expiredTasks) {
+        try {
+            const preferences = task.creator_preferences ? JSON.parse(task.creator_preferences) : {};
+            if (preferences.emailNotifications === false || preferences.securityAlerts === false) continue;
+        } catch (error) {
+            console.error('Invalid administrator notification preferences:', error);
+        }
+        const detail = `task:${task.id}:due:${task.due_date}:stage:deadline-summary`;
+        try {
+            const alreadySent = await queryDb(
+                `SELECT id FROM notification_logs
+                 WHERE recipient = ? AND type = 'task_deadline_summary' AND detail = ? AND status = 'sent'
+                 LIMIT 1`,
+                [task.creator_email, detail]
+            );
+            if (alreadySent.length) continue;
+
+            await transporter.sendMail({
+                from: process.env.SMTP_FROM || process.env.SMTP_USER,
+                to: task.creator_email,
+                subject: `Task deadline passed: ${task.title}`,
+                text: `Hello ${task.creator_name || 'Admin'},\n\nThe deadline for "${task.title}" has passed (${task.due_date}).\n\nYou can check the task now to see who submitted and who did not.`,
+                html: buildTaskDeadlineSummaryEmail({
+                    recipientName: task.creator_name,
+                    taskTitle: task.title,
+                    taskType: task.type,
+                    dueDate: task.due_date,
+                    actionUrl: getPortalUrl('/admin/task-assignment'),
+                }),
+            });
+            await logNotification({ recipient: task.creator_email, channel: 'email', type: 'task_deadline_summary', status: 'sent', detail });
+            sentCount += 1;
+        } catch (sendErr) {
+            await logNotification({ recipient: task.creator_email, channel: 'email', type: 'task_deadline_summary', status: 'failed', detail: `${detail}:${String(sendErr)}` });
         }
     }
 
@@ -481,21 +745,40 @@ exports.sendComplianceAlerts = async () => {
         FROM users u JOIN submissions s ON s.scholar_id = u.scholar_id
         WHERE u.role = 'scholar' AND u.status = 'active' AND s.submission_type = 'letter'
           AND s.sentiment_label LIKE '%Negative%' AND s.submitted_at >= DATE_SUB(NOW(), INTERVAL 90 DAY)
-        GROUP BY u.scholar_id, u.full_name HAVING COUNT(s.id) >= 2
+        GROUP BY u.scholar_id, u.full_name HAVING COUNT(s.id) >= 3
     `);
     for (const risk of risks) {
         const detail = `repeated-risk:${risk.scholar_id}:date:${today}`;
-        const existing = await queryDb(`SELECT id FROM notification_logs WHERE type = 'repeated_risk_flag' AND detail = ? LIMIT 1`, [detail]);
-        if (existing.length) continue;
-        const recipient = staffRecipients[0];
-        if (!recipient) continue;
         const text = `${risk.full_name || risk.scholar_id} has ${risk.negative_letters} negative correspondence flags in the last 90 days and needs follow-up.`;
-        try {
-            await transporter.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to: recipient.email, subject: `Repeated risk flag: ${risk.full_name || risk.scholar_id}`, text });
-            await logNotification({ scholar_id: risk.scholar_id, recipient: recipient.email, channel: 'email', type: 'repeated_risk_flag', status: 'sent', detail });
-            sentCount += 1;
-        } catch (sendErr) {
-            await logNotification({ scholar_id: risk.scholar_id, recipient: recipient.email, channel: 'email', type: 'repeated_risk_flag', status: 'failed', detail: `${detail}:${String(sendErr)}` });
+        const adminRecipients = staffRecipients.filter(recipient => recipient.role === 'admin');
+        for (const recipient of adminRecipients) {
+            try {
+                const existing = await queryDb(
+                    `SELECT id FROM notification_logs
+                     WHERE recipient = ? AND type = 'repeated_risk_flag' AND detail = ? AND status = 'sent'
+                     LIMIT 1`,
+                    [recipient.email, detail]
+                );
+                if (existing.length) continue;
+
+                await transporter.sendMail({
+                    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+                    to: recipient.email,
+                    subject: `Repeated risk flag: ${risk.full_name || risk.scholar_id}`,
+                    text,
+                    html: buildRepeatedRiskEmail({
+                        recipientName: recipient.full_name,
+                        scholarName: risk.full_name,
+                        scholarId: risk.scholar_id,
+                        negativeCount: risk.negative_letters,
+                        actionUrl: getPortalUrl('/admin/flagged'),
+                    }),
+                });
+                await logNotification({ scholar_id: risk.scholar_id, recipient: recipient.email, channel: 'email', type: 'repeated_risk_flag', status: 'sent', detail });
+                sentCount += 1;
+            } catch (sendErr) {
+                await logNotification({ scholar_id: risk.scholar_id, recipient: recipient.email, channel: 'email', type: 'repeated_risk_flag', status: 'failed', detail: `${detail}:${String(sendErr)}` });
+            }
         }
     }
 

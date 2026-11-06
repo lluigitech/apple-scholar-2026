@@ -1,5 +1,5 @@
 const db = require('../config/db');
-const { calculateComplianceScore } = require('../utils/complianceLogger');
+const { calculateComplianceScore, getOverdueComplianceTaskCounts } = require('../utils/complianceLogger');
 const { applyOfficerYearLevelFilter } = require('../utils/officerAssignments');
 const nodemailer = require('nodemailer');
 
@@ -118,6 +118,7 @@ exports.getFlaggedScholars = (req, res) => {
                 SUM(CASE WHEN da.status = 'absent'  THEN 1 ELSE 0 END) AS absent
             FROM duty_attendance da
             WHERE da.scholar_id IN (${placeholders})
+              AND (COALESCE(da.is_makeup, 0) = 0 OR da.check_out_at IS NOT NULL)
             GROUP BY da.scholar_id
         `;
 
@@ -175,6 +176,11 @@ exports.getFlaggedScholars = (req, res) => {
                     `;
 
                     db.query(gradesSql, scholarIds, (err, gradeRows) => {
+                        if (err) return res.status(500).json({ message: 'Failed to fetch academic grades.' });
+                        const today = new Date();
+                        getOverdueComplianceTaskCounts(scholars, today, (taskErr, overdueTasksByScholar) => {
+                            if (taskErr) return res.status(500).json({ message: 'Failed to calculate overdue compliance tasks.' });
+
                         const academicMap = {};
                         if (!err && Array.isArray(gradeRows)) {
                             const normalizedScores = {};
@@ -202,7 +208,6 @@ exports.getFlaggedScholars = (req, res) => {
                             });
                         }
 
-                        const today = new Date();
                         const results = [];
 
                         scholars.forEach(scholar => {
@@ -214,7 +219,13 @@ exports.getFlaggedScholars = (req, res) => {
                                 : null;
                             const academicStatus = getAcademicTier(normalizedAcademicScore);
 
-                            const score = calculateComplianceScore({ sub, att, settings, today });
+                            const score = calculateComplianceScore({
+                                sub,
+                                att,
+                                settings,
+                                overdueTaskCount: overdueTasksByScholar[scholar.scholar_id] || 0,
+                                today,
+                            });
                             const overallCompliance = score.overallCompliance;
                             const riskLevel = getComplianceRiskTier(overallCompliance);
                             const flags = [];
@@ -225,11 +236,9 @@ exports.getFlaggedScholars = (req, res) => {
 
                             if (score.deductions.missedSubmission.points > 0) {
                                 addFlag(
-                                    'Missed Submission',
-                                    score.deductions.missedSubmission.missingReports === 0
-                                        ? `Submitted ${sub?.total_submissions || 0} reports, meeting expected target of ${score.deductions.missedSubmission.reportsTarget}.`
-                                        : `${score.deductions.missedSubmission.missingReports} missing report${score.deductions.missedSubmission.missingReports === 1 ? '' : 's'} out of ${score.deductions.missedSubmission.reportsTarget} expected (term progress ${Math.round((Math.max(1, Math.min(365, Math.ceil((today - new Date(today.getFullYear(), today.getMonth() < 6 ? 0 : 6, 1) + 1) / (1000 * 60 * 60 * 24))) / Math.max(1, Math.ceil((new Date(today.getFullYear(), today.getMonth() < 6 ? 5 : 11, 31) - new Date(today.getFullYear(), today.getMonth() < 6 ? 0 : 6, 1) + 1) / (1000 * 60 * 60 * 24)))) * 100))}%)`,
-                                    score.deductions.missedSubmission.missingReports >= 2 ? 'high' : 'medium'
+                                    'Overdue Compliance Tasks',
+                                    `${score.deductions.missedSubmission.overdueTasks} overdue required task${score.deductions.missedSubmission.overdueTasks === 1 ? '' : 's'}; ${score.deductions.missedSubmission.penalizedTasks} exceeded the grace allowances.`,
+                                    score.deductions.missedSubmission.penalizedTasks >= 2 ? 'high' : 'medium'
                                 );
                             }
 
@@ -325,6 +334,7 @@ exports.getFlaggedScholars = (req, res) => {
 
                         results.sort((a, b) => b.risk_score - a.risk_score);
                         res.json(results);
+                        });
                     });
                 });
             });

@@ -57,6 +57,9 @@ export const downloadReportSummaryPdf = async ({ role, reportTitle, periodLabel,
   anchor.href = url;
   const titlePart = reportTitle || `summary-of-${role}-reports`;
   anchor.download = `${titlePart.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${String(periodLabel).replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.pdf`;
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
   anchor.click();
-  URL.revokeObjectURL(url);
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 };

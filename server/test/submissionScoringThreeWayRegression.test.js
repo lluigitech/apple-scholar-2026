@@ -19,9 +19,9 @@ assert.ok(scoringSource.includes('score += asText(info.date).length > 0 ? 0.5 : 
 assert.ok(scoringSource.includes('const pictureScore = photos >= 1 ? 15 : 0;'), 'picture contribution should be 15');
 assert.ok(scoringSource.includes('const captionScore = Math.min(described, photos) >= 1 ? 5 : 0;'), 'caption contribution should be 5');
 assert.ok(scoringSource.includes('const total = Math.min(Math.round(pictureScore + captionScore), 20);'), 'documentation total should be capped at 20');
-assert.ok(scoringSource.includes('const reportScore = rawReportScore * LETTER_BODY_MAX / 100;'), 'letter-body score must be normalized into a 70-point contribution without forcing an integer');
-assert.ok(scoringSource.includes('const overallScore = Math.min(reportScore + mediaScore + infoScore, 100);'), 'overall score should remain a 100-point total and carry decimals in the sum');
-assert.ok(scoringSource.includes('return Math.min(score, 10);'), 'info score must carry the fractional total and never force a whole-number average');
+assert.ok(scoringSource.includes('const reportScore = Math.round(rawReportScore * LETTER_BODY_MAX / 100);'), 'letter-body score must be normalized into a whole-number 70-point contribution');
+assert.ok(scoringSource.includes('const overallScore = Math.min(Math.round(reportScore + mediaScore + infoScore), 100);'), 'overall score should remain a whole-number 100-point total');
+assert.ok(scoringSource.includes('return Math.min(Math.round(score), 10);'), 'info score must be a whole-number score capped at 10');
 assert.ok(scoringSource.includes('calcInfoScore'), 'scoring utility must expose an info score function for the separate information component');
 
 console.log('submissionScoringThreeWayRegression test passed');

@@ -29,7 +29,7 @@ exports.getMakeupRequestData = async (req, res) => {
     db.query(`
         SELECT DISTINCT u.scholar_id, u.full_name AS scholar_name,
                d.id AS source_duty_id, d.title AS source_duty_title, d.duty_date AS source_duty_date,
-               da.status AS source_status
+               CASE WHEN da.status = 'excused' THEN 'absent' ELSE da.status END AS source_status
         FROM duties d
         JOIN duty_group_assignments dga ON dga.duty_id = d.id
         JOIN scholar_groups g ON g.id = dga.group_id AND g.assigned_staff_id = ?
@@ -337,7 +337,7 @@ exports.reportDutyAttendance = (req, res) => {
     const sql = `
         SELECT u.full_name AS scholar, u.scholar_id, u.year_level,
             d.title AS duty, d.duty_date AS date, d.location,
-            da.status, da.method, da.marked_at,
+            da.status, da.method, da.marked_at, da.check_out_at, da.is_makeup,
             COALESCE(g.group_name, 'Unassigned') AS group_name,
             COALESCE(assigned_staff.full_name, 'Unassigned') AS assigned_staff
         FROM duty_attendance da
@@ -348,7 +348,7 @@ exports.reportDutyAttendance = (req, res) => {
         LEFT JOIN scholar_groups g ON g.id = gm.group_id
         LEFT JOIN users assigned_staff ON assigned_staff.id = g.assigned_staff_id AND LOWER(assigned_staff.role) = 'staff'
         ${conditions.length ? 'WHERE ' + conditions.join(' AND ') : ''}
-        GROUP BY da.id, u.full_name, u.scholar_id, u.year_level, d.title, d.duty_date, d.location, da.status, da.method, da.marked_at, g.group_name, assigned_staff.full_name
+        GROUP BY da.id, u.full_name, u.scholar_id, u.year_level, d.title, d.duty_date, d.location, da.status, da.method, da.marked_at, da.check_out_at, da.is_makeup, g.group_name, assigned_staff.full_name
         ORDER BY da.marked_at DESC, u.full_name
     `;
     console.log('[DEBUG] reportDutyAttendance req.query=', req.query, 'sql=', sql, 'values=', values);
@@ -432,7 +432,7 @@ exports.reportActivities = (req, res) => {
     const sql = `
         SELECT u.full_name AS scholar, u.scholar_id,
             d.title AS activity, d.duty_date AS date, d.location,
-            da.status AS attended, da.method
+            da.status AS attended, da.method, da.marked_at, da.check_out_at, da.is_makeup
         FROM duty_attendance da
         JOIN users u ON u.scholar_id = da.scholar_id
         JOIN duties d ON d.id = da.duty_id

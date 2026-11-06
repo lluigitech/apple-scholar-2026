@@ -77,11 +77,22 @@ const FilePreviewModal = ({ preview, onClose }) => {
             } catch (err) {
                 if (cancelled) return;
                 console.error('Preview fetch failed:', err);
-                setFetchError(
-                    err.response?.status === 401
-                        ? 'Session expired. Please log in again.'
-                        : "Couldn't load this file."
-                );
+                let errorMessage = err.response?.status === 401
+                    ? 'Session expired. Please log in again.'
+                    : "Couldn't load this file.";
+                const responseData = err.response?.data;
+                const contentType = err.response?.headers?.['content-type'] || '';
+                if (responseData instanceof Blob && contentType.includes('application/json')) {
+                    try {
+                        const payload = JSON.parse(await responseData.text());
+                        if (typeof payload?.error === 'string') errorMessage = payload.error;
+                    } catch (parseError) {
+                        console.error('Could not read preview error response:', parseError);
+                    }
+                } else if (typeof responseData?.error === 'string') {
+                    errorMessage = responseData.error;
+                }
+                setFetchError(errorMessage);
             }
         };
 

@@ -25,7 +25,7 @@ const display = { fontFamily: "'Playfair Display', Georgia, 'Times New Roman', s
 const body = { fontFamily: "'Inter', 'Segoe UI', sans-serif" };
 
 const SETTING_FIELDS = [
-    { key: 'missed_submission_deduction', label: 'Missed submission', hint: 'Deduction per missing report', icon: FileText },
+    { key: 'missed_submission_deduction', label: 'Overdue compliance task', hint: 'Deduction for each task still missing after grace allowances', icon: FileText },
     { key: 'service_hour_shortfall_deduction', label: 'Service hour shortfall', hint: 'Deduction per missing hour', icon: Clock3 },
     { key: 'absent_duty_deduction', label: 'Absent duty', hint: 'Deduction per missed duty', icon: UserX },
     { key: 'late_submission_deduction', label: 'Late submission', hint: 'Deduction per overdue month', icon: CalendarClock },
@@ -33,7 +33,7 @@ const SETTING_FIELDS = [
 ];
 
 const RECOVERY_GRACE_FIELDS = [
-    { key: 'missed_submission_grace_count', label: 'Missed Submission Grace', hint: 'Reports allowed before penalty' },
+    { key: 'missed_submission_grace_count', label: 'Overdue Task Grace', hint: 'Additional overdue tasks allowed before penalty' },
     { key: 'late_submission_grace_count', label: 'Late Submission Grace', hint: 'Late periods allowed before penalty' },
 ];
 
@@ -431,7 +431,7 @@ const ComplianceManager = ({ embedded = false }) => {
                                 <div>
                                     <label htmlFor="allowed-missed" style={labelStyle}>Max Missed Submissions</label>
                                     <UnitInput id="allowed-missed" variant="field" value={allowedMissed} onChange={handleAllowedMissedChange} min="0" max="100" />
-                                    <p style={helperStyle}>Reports allowed before penalty</p>
+                                    <p style={helperStyle}>Overdue tasks allowed before penalty</p>
                                 </div>
                                 <div>
                                     <label htmlFor="required-hours" style={labelStyle}>Required Service Hours</label>
@@ -443,7 +443,7 @@ const ComplianceManager = ({ embedded = false }) => {
 
                         {/* ── 3. Penalty Rules ── */}
                         <div style={{ ...cardStyle, padding: 20 }}>
-                            <CardHeader icon={AlertTriangle} title="Penalty Rules" subtitle="Points deducted for each compliance violation." />
+                            <CardHeader icon={AlertTriangle} title="Penalty Rules" subtitle="The overdue-task deduction applies to each missed Monthly Report, Report Card/Grades, COR Upload, or Other Documents task after grace allowances." />
                             <div style={{ marginTop: 14 }}>
                                 {SETTING_FIELDS.map(({ key, label, hint, icon }) => (
                                     <RuleRow key={key} icon={icon} label={label} hint={hint}>

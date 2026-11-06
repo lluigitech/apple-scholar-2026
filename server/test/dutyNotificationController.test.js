@@ -12,11 +12,13 @@ require.cache[dbPath] = fakeDbModule;
 
 let notifyResult;
 let notifyError;
+let notifiedDutyId;
 const fakeNotifyModule = new Module(notifyPath, module);
 fakeNotifyModule.filename = notifyPath;
 fakeNotifyModule.loaded = true;
 fakeNotifyModule.exports = {
-  sendDutyNotifyEmails(_dutyId, callback) {
+  sendDutyNotifyEmails(dutyId, callback) {
+    notifiedDutyId = dutyId;
     callback(notifyError, notifyResult);
   },
 };
@@ -37,7 +39,7 @@ const invokeNotify = () => new Promise((resolve) => {
       resolve({ statusCode: this.statusCode || 200, body });
     },
   };
-  dutyController.notifyDutyScholars({ params: { id: '3' } }, res);
+  dutyController.notifyDutyScholars({ params: { duty_id: '3' } }, res);
 });
 
 test('duty notification reports missing SMTP configuration as service unavailable', async () => {
@@ -46,6 +48,7 @@ test('duty notification reports missing SMTP configuration as service unavailabl
 
   const response = await invokeNotify();
 
+  assert.equal(notifiedDutyId, '3');
   assert.equal(response.statusCode, 503);
   assert.deepEqual(response.body, { error: 'Email service is not configured.' });
 });
