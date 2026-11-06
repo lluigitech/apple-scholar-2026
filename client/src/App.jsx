@@ -42,7 +42,7 @@ import StaffDutyAssignment from './pages/Staff/StaffDutyAssignment';
 import AdminDutyAssignment from './pages/Admin/AdminDutyAssignment';
 import AdminSettings from './pages/Admin/AdminSettings';
 import StaffDutyAttendance from './pages/Staff/StaffDutyAttendance';
-import StaffAnnouncement from './pages/staff/StaffAnnouncement'; 
+import StaffAnnouncement from './pages/Staff/StaffAnnouncement'; 
 import StaffAttendanceReports from './pages/Staff/StaffAttendanceReports';
 import StaffSettings from './pages/Staff/StaffSettings';
 
